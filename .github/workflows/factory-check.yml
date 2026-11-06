@@ -1,0 +1,66 @@
+# The live check at the end of docs/factory/setup.md.
+#
+# When the owner labels an issue `factory-check`, the factory proves each piece
+# of its setup in a few cents: the preflight finds its configuration, the App
+# token mints, Claude Code answers on the configured login, and the App posts
+# the answer on the issue and removes the label.
+
+name: Factory check
+
+on:
+  issues:
+    types: [labeled]
+
+permissions: {}
+
+env:
+  CLAUDE_CODE_VERSION: "2.1.319"
+  LOGIN: ${{ vars.FACTORY_CLAUDE_LOGIN || 'subscription' }}
+
+jobs:
+  check:
+    if: >-
+      github.event.label.name == 'factory-check'
+      && github.event.sender.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read # the daily run cap counts this workflow's runs
+    steps:
+      - name: Check out the factory (default branch)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Preflight (configuration, daily cap, App token)
+        id: preflight
+        uses: ./.github/actions/factory-preflight
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_KEY }}
+          login: ${{ env.LOGIN }}
+          subscription-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          openrouter-key: ${{ secrets.OPENROUTER_API_KEY }}
+          daily-run-cap: ${{ vars.FACTORY_DAILY_RUN_CAP || '20' }}
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Install Claude Code
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Ask Claude Code for a one-line answer (no tools, 10 cents cap)
+        env:
+          FACTORY_SUBSCRIPTION_TOKEN: ${{ env.LOGIN == 'subscription' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          FACTORY_OPENROUTER_KEY: ${{ env.LOGIN == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
+        run: uv run --no-dev python -m factory.check ask --out check-out --login "$LOGIN"
+
+      - name: Post the answer as the App
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          uv run --no-dev python -m factory.check answer --repo "$REPO" --issue "$ISSUE"
+          --out check-out --login "$LOGIN" --run-url "$RUN_URL"

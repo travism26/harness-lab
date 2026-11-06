@@ -1,0 +1,110 @@
+name: Factory preflight
+description: >
+  The first steps of every factory workflow. Stops the run, red and with a
+  message naming what is missing, unless the factory is configured for the
+  Claude Code login the switch rule chose; stops it once the workflow has
+  started its daily cap of runs; then mints the factory GitHub App's
+  installation token. See docs/factory/setup.md.
+
+inputs:
+  client-id:
+    description: The factory App's Client ID (repository variable FACTORY_APP_CLIENT_ID).
+    required: true
+  private-key:
+    description: The factory App's private key (repository secret FACTORY_APP_KEY).
+    required: true
+  login:
+    description: >
+      The Claude Code login (repository variable FACTORY_CLAUDE_LOGIN):
+      subscription or openrouter. The switch rule in docs/factory/README.md
+      says which.
+    required: true
+  subscription-token:
+    description: Checked for presence only (repository secret CLAUDE_CODE_OAUTH_TOKEN).
+    required: true
+  openrouter-key:
+    description: Checked for presence only (repository secret OPENROUTER_API_KEY).
+    required: true
+  daily-run-cap:
+    description: >
+      How many runs of the calling workflow may start per UTC day, this one
+      included. 0 stops every run: a kill switch.
+    required: true
+
+outputs:
+  token:
+    description: >
+      An installation token for the factory App on this repository. Events it
+      causes start other workflows, which GITHUB_TOKEN's never do.
+    value: ${{ steps.app.outputs.token }}
+  app-slug:
+    description: The App's slug; its account is `<slug>[bot]`.
+    value: ${{ steps.app.outputs.app-slug }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the factory is configured
+      shell: bash
+      env:
+        # Booleans only: the secrets themselves never reach this script.
+        HAVE_CLIENT_ID: ${{ inputs.client-id != '' }}
+        HAVE_APP_KEY: ${{ inputs.private-key != '' }}
+        HAVE_SUBSCRIPTION_TOKEN: ${{ inputs.subscription-token != '' }}
+        HAVE_OPENROUTER_KEY: ${{ inputs.openrouter-key != '' }}
+        LOGIN: ${{ inputs.login }}
+      run: |
+        missing=()
+        [ "$HAVE_CLIENT_ID" = true ] || missing+=("repository variable FACTORY_APP_CLIENT_ID")
+        [ "$HAVE_APP_KEY" = true ] || missing+=("repository secret FACTORY_APP_KEY")
+        case "$LOGIN" in
+          subscription) [ "$HAVE_SUBSCRIPTION_TOKEN" = true ] || missing+=("repository secret CLAUDE_CODE_OAUTH_TOKEN (the login is subscription)") ;;
+          openrouter) [ "$HAVE_OPENROUTER_KEY" = true ] || missing+=("repository secret OPENROUTER_API_KEY (the login is openrouter)") ;;
+          *)
+            echo "::error title=Bad Claude Code login::FACTORY_CLAUDE_LOGIN is '$LOGIN'; it must be subscription or openrouter."
+            exit 1
+            ;;
+        esac
+        if [ "${#missing[@]}" -gt 0 ]; then
+          joined=$(printf '%s, ' "${missing[@]}")
+          echo "::error title=Factory not configured::Missing ${joined%, }. The run stopped before doing any work. Set them up with docs/factory/setup.md."
+          exit 1
+        fi
+        echo "Factory configuration present. Claude Code login: $LOGIN."
+
+    - name: Enforce the daily run cap
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CAP: ${{ inputs.daily-run-cap }}
+        RUN_ID: ${{ github.run_id }}
+        WORKFLOW_REF: ${{ github.workflow_ref }}
+      run: |
+        set -euo pipefail
+        case "$CAP" in
+          '' | *[!0-9]*)
+            echo "::error title=Bad daily run cap::The daily run cap must be a whole number, got '$CAP'."
+            exit 1
+            ;;
+        esac
+        # owner/repo/.github/workflows/review.yml@refs/... -> review.yml
+        workflow_path=${WORKFLOW_REF%%@*}
+        workflow_file=${workflow_path##*/}
+        today=$(date -u +%F)
+        # Runs whose every job was filtered out by `if:` conclude "skipped"
+        # and did no work, so they do not count. Queued and running ones do.
+        used=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow_file" \
+          --created ">=$today" --limit 1000 --json databaseId,conclusion \
+          --jq "[.[] | select(.conclusion != \"skipped\" and .databaseId != $RUN_ID)] | length")
+        echo "Runs of $workflow_file started today (UTC) before this one: $used. Daily cap: $CAP."
+        if [ "$used" -ge "$CAP" ]; then
+          echo "::error title=Daily run cap reached::$workflow_file has started $used runs today (UTC); the cap is $CAP. Raise the repository variable FACTORY_DAILY_RUN_CAP or wait for tomorrow, then re-run this job."
+          exit 1
+        fi
+
+    - name: Mint the factory App token
+      id: app
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}

@@ -48,6 +48,10 @@ _Avoid_: Mock, stub, fixture
 The owner-only, step-by-step instructions for wiring the factory's credentials, ending with a live check.
 _Avoid_: Onboarding, runbook
 
+**Factory check**:
+The short run that answers the owner's `factory-check` label, proving the factory's credentials work. The live check at the end of the setup guide.
+_Avoid_: Smoke test, ping
+
 **Switch rule**:
 The condition under which the factory's Claude Code moves from the owner's subscription token to an OpenRouter key.
 _Avoid_: Fallback, migration
