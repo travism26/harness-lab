@@ -90,14 +90,171 @@ These were in the same docs tree and were classified so the next pass does not r
 
 ## Checks
 
-Repeatable checks, using a local clone of the source at the pinned commit (here, `/tmp/src-adw`) and Python 3. No extra packages.
+The runnable command for all four checks is the fenced block in this section. Python 3 and git only; no packages and no extra file. It covers:
 
 1. Coverage and line counts. Every file under `docs/research/software-factory/` is one row of the software-factory table, and the line count matches `wc -l`.
-2. Links. Relative links and heading anchors in this folder and in `README.md` resolve. Blob and tree links use the pinned commit and an existing path.
+2. Links. Relative links and heading anchors in this folder and in `README.md` resolve. Blob and tree links use the pinned commit and an existing path. Heading slugs are a local stand-in for GitHub's algorithm (lowercase, punctuation other than hyphens removed, spaces become hyphens).
 3. Docs only. `git diff --name-only main...HEAD` lists `README.md` and markdown under `docs/software-factory/`.
-4. Source untouched. `git -C /tmp/src-adw status --porcelain` is empty, and `git -C /tmp/src-adw rev-parse HEAD` is the pinned commit.
+4. Source untouched. The source worktree is clean and its `HEAD` is the pinned commit.
 
-A successful page render is not one of these checks. There is no site build in this repo. The command that encodes checks 1, 2, and 4 is the review note on the pull request, so the result stays with the review instead of being copied into this file and going stale.
+Run it from a clean checkout of this repo (the branch under review, with local `main` available). `$ADW_ROOT` defaults to `/tmp/src-adw`. If that directory has no `.git`, the block clones claude-code-adw and checks out the pin. It then requires the source checkout to be clean at the pin, so an existing dirty or unpinned clone fails the check. The description of [pull request #4](https://github.com/travism26/harness-lab/pull/4) repeats this block and records the output of the run against the commit that added it.
+
+A successful page render is not one of these checks. There is no site build in this repo.
+
+```bash
+set -euo pipefail
+PIN=b2e37ed6be82085269ce2c12a4035111b2a9994a
+ADW_ROOT="${ADW_ROOT:-/tmp/src-adw}"
+HARNESS_ROOT="${HARNESS_ROOT:-$(git rev-parse --show-toplevel)}"
+if [ ! -d "$ADW_ROOT/.git" ]; then
+  git clone --filter=blob:none --no-checkout https://github.com/travism26/claude-code-adw.git "$ADW_ROOT"
+  git -C "$ADW_ROOT" fetch --depth 1 origin "$PIN"
+  git -C "$ADW_ROOT" checkout --detach FETCH_HEAD
+fi
+test "$(git -C "$ADW_ROOT" rev-parse HEAD)" = "$PIN"
+test -z "$(git -C "$ADW_ROOT" status --porcelain)"
+export ADW_ROOT HARNESS_ROOT
+python3 - << 'PY'
+import os, re, pathlib, subprocess, sys
+PIN = "b2e37ed6be82085269ce2c12a4035111b2a9994a"
+dest = pathlib.Path(os.environ["HARNESS_ROOT"]).resolve()
+src = pathlib.Path(os.environ["ADW_ROOT"]).resolve()
+errors = []
+
+def run(args, cwd):
+    return subprocess.check_output(args, cwd=cwd, text=True)
+
+def check(ok, msg):
+    if not ok:
+        errors.append(msg)
+
+head = run(["git", "rev-parse", "HEAD"], src).strip()
+check(head == PIN, f"source HEAD {head} != {PIN}")
+src_status = run(["git", "status", "--porcelain"], src)
+check(src_status == "", "source dirty:\n" + src_status)
+dest_status = run(["git", "status", "--porcelain"], dest)
+check(dest_status == "", "destination dirty:\n" + dest_status)
+dest_head = run(["git", "rev-parse", "HEAD"], dest).strip()
+
+names = [n for n in run(["git", "diff", "--name-only", "main...HEAD"], dest).splitlines() if n]
+check(bool(names), "docs-only diff against main is empty")
+for name in names:
+    ok = name == "README.md" or (name.startswith("docs/software-factory/") and name.endswith(".md"))
+    check(ok, "not docs-only: " + name)
+
+prov_path = dest / "docs/software-factory/provenance.md"
+prov = prov_path.read_text()
+start = "## " + "Software-factory files"
+end = "## " + "Other source docs considered"
+section = prov.split(start, 1)[1].split(end, 1)[0]
+rows = re.findall(
+    r"^\| `(docs/research/software-factory/[^`]+)` \| (\d+) \| (consolidate|retain) \|",
+    section,
+    re.M,
+)
+src_files = sorted(
+    str(p.relative_to(src))
+    for p in (src / "docs/research/software-factory").rglob("*")
+    if p.is_file()
+)
+table_paths = [r[0] for r in rows]
+check(len(table_paths) == len(set(table_paths)), "duplicate provenance rows")
+check(
+    sorted(table_paths) == src_files,
+    "coverage missing=%s extra=%s" % (set(src_files) - set(table_paths), set(table_paths) - set(src_files)),
+)
+for path, n, _disp in rows:
+    actual = len((src / path).read_text().splitlines())
+    wc = int(run(["wc", "-l", path], src).split()[0])
+    check(actual == int(n) == wc, "lines %s table=%s splitlines=%s wc=%s" % (path, n, actual, wc))
+
+def slug(text):
+    text = text.strip().lower()
+    text = re.sub(r"<[^>]+>", "", text)
+    text = text.replace("\u2019", "'")
+    text = re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE)
+    text = re.sub(r"\s+", "-", text)
+    return text
+
+def headings(text):
+    found, seen = [], {}
+    fence = False
+    for line in text.splitlines():
+        if line.startswith("```"):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        m = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if not m:
+            continue
+        s = slug(m.group(2))
+        if s in seen:
+            seen[s] += 1
+            s = "%s-%s" % (s, seen[s])
+        else:
+            seen[s] = 0
+        found.append(s)
+    return found
+
+def prose_lines(text):
+    fence = False
+    for i, line in enumerate(text.splitlines(), 1):
+        if line.startswith("```"):
+            fence = not fence
+            continue
+        if not fence:
+            yield i, line
+
+link_re = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
+exact = {
+    "https://github.com/travism26/claude-code-adw",
+    "https://github.com/travism26/claude-code-adw/commit/" + PIN,
+    "https://github.com/travism26/harness-lab/pull/3",
+    "https://github.com/travism26/harness-lab/pull/4",
+    "https://github.com/travism26/claude-code-adw/pull/8",
+}
+scan = [dest / "README.md"] + sorted((dest / "docs/software-factory").glob("*.md"))
+for f in scan:
+    text = f.read_text()
+    heads = headings(text)
+    for i, line in prose_lines(text):
+        for _label, url in link_re.findall(line):
+            m = re.match(r"https://github.com/travism26/claude-code-adw/(blob|tree)/([0-9a-f]+)/(.+)$", url)
+            if m:
+                kind, sha, path = m.groups()
+                target = src / path
+                check(sha == PIN, "%s:%s pin %s" % (f.name, i, url))
+                check(target.is_file() if kind == "blob" else target.is_dir(), "%s:%s missing %s" % (f.name, i, path))
+                continue
+            if url.startswith("http://") or url.startswith("https://"):
+                check(url in exact, "%s:%s external %s" % (f.name, i, url))
+                continue
+            path_part, _, anchor = url.partition("#")
+            target = f if path_part == "" else (f.parent / path_part).resolve()
+            check((not path_part) or target.exists(), "%s:%s missing %s" % (f.name, i, url))
+            if anchor:
+                check(target.is_file() and anchor in headings(target.read_text()), "%s:%s anchor %s have %s" % (f.name, i, url, heads if target == f else ""))
+
+n_cons = sum(1 for _p, _n, d in rows if d == "consolidate")
+n_ret = sum(1 for _p, _n, d in rows if d == "retain")
+if errors:
+    print("FAIL")
+    for err in errors:
+        print("- " + err)
+    sys.exit(1)
+print("OK")
+print("destination HEAD " + dest_head)
+print("source HEAD " + head)
+print("source status clean")
+print("destination status clean")
+print("coverage %s files, %s rows, consolidate %s, retain %s, line counts match wc -l" % (len(src_files), len(rows), n_cons, n_ret))
+print("links ok")
+print("docs-only diff (%s paths):" % len(names))
+for name in names:
+    print("  " + name)
+PY
+```
 
 ## Later source cleanup
 
