@@ -1,0 +1,15 @@
+{
+  "_comment": "The factory's label set. Edit here, then run `uv run python -m factory.sync_labels --apply`. Meanings: docs/agents/triage-labels.md and docs/factory/README.md.",
+  "labels": [
+    {"name": "needs-triage", "color": "d876e3", "description": "Maintainer needs to evaluate this issue"},
+    {"name": "needs-info", "color": "d4c5f9", "description": "Waiting on reporter for more information"},
+    {"name": "ready-for-agent", "color": "0e8a16", "description": "Owner-applied: the factory builds this ticket"},
+    {"name": "ready-for-human", "color": "1d76db", "description": "Requires human implementation; the factory has stopped"},
+    {"name": "wontfix", "color": "ffffff", "description": "This will not be worked on"},
+    {"name": "in-progress", "color": "fbca04", "description": "The factory is working on this ticket"},
+    {"name": "rework", "color": "e99695", "description": "Factory review found a blocker: a rework round fixes what it named"},
+    {"name": "rework:1", "color": "f9d0c4", "description": "Factory review blocked this PR once"},
+    {"name": "rework:2", "color": "f9d0c4", "description": "Factory review blocked this PR twice; the next blocker goes to a human"},
+    {"name": "factory-check", "color": "bfdadc", "description": "Owner-applied: the factory answers with a short live check"}
+  ]
+}

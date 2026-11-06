@@ -59,5 +59,9 @@ The post 0 PR includes a step-by-step guide for the owner-only setup: the GitHub
 
 ## Facts to verify in post 0
 
-- OpenRouter's Anthropic-compatible endpoint and per-key credit limits come from secondhand guides ([Morph](https://www.morphllm.com/openrouter-anthropic-skin)). Confirm them against OpenRouter's own documentation.
-- The terms background for the subscription-token rule is secondhand press coverage: [The Register, 2026-02-20](https://www.theregister.com/2026/02/20/anthropic_clarifies_ban_third_party_claude_access). Running Claude Code itself in CI on one's own repo with a subscription token is described as acceptable only by community guides; confirm against Anthropic's own terms.
+Checked against the providers' own pages on 2026-11-06. Quotes and links are in the [setup guide](factory/setup.md#what-was-verified-and-where).
+
+- **OpenRouter's Anthropic-compatible endpoint: confirmed.** OpenRouter's own docs document an endpoint that accepts Anthropic's Messages format (`https://openrouter.ai/api/v1/messages`), and a Claude Code setup with base URL `https://openrouter.ai/api`. The secondhand source was [Morph](https://www.morphllm.com/openrouter-anthropic-skin).
+- **Per-key credit limits: confirmed.** Each key can have its own credit limit in USD. Without a reset interval the limit is a lifetime cap. A key at its limit gets `403 Key limit exceeded`.
+- **Subscription tokens in other tools: confirmed in substance, but not the date.** Anthropic's Claude Code legal page says subscription OAuth is for Claude Code and Anthropic's own apps, and that products, including those built on the Agent SDK, must use API keys. Anthropic's pages do not date the change, and they do not carry the sentence quoted by [The Register, 2026-02-20](https://www.theregister.com/2026/02/20/anthropic_clarifies_ban_third_party_claude_access). "February 2026" above comes from that press report.
+- **Claude Code in CI on one's own repo with a subscription token: documented, but not explicitly allowed.** Anthropic's GitHub Actions page documents `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` for Actions runs, billed to the subscription. No Anthropic page says outright that personal CI use is allowed. The legal page says plan limits assume "ordinary, individual usage". The switch rule stands as written.

@@ -1,0 +1,119 @@
+# The factory's rework round (docs/factory/README.md).
+#
+# Review labels a blocked factory PR `rework` with the App's token, and that
+# label event starts this workflow (a label added with GITHUB_TOKEN would start
+# nothing). The agent fixes what the review named on the PR's branch, the push
+# starts Review again, and Review counts the rounds: after two, the next
+# blocker hands the PR to a human.
+#
+# pull_request_target, so this file and the factory's scripts come from the
+# base branch. Only factory/* branches of this repository qualify; forks never
+# reach the job. The agent edits the PR's branch under work/.
+
+name: Rework
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions: {}
+
+concurrency:
+  # One round per PR, never cancelled, and it shares nothing with other PRs'
+  # rounds. Keep this condition identical to the job's `if:` below.
+  group: >-
+    ${{
+      (github.event.label.name == 'rework'
+        && github.event.pull_request.head.repo.full_name == github.repository
+        && startsWith(github.event.pull_request.head.ref, 'factory/')
+        && (github.event.sender.type == 'Bot' || github.event.sender.login == github.repository_owner)
+        && !contains(github.event.pull_request.labels.*.name, 'ready-for-human'))
+      && format('rework-{0}', github.event.pull_request.number)
+      || format('rework-ignored-{0}', github.run_id)
+    }}
+  cancel-in-progress: false
+
+env:
+  CLAUDE_CODE_VERSION: "2.1.319"
+  LOGIN: ${{ vars.FACTORY_CLAUDE_LOGIN || 'subscription' }}
+
+jobs:
+  rework:
+    # The `rework` label, added by the factory App (or the owner by hand), on
+    # a factory PR of this repository that no human has taken over.
+    if: >-
+      github.event.label.name == 'rework'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.event.pull_request.head.ref, 'factory/')
+      && (github.event.sender.type == 'Bot' || github.event.sender.login == github.repository_owner)
+      && !contains(github.event.pull_request.labels.*.name, 'ready-for-human')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read # the daily run cap counts this workflow's runs
+    steps:
+      - name: Check out the factory (base branch)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Preflight (configuration, daily cap, App token)
+        id: preflight
+        uses: ./.github/actions/factory-preflight
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_KEY }}
+          login: ${{ env.LOGIN }}
+          subscription-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          openrouter-key: ${{ secrets.OPENROUTER_API_KEY }}
+          daily-run-cap: ${{ vars.FACTORY_DAILY_RUN_CAP || '20' }}
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Read the PR, its Ticket and the latest review
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
+        run: >-
+          uv run --no-dev python -m factory.ticket revise --repo "$REPO" --pr "$PR"
+          --out run-out --login "$LOGIN" --app-slug "$APP_SLUG"
+
+      - name: Check out the PR's branch for the agent
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          path: work
+          persist-credentials: false
+
+      - name: Install Claude Code
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Rework (agent, budget-capped, no GitHub token)
+        env:
+          FACTORY_SUBSCRIPTION_TOKEN: ${{ env.LOGIN == 'subscription' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          FACTORY_OPENROUTER_KEY: ${{ env.LOGIN == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
+          MODEL: ${{ vars.FACTORY_BUILD_MODEL || 'sonnet' }}
+          BUDGET_USD: ${{ vars.FACTORY_BUILD_BUDGET_USD || '5' }}
+        run: >-
+          uv run --no-dev python -m factory.ticket build --out run-out --work work
+          --login "$LOGIN" --model "$MODEL" --max-budget-usd "$BUDGET_USD"
+
+      - name: Commit and push the round (Review runs on the push)
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
+        run: >-
+          uv run --no-dev python -m factory.ticket publish --out run-out --work work
+          --app-slug "$APP_SLUG"
+
+      - name: Keep the run's files
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rework-pr${{ github.event.pull_request.number }}-run${{ github.run_id }}-${{ github.run_attempt }}
+          path: run-out/
+          if-no-files-found: ignore

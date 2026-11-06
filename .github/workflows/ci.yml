@@ -1,0 +1,32 @@
+# The CI check: the tests, with uv, on every pull request and on main.
+#
+# Plain `pull_request`, no secrets: it runs fork PRs' code, so it holds nothing
+# worth taking (docs/adr/0005).
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Install
+        run: uv sync --locked
+      - name: Test
+        run: uv run pytest
