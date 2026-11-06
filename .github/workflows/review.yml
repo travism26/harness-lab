@@ -1,0 +1,130 @@
+# The factory's review step (docs/factory/README.md).
+#
+# A fresh-context, two-axis review (Spec, Standards) of every pull request from
+# a branch of this repository, draft or not. It posts its report on the PR. On
+# a Spec blocker it labels the PR `rework` and counts the round with
+# `rework:1`..`rework:2`; the blocker after rework:2 labels it ready-for-human
+# and the factory stops. It never approves and never merges.
+#
+# PRs from forks are never reviewed here: this workflow holds secrets, and fork
+# PRs never get them (docs/adr/0005). CI still runs their tests without secrets.
+#
+# Three steps keep the agent away from GitHub: `prepare` and `apply` hold the
+# App token and run no agent; `review` runs the agent with the Claude login
+# only, no shell, no write tools and a dollar cap.
+#
+# No `|| true` anywhere, on purpose. A step that cannot do its job fails the
+# run, so a red run says the brake did not engage and a green one says it did.
+
+name: Review
+
+# pull_request_target, not pull_request: the workflow file and the factory's
+# scripts always come from the base branch, so a PR cannot rewrite the brake
+# that judges it. The PR's code is checked out under pr/ as data and never run.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  # One review running and at most one pending per PR, and a review in flight
+  # is never cancelled. Events the job skips (forks, handed to a human) get a
+  # throwaway group of their own so they can never displace a pending review.
+  # Keep this condition identical to the job's `if:` below.
+  group: >-
+    ${{
+      (github.event.pull_request.head.repo.full_name == github.repository
+        && !contains(github.event.pull_request.labels.*.name, 'ready-for-human'))
+      && format('review-{0}', github.event.pull_request.number)
+      || format('review-ignored-{0}', github.run_id)
+    }}
+  cancel-in-progress: false
+
+env:
+  CLAUDE_CODE_VERSION: "2.1.319"
+  LOGIN: ${{ vars.FACTORY_CLAUDE_LOGIN || 'subscription' }}
+
+jobs:
+  review:
+    # PRs from a branch of this repository (never a fork) that are not yet
+    # handed to a human. Pushing a branch here needs write access.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && !contains(github.event.pull_request.labels.*.name, 'ready-for-human')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read # the daily run cap counts this workflow's runs
+    steps:
+      # The factory's scripts come from the base branch, so a PR cannot change
+      # the code judging it. The PR's own code goes under pr/.
+      - name: Check out the factory (base branch)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Preflight (configuration, daily cap, App token)
+        id: preflight
+        uses: ./.github/actions/factory-preflight
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_KEY }}
+          login: ${{ env.LOGIN }}
+          subscription-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          openrouter-key: ${{ secrets.OPENROUTER_API_KEY }}
+          daily-run-cap: ${{ vars.FACTORY_DAILY_RUN_CAP || '20' }}
+
+      - name: Check out the pull request (read by the reviewer, never run)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Install Claude Code
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Gather the diff and the Ticket, and check the switch rule
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
+        run: >-
+          uv run --no-dev python -m factory.review_pr prepare --repo "$REPO" --pr "$PR"
+          --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" --code-dir pr --out review-out
+          --login "$LOGIN" --app-slug "$APP_SLUG"
+
+      - name: Review (fresh context, read-only, budget-capped)
+        env:
+          # Only the secret the login needs reaches this step.
+          FACTORY_SUBSCRIPTION_TOKEN: ${{ env.LOGIN == 'subscription' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          FACTORY_OPENROUTER_KEY: ${{ env.LOGIN == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
+          MODEL: ${{ vars.FACTORY_REVIEW_MODEL || 'sonnet' }}
+          BUDGET_USD: ${{ vars.FACTORY_REVIEW_BUDGET_USD || '2' }}
+        run: >-
+          uv run --no-dev python -m factory.review_pr review --out review-out
+          --login "$LOGIN" --model "$MODEL" --max-budget-usd "$BUDGET_USD"
+
+      - name: Post the report and move the labels
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: uv run --no-dev python -m factory.review_pr apply --repo "$REPO" --pr "$PR" --out review-out
+
+      - name: Keep the review's files with the run
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: review-pr${{ github.event.pull_request.number }}-run${{ github.run_id }}-${{ github.run_attempt }}
+          path: review-out/
+          if-no-files-found: ignore

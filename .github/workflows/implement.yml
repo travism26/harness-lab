@@ -1,0 +1,126 @@
+# The factory's build step (docs/factory/README.md).
+#
+# Turns a Ticket into a draft PR when the repository owner labels it
+# `ready-for-agent`. Nothing else starts it: not opening an issue, not a label
+# from anyone else (docs/adr/0005). One Ticket at a time: `claim` refuses while
+# another open Ticket is `in-progress`.
+#
+# As in review.yml, the steps holding the App token run no agent, and the
+# agent step holds no GitHub token. The agent edits a separate checkout under
+# work/; the factory's own scripts run from the default branch at the root.
+
+name: Implement
+
+on:
+  issues:
+    types: [labeled]
+
+permissions: {}
+
+concurrency:
+  # One Ticket at a time, never cancelled. Events the job skips get a
+  # throwaway group so they cannot displace a waiting run. Keep this condition
+  # identical to the job's `if:` below.
+  group: >-
+    ${{
+      (github.event.label.name == 'ready-for-agent'
+        && github.event.sender.login == github.repository_owner
+        && !github.event.issue.pull_request)
+      && 'factory-ticket'
+      || format('implement-ignored-{0}', github.run_id)
+    }}
+  cancel-in-progress: false
+
+env:
+  CLAUDE_CODE_VERSION: "2.1.319"
+  LOGIN: ${{ vars.FACTORY_CLAUDE_LOGIN || 'subscription' }}
+
+jobs:
+  implement:
+    # Only the owner's `ready-for-agent` label on an issue (not a PR).
+    if: >-
+      github.event.label.name == 'ready-for-agent'
+      && github.event.sender.login == github.repository_owner
+      && !github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read # the daily run cap counts this workflow's runs
+    steps:
+      - name: Check out the factory (default branch)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Preflight (configuration, daily cap, App token)
+        id: preflight
+        uses: ./.github/actions/factory-preflight
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_KEY }}
+          login: ${{ env.LOGIN }}
+          subscription-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          openrouter-key: ${{ secrets.OPENROUTER_API_KEY }}
+          daily-run-cap: ${{ vars.FACTORY_DAILY_RUN_CAP || '20' }}
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Claim the Ticket (open, switch rule, one at a time)
+        id: claim
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          uv run --no-dev python -m factory.ticket claim --repo "$REPO" --issue "$ISSUE"
+          --out run-out --login "$LOGIN" --app-slug "$APP_SLUG" --run-url "$RUN_URL"
+
+      - name: Check out the code the agent edits
+        uses: actions/checkout@v7
+        with:
+          path: work
+          persist-credentials: false
+
+      - name: Install Claude Code
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Build (agent, budget-capped, no GitHub token)
+        env:
+          # Only the secret the login needs reaches this step.
+          FACTORY_SUBSCRIPTION_TOKEN: ${{ env.LOGIN == 'subscription' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          FACTORY_OPENROUTER_KEY: ${{ env.LOGIN == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
+          MODEL: ${{ vars.FACTORY_BUILD_MODEL || 'sonnet' }}
+          BUDGET_USD: ${{ vars.FACTORY_BUILD_BUDGET_USD || '5' }}
+        run: >-
+          uv run --no-dev python -m factory.ticket build --out run-out --work work
+          --login "$LOGIN" --model "$MODEL" --max-budget-usd "$BUDGET_USD"
+
+      - name: Commit, push and open the draft PR
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
+        run: >-
+          uv run --no-dev python -m factory.ticket publish --out run-out --work work
+          --app-slug "$APP_SLUG"
+
+      - name: Hand the Ticket back after a failure
+        if: failure() && steps.claim.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          uv run --no-dev python -m factory.ticket release --repo "$REPO" --issue "$ISSUE"
+          --out run-out --run-url "$RUN_URL"
+
+      - name: Keep the run's files
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: implement-issue${{ github.event.issue.number }}-run${{ github.run_id }}-${{ github.run_attempt }}
+          path: run-out/
+          if-no-files-found: ignore
