@@ -11,7 +11,8 @@ Audit list for this consolidation. Source files were read at the commit below an
 | Commit date | 2026-11-05 |
 | Default branch at pinning | `main` |
 | Visibility at pinning | Public, confirmed with `gh repo view` and `gh api` (`visibility: public`, `private: false`) for both this repo and the source |
-| Destination base | `41265c5d8c243457cb89f2e9d84997a5f42e3ebc` on `main` |
+| Destination base | `41265c5d8c243457cb89f2e9d84997a5f42e3ebc` on `main` when this record was written |
+| Main after PR #3 | `c48e6a04292a03be0047b607d6faa5e5a775ad68`, [harness-lab#3](https://github.com/travism26/harness-lab/pull/3) merged. The factory workflows are committed there. The status sentences in this folder were updated to match. |
 | Tree | `docs/research/software-factory/` (32 files) |
 
 Blob URLs in the tables are `https://github.com/travism26/claude-code-adw/blob/b2e37ed6be82085269ce2c12a4035111b2a9994a/<path>`.
@@ -73,8 +74,8 @@ These were in the same docs tree and were classified so the next pass does not r
 | `docs/research/feedback-loop-practices-research.md` | retain | Earlier survey of feedback-loop practices. The overlapping point (give the agent a check it can run) is in [workflows.md](workflows.md#where-they-agree). |
 | `docs/research/seven-phase-workflow-research.md` | retain | Scrutiny of a seven-phase flow against other spec-driven tools, written to decide what entered ADW's practices doc. Copying the phases would add a framework this repo does not use. |
 | `docs/research/context-degradation-research.md` | retain | Context-window evidence. Out of scope for the factory record. |
-| `docs/factory/README.md` | retain | Operating doc for the factory that is built in claude-code-adw. harness-lab's skeleton is the separate open pull request [harness-lab#3](https://github.com/travism26/harness-lab/pull/3). |
-| `docs/factory/github-app-setup.md` | retain | ADW GitHub App setup. Owner setup for this repo belongs with that skeleton, not in this research record. |
+| `docs/factory/README.md` | retain | Operating doc for the factory built in claude-code-adw. harness-lab's committed factory is merged [harness-lab#3](https://github.com/travism26/harness-lab/pull/3), not this research record. |
+| `docs/factory/github-app-setup.md` | retain | ADW GitHub App setup. Owner setup for this repo is [docs/factory/setup.md](../factory/setup.md), committed with harness-lab#3. |
 | `docs/adr/0001-ticket-driven-runs.md` | retain | ADW decision. This repo's decisions are [docs/adr/](../adr/). |
 | `docs/AI_DEVELOPMENT_PRACTICES.md` | retain | ADW living practices doc, partly superseded there by the Claude Code playbook. |
 | `docs/DEVELOPMENT_WORKFLOW.md` | retain | ADW spec-to-PR workflow, with that repo's `uv` commands filled in. |
