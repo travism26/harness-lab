@@ -15,7 +15,7 @@ The Stand-in service that verifies the Agent's JWT-SVID, makes the Lookup check 
 _Avoid_: CAM, mock, access service, permission service, auth server
 
 **User**:
-A synthetic person in the Seed data. Any User can be the Caller or the Target of a Lookup.
+A synthetic person in the Seed data, named within their Tenant, so two Tenants can each have a tom. Any User can be the Caller or the Target of a Lookup.
 _Avoid_: Account, member, employee
 
 **Caller**:
@@ -37,7 +37,7 @@ A named thing a User may do in their Tenant, written `resource:verb`, such as `i
 _Avoid_: Action, right, privilege, scope, entitlement
 
 **Role**:
-A named set of Permissions given to Users, such as Finance Approver.
+A named set of Permissions, such as Finance Approver. Every User holds exactly one Role.
 _Avoid_: Group, position
 
 **Seed data**:
@@ -67,7 +67,7 @@ The one read-only question the Agent asks the Warden: does this Target hold this
 _Avoid_: Query, request, check
 
 **Lookup check**:
-The Warden's decision on whether this Caller may make this Lookup about this Target, made before any Seed data about the Target is read.
+The Warden's decision on whether this Caller may make this Lookup about this Target, made before any Seed data about the Target is read. A Caller may always ask about themself; about anyone else only in their own Tenant, and only if they hold `permission:read`.
 _Avoid_: Access check, authorization, inspection
 
 **Answer**:
@@ -75,7 +75,7 @@ The result of an allowed Lookup: yes or no, and on yes, the Role the Permission 
 _Avoid_: Result, verdict, decision
 
 **Denial**:
-The Warden refusing a Lookup. It reveals nothing about whether the Target exists or what they hold.
+The Warden refusing a Lookup: the Lookup check failed, or the Target doesn't exist. It reveals nothing about whether the Target exists or what they hold.
 _Avoid_: No, rejection, forbidden
 
 **Reply**:
