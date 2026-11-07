@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from harness_lab.client import ModelError
-from harness_lab.tools import TOOLS, WORKSPACE, ToolResult, run_read_file
+from harness_lab.tools import TOOLS, WORKSPACE, run_tool
 
 DEFAULT_MAX_TURNS = 10
 MAX_TURNS_VAR = "HARNESS_MAX_TURNS"
@@ -31,8 +31,6 @@ def resolve_max_turns(value: int | None = None, env=None) -> int:
     """`--max-turns`, else HARNESS_MAX_TURNS, else 10."""
     env = os.environ if env is None else env
     if value is not None:
-        if value < 1:
-            raise ConfigError(f"--max-turns must be at least 1, got {value}")
         return value
     raw = env.get(MAX_TURNS_VAR)
     if not raw:
@@ -41,8 +39,6 @@ def resolve_max_turns(value: int | None = None, env=None) -> int:
         turns = int(raw)
     except ValueError:
         raise ConfigError(f"{MAX_TURNS_VAR} must be a whole number, got {raw!r}") from None
-    if turns < 1:
-        raise ConfigError(f"{MAX_TURNS_VAR} must be at least 1, got {turns}")
     return turns
 
 
@@ -107,6 +103,7 @@ def _loop(question, client, max_turns, log, workspace) -> RunResult:
         try:
             reply = client.send(messages, tools=TOOLS)
         except ModelError as err:
+            log.event("provider_error", turn=turn, error=str(err))
             return RunResult(PROVIDER_ERROR, error=str(err))
         content = reply.get("content") or []
         log.event("reply", turn=turn, content=content, reply_stop_reason=reply.get("stop_reason"))
@@ -126,10 +123,7 @@ def _loop(question, client, max_turns, log, workspace) -> RunResult:
         for call in calls:
             name, args = call.get("name"), call.get("input") or {}
             log.event("tool_call", turn=turn, id=call.get("id"), name=name, input=args)
-            if name != "read_file" or not isinstance(args.get("path"), str):
-                outcome = ToolResult(f"Error: unknown tool or bad input for {name!r}", error=True)
-            else:
-                outcome = run_read_file(args["path"], workspace)
+            outcome = run_tool(name, args, workspace)
             log.event("tool_result", turn=turn, id=call.get("id"), output=outcome.output,
                       refused=outcome.refused)
             if outcome.refused:

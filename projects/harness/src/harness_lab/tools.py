@@ -30,8 +30,15 @@ class ToolResult:
     """Outcome of a tool call: its text, and whether it was refused or failed."""
 
     output: str
-    refused: bool = False
-    error: bool = False
+    status: str = "ok"  # "ok", "error" (failed) or "refused" (outside the workspace)
+
+    @property
+    def refused(self) -> bool:
+        return self.status == "refused"
+
+    @property
+    def error(self) -> bool:
+        return self.status != "ok"
 
 
 def run_read_file(path: str, workspace: Path = WORKSPACE) -> ToolResult:
@@ -41,18 +48,20 @@ def run_read_file(path: str, workspace: Path = WORKSPACE) -> ToolResult:
     try:
         target = (root / path).resolve()
     except (OSError, ValueError, RuntimeError) as err:
-        return ToolResult(f"Error: cannot resolve path {path!r}: {err}", refused=True, error=True)
+        return ToolResult(f"Error: cannot resolve path {path!r}: {err}", status="refused")
     if not target.is_relative_to(root):
         return ToolResult(f"Error: {path!r} is outside the workspace and was refused.",
-                          refused=True, error=True)
+                          status="refused")
     if not target.is_file():
-        return ToolResult(f"Error: file not found: {path!r}", error=True)
+        return ToolResult(f"Error: file not found: {path!r}", status="error")
     try:
         return ToolResult(target.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError) as err:
-        return ToolResult(f"Error: cannot read {path!r}: {err}", error=True)
+        return ToolResult(f"Error: cannot read {path!r}: {err}", status="error")
 
 
-def read_file(path: str, workspace: Path = WORKSPACE) -> str:
-    """Return the file's text, or a message saying why it was refused or failed."""
-    return run_read_file(path, workspace).output
+def run_tool(name, args: dict, workspace: Path = WORKSPACE) -> ToolResult:
+    """Run a tool call by name; an unknown tool or bad input is an error result."""
+    if name != "read_file" or not isinstance(args.get("path"), str):
+        return ToolResult(f"Error: unknown tool or bad input for {name!r}", status="error")
+    return run_read_file(args["path"], workspace)

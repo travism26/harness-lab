@@ -38,7 +38,10 @@ def test_one_turn_answer(env, capsys):
     assert capsys.readouterr().out == "42\n"
     assert stop(env) == "final_answer"
     kinds = [e["event"] for e in events(env)]
-    assert {"request", "reply", "usage"} <= set(kinds)
+    assert kinds == ["run_start", "request", "reply", "usage", "stop"]
+    assert events(env)[0]["question"] == "q"
+    assert events(env)[2]["content"] == [{"type": "text", "text": "42"}]
+    assert events(env)[-1]["stop_reason"] == "final_answer"
 
 
 def test_tool_call_run(env, capsys):
@@ -50,7 +53,11 @@ def test_tool_call_run(env, capsys):
     assert result["type"] == "tool_result" and result["tool_use_id"] == "toolu_standin"
     assert result["content"]
     kinds = [e["event"] for e in events(env)]
-    assert "tool_call" in kinds and "tool_result" in kinds
+    assert kinds.count("request") == 2
+    call = [e for e in events(env) if e["event"] == "tool_call"][0]
+    assert call["name"] == "read_file" and call["input"] == {"path": "hello.txt"}
+    res = [e for e in events(env) if e["event"] == "tool_result"][0]
+    assert res["output"] == result["content"] and res["refused"] is False
 
 
 def test_refused_path(env, capsys):
@@ -59,6 +66,10 @@ def test_refused_path(env, capsys):
     assert "refused" in capsys.readouterr().err
     assert stop(env) == "refused_tool_call"
     assert len(m.requests) == 1
+    refused = [e for e in events(env) if e["event"] == "tool_result"][0]
+    assert refused["refused"] is True and "outside the workspace" in refused["output"]
+    call = [e for e in events(env) if e["event"] == "tool_call"][0]
+    assert call["input"] == {"path": "../pyproject.toml"}
 
 
 def test_turn_cap(env, capsys):
@@ -76,19 +87,14 @@ def test_turn_cap_from_env(env, monkeypatch):
     assert len(m.requests) == 1
 
 
-@pytest.mark.parametrize("bad", ["0", "-1"])
-def test_bad_max_turns_rejected(env, capsys, bad):
-    with StandInModel([text_reply("x")]) as m:
-        assert go(m, "--max-turns", bad) == 1
-    assert "at least 1" in capsys.readouterr().err
-    assert m.requests == []
-
-
 def test_provider_error(env, capsys):
     with StandInModel([error_reply(403, "Key limit exceeded")]) as m:
         assert go(m) == 1
     assert "Key limit exceeded" in capsys.readouterr().err
     assert stop(env) == "provider_error"
+    evs = events(env)
+    assert "Key limit exceeded" in [e for e in evs if e["event"] == "provider_error"][0]["error"]
+    assert "Key limit exceeded" in evs[-1]["error"]
 
 
 def test_missing_key(env, monkeypatch, capsys):

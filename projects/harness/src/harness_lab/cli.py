@@ -13,13 +13,11 @@ ENDPOINT_VAR = "HARNESS_ENDPOINT"
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="harness", description="Ask the model a question.")
     parser.add_argument("question")
-    parser.add_argument("--model", help="haiku, sonnet, opus, deepseek or a full model name")
     parser.add_argument("--max-turns", type=int, help="turn cap (default 10, or HARNESS_MAX_TURNS)")
     parser.add_argument("--endpoint", help=f"Messages endpoint (default {DEFAULT_ENDPOINT}, or {ENDPOINT_VAR})")
     args = parser.parse_args(argv)
     try:
-        client = ModelClient(endpoint=args.endpoint or os.environ.get(ENDPOINT_VAR) or DEFAULT_ENDPOINT,
-                             model=args.model)
+        client = ModelClient(endpoint=args.endpoint or os.environ.get(ENDPOINT_VAR) or DEFAULT_ENDPOINT)
         result = run(args.question, client, max_turns=resolve_max_turns(args.max_turns))
     except (ModelError, ConfigError) as err:
         print(f"harness: {err}", file=sys.stderr)
