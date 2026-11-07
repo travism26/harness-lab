@@ -1,0 +1,15 @@
+# No [federation] table: the HTTP bundle endpoint on :8080 stays off.
+
+[td."agent-identity.lab".workload.permission-agent]
+socket_path  = "SOCKDIR/permission-agent.sock"
+jwt_svid_ttl = "5m"
+
+[td."agent-identity.lab".workload.warden]
+socket_path = "SOCKDIR/warden.sock"
+
+[td."agent-identity.lab".workload.unlisted-agent]
+socket_path = "SOCKDIR/unlisted-agent.sock"
+
+[td."agent-identity.lab".workload.short-lived]
+socket_path  = "SOCKDIR/short-lived.sock"
+jwt_svid_ttl = "1s"

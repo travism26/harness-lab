@@ -1,0 +1,17 @@
+# Throwaway: "Install spiffecli and confirm the unverified facts" (#39). Lives only on
+# scratch/spiffecli-ci and is never merged.
+name: spiffecli-scratch
+on:
+  push:
+    branches: [scratch/spiffecli-ci]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scratch/verify.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
