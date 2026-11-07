@@ -14,6 +14,7 @@ from harness_lab.standin import StandInModel, error_reply, text_reply, tool_use_
 def env(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.delenv("HARNESS_MAX_TURNS", raising=False)
+    monkeypatch.delenv("HARNESS_MODEL", raising=False)
     monkeypatch.setattr("harness_lab.loop.RUNS_DIR", tmp_path / "runs")
     return tmp_path / "runs"
 
@@ -114,6 +115,25 @@ def test_unresolvable_path_is_an_error_not_a_refusal(env, capsys):
     assert result["is_error"] is True and "cannot resolve path" in result["content"]
     res = [e for e in events(env) if e["event"] == "tool_result"][0]
     assert res["refused"] is False
+
+
+def sent_model(*extra):
+    with StandInModel([text_reply("x")]) as m:
+        assert go(m, *extra) == 0
+    return m.requests[0]["body"]["model"]
+
+
+def test_model_flag_shortcut_expands(env):
+    assert sent_model("--model", "deepseek") == "deepseek/deepseek-v4-flash"
+
+
+def test_model_flag_full_name_passes_through(env):
+    assert sent_model("--model", "some/full-name") == "some/full-name"
+
+
+def test_model_flag_beats_env(env, monkeypatch):
+    monkeypatch.setenv("HARNESS_MODEL", "opus")
+    assert sent_model("--model", "sonnet") == "anthropic/claude-sonnet-5.5"
 
 
 def test_provider_error(env, capsys):
