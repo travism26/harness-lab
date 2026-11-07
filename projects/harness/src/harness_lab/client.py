@@ -1,7 +1,7 @@
 """Model client: plain HTTP to OpenRouter's Anthropic-format Messages endpoint.
 
 No Anthropic SDK. The endpoint address, key and model are inputs; the key
-comes only from the environment (see docs/adr/0002).
+comes only from the environment (see projects/harness/docs/adr/0002).
 """
 
 import json

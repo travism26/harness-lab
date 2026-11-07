@@ -220,8 +220,8 @@ Report each finding as one of:
 Quote the criterion in the description.
 
 ## Standards axis
-The repo's standards are `CLAUDE.md`, `GLOSSARY.md` (use its terms, avoid the words \
-it lists under _Avoid_) and the decision records in `docs/adr/`, all in the current \
+The repo's standards are `CLAUDE.md`, `GLOSSARY-MAP.md` and the glossaries and decision records it \
+points to (use their terms, avoid the words they list under _Avoid_), all in the current \
 directory (the base branch, which the PR cannot change). Report each place the diff \
 breaks one as "repo_standard", citing the file. Report clear code smells (unclear \
 names, duplicated logic, abstraction the requirement doesn't need) as "baseline_smell".

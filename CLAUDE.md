@@ -12,4 +12,4 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 ### Domain docs
 
-Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Multi-context: `GLOSSARY-MAP.md` at the repo root lists the lab-wide `GLOSSARY.md` and one glossary per project under `projects/<name>/`. Lab-wide decisions are in `docs/adr/`; a project's are in `projects/<name>/docs/adr/`. See `docs/agents/domain.md`.

@@ -1,24 +1,28 @@
 [project]
-name = "harness-lab"
+name = "harness-lab-root"
 version = "0.0.0"
-description = "A small agent harness, built in public by a software factory."
-readme = "README.md"
-license = "MIT"
+description = "The Lab's root: the shared factory's scripts, and the uv workspace holding every Python project."
 requires-python = ">=3.12"
-dependencies = []
+# Every Python project, so `uv sync` and the root `uv run pytest` cover them all.
+dependencies = ["harness-lab"]
 
 [dependency-groups]
 dev = ["pytest>=8"]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+# The root is not a package: it holds the factory's scripts (factory/).
+[tool.uv]
+package = false
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/harness_lab"]
+# Each Python project under projects/ is a workspace member, sharing the one
+# uv.lock. Projects in other languages are not listed here.
+[tool.uv.workspace]
+members = ["projects/harness"]
+
+[tool.uv.sources]
+harness-lab = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-# The factory's scripts live in factory/ at the repo root, outside the
-# harness package; the tests import them from there.
+testpaths = ["tests", "projects/harness/tests"]
+# The factory's scripts live in factory/ at the repo root; projects are
+# installed from the workspace.
 pythonpath = ["."]

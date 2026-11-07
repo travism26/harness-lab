@@ -117,6 +117,8 @@ def test_build_runs_the_agent_in_the_work_checkout(tmp_path):
     assert seen["may_edit"] and "WebFetch" in seen["disallowed_tools"]
     assert seen["cwd"] == str(tmp_path.resolve())
     assert "rework round" not in seen["prompt"]
+    assert "`CLAUDE.md`, `GLOSSARY-MAP.md`" in seen["prompt"]
+    assert "`docs/design.md`" not in seen["prompt"]
     assert (out / "summary.md").read_text() == "Added the loop.\n"
 
 

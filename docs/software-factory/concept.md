@@ -52,7 +52,7 @@ The design brief already picks a point on the spectrum, and it is the brief that
 - Draft pull requests only, a review step, two rework rounds, one ticket at a time, and a human merges.
 - The factory starts only when the owner applies a label. Fork pull requests receive no secrets.
 - Spend for this repo is about 20 USD on OpenRouter, split across two keys whose credit limits are the hard stop ([ADR 0004](../adr/0004-per-key-credit-limits-as-the-spend-stop.md)).
-- The Harness calls Claude only through OpenRouter and never uses a subscription token ([ADR 0002](../adr/0002-openrouter-only-provider-and-sole-credential.md)). The Factory's Claude Code is the one place a subscription token is allowed, and only under the switch rule ([ADR 0003](../adr/0003-factory-claude-code-on-subscription-token-with-switch-rule.md)).
+- The Harness calls Claude only through OpenRouter and never uses a subscription token ([ADR 0002](../../projects/harness/docs/adr/0002-openrouter-only-provider-and-sole-credential.md)). The Factory's Claude Code is the one place a subscription token is allowed, and only under the switch rule ([ADR 0003](../adr/0003-factory-claude-code-on-subscription-token-with-switch-rule.md)).
 
 A run-the-app verifier, holdout scenarios, and verifier-authorized merge are research findings. They are not brakes in the design brief. Episode 5 is the planned post about shaping this repo so an agent can build and test it, using stand-in services. That episode is not written yet.
 
@@ -70,4 +70,4 @@ The companion Dune-contract dissection is an ADW-oriented reading of the same id
 - An unattended run is the gap that note names. Its listed options are a cloud scheduled task, a GitHub Action, or a thin local loop around the headless CLI.
 - A verdict that the agent cannot influence still needs a deterministic component. The note says that component can be a hook, an Action, or the thin driver. It does not have to be a separate harness project.
 
-This repo's settled factory is the GitHub Actions option, with Claude Code as the agent inside it. The teaching Harness is a raw API loop written so readers can see the loop ([ADR 0001](../adr/0001-raw-api-loop-without-agent-sdk.md)). Cursor, Claude Code, and that small program are three different places a factory's agent can run. The research does not require them to be the same system.
+This repo's settled factory is the GitHub Actions option, with Claude Code as the agent inside it. The teaching Harness is a raw API loop written so readers can see the loop ([ADR 0001](../../projects/harness/docs/adr/0001-raw-api-loop-without-agent-sdk.md)). Cursor, Claude Code, and that small program are three different places a factory's agent can run. The research does not require them to be the same system.

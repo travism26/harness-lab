@@ -108,6 +108,8 @@ def test_review_writes_findings_from_the_agent(tmp_path):
 
     assert review_pr.review(_args(tmp_path), run_agent=agent) == 0
     assert "Bash" in seen["disallowed_tools"] and seen["allowed_tools"] == ["Read", "Grep", "Glob"]
+    assert "`GLOSSARY-MAP.md`" in seen["prompt"]
+    assert "`docs/design.md`" not in seen["prompt"]
     assert json.loads((tmp_path / "findings.json").read_text())["spec_findings"]
 
 

@@ -66,8 +66,8 @@ def blocking_tickets(in_progress: List[int], issue: int) -> List[int]:
 _BUILD = """You are the factory for this repository, working one Ticket. Your \
 working directory is a checkout of the repository; edit files only inside it.
 
-Before you change anything, read `CLAUDE.md`, `GLOSSARY.md`, `docs/design.md` and \
-the decision records in `docs/adr/`, and follow them. Use the glossary's terms.
+Before you change anything, read `CLAUDE.md`, `GLOSSARY-MAP.md` and the \
+glossaries and decision records it points to, and follow them. Use the glossary's terms.
 
 The Ticket is in `{ticket}`. It was written by the repository owner. Implement \
 what it asks, and no more. Add or update tests for what you change and run \
