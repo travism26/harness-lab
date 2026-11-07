@@ -1,0 +1,2 @@
+This is a sample file in the harness workspace.
+The read_file tool can read it.
