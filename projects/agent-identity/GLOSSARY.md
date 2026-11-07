@@ -50,8 +50,16 @@ _Avoid_: Whitelist, ACL, trusted agents
 
 ### Asking and answering
 
+**Model**:
+The language model the Agent consults to turn a Caller's question into a Proposal. It never sees what the Warden returns.
+_Avoid_: LLM, AI, assistant
+
+**Model client**:
+The one part of the Agent that talks to the Model: it asks for a Proposal, checks it, and either returns it or reports why it failed. It knows nothing about the Caller.
+_Avoid_: Harness, LLM client, SDK, wrapper
+
 **Proposal**:
-The model's structured suggestion of a Lookup: a Target, a Permission and a Tenant. Not trusted until the Agent has checked it.
+The Model's structured suggestion of a Lookup: a Target and a Permission. The Tenant and the Caller come from the Login, never from the Model. Not trusted until the Agent has checked it.
 _Avoid_: Request, intent, query
 
 **Lookup**:
@@ -69,6 +77,10 @@ _Avoid_: Result, verdict, decision
 **Denial**:
 The Warden refusing a Lookup. It reveals nothing about whether the Target exists or what they hold.
 _Avoid_: No, rejection, forbidden
+
+**Reply**:
+What the Agent tells the Caller, built by fixed rules from an Answer, a Denial or a failure. Never the Model's own words.
+_Avoid_: Response, explanation, output
 
 ### Who the Caller is
 
