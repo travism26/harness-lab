@@ -12,10 +12,18 @@ fails with a message naming what is missing. It never goes green without doing a
 
 ## How a Ticket moves
 
-1. The owner writes a Ticket (a GitHub issue) and applies `ready-for-agent`.
+1. The owner writes a Ticket (a GitHub issue), applies one `project:<name>` label and applies
+   `ready-for-agent`. The `project:<name>` label names the Project the Ticket builds
+   (`projects/<name>/`). Adding a Project means adding one such label to `factory/labels.json`.
+   The Project must have an executable `projects/<name>/check`: that script, not a fixed command,
+   is how the factory tests the Project, so a Project can be in any language. A Ticket with no
+   `project:` label, more than one, or a label whose folder has no executable `check` is refused
+   before any agent runs: the factory comments why on the Ticket and removes `ready-for-agent`.
 2. **Implement** (`.github/workflows/implement.yml`) claims it. It removes `ready-for-agent`, adds
    `in-progress` and comments with a link to the run. Claude Code builds the change in a fresh
-   checkout. The factory then commits it to `factory/issue-<N>`, pushes, and opens a **draft** PR
+   checkout; its prompt names `projects/<name>/` and tells it to run `projects/<name>/check` until it
+   passes, and to read that Project's glossary and decision records. The factory then commits it
+   to `factory/issue-<N>`, pushes, and opens a **draft** PR
    whose body closes the Ticket.
 3. **Review** (`.github/workflows/review.yml`) runs on the new PR. A fresh agent with read-only
    tools reviews the diff along two axes: Spec (does it do what the Ticket asks?) and Standards
@@ -128,6 +136,7 @@ factory's Claude Code.
 | `in-progress` | Factory | The factory is working on this Ticket. It stays until the Ticket closes. |
 | `rework`, `rework:1`, `rework:2` | Factory (Review) | Review found a Spec blocker; the counter is the rework round |
 | `ready-for-human` | Factory (Review) | Two rework rounds were not enough; the factory has stopped |
+| `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds: `projects/<name>/`, tested with its own `check` |
 | `factory-check` | Owner | Run the live check |
 | `needs-triage`, `needs-info`, `wontfix` | Owner | Triage, see [triage-labels.md](../agents/triage-labels.md) |
 

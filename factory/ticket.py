@@ -6,10 +6,11 @@ the steps holding the App token run no agent, and the agent step holds no
 GitHub token:
 
   claim    (App token) checks the Ticket may start: it is open, the switch rule
-           allows the login, and no other Ticket is in progress (one Ticket at
-           a time). Then labels it in-progress and writes it into --out.
+           allows the login, it names one Project with a `project:<name>` label
+           whose folder has an executable `check`, and no other Ticket is in
+           progress (one Ticket at a time). Then labels it in-progress and writes it into --out.
   revise   (App token) the rework round's claim: reads the blocked PR, its
-           Ticket and the latest factory review into --out.
+           Ticket (and its Project) and the latest factory review into --out.
   build    (Claude login, no GitHub token) runs the agent in --work, the
            checkout it may edit, capped at --max-budget-usd.
   publish  (App token) commits what the agent changed, pushes the branch and,
@@ -41,6 +42,8 @@ from factory.switch_rule import LOGINS, refusal
 
 START_LABEL = "ready-for-agent"
 PROGRESS_LABEL = "in-progress"
+PROJECT_PREFIX = "project:"
+PROJECTS_DIR = "projects"
 BRANCH_PREFIX = "factory/"
 BASE_BRANCH = "main"
 # The agent may edit and run things in its checkout, but not reach the web or
@@ -61,6 +64,27 @@ def blocking_tickets(in_progress: List[int], issue: int) -> List[int]:
     return sorted(n for n in in_progress if n != issue)
 
 
+def project_of(issue: dict, root: Path) -> str:
+    """The Project a Ticket builds, from its one `project:<name>` label.
+
+    Raises Refused unless there is exactly one and projects/<name>/check is an
+    executable file under root.
+    """
+    names = sorted(n[len(PROJECT_PREFIX):] for n in label_names(issue) if n.startswith(PROJECT_PREFIX))
+    if not names:
+        raise Refused(f"the Ticket has no `{PROJECT_PREFIX}<name>` label, so the factory does "
+                      "not know which Project to build")
+    if len(names) > 1:
+        raise Refused("the Ticket has more than one `project:` label "
+                      f"({', '.join(f'`{PROJECT_PREFIX}{n}`' for n in names)}); it must name exactly one")
+    name = names[0]
+    check = root / PROJECTS_DIR / name / "check"
+    if "/" in name or name in ("", ".", "..") or not (check.is_file() and os.access(check, os.X_OK)):
+        raise Refused(f"`{PROJECT_PREFIX}{name}` names no Project: there is no executable "
+                      f"`{PROJECTS_DIR}/{name}/check`")
+    return name
+
+
 # ---- prompts ---------------------------------------------------------------
 
 _BUILD = """You are the factory for this repository, working one Ticket. Your \
@@ -71,7 +95,10 @@ glossaries and decision records it points to, and follow them. Use the glossary'
 
 The Ticket is in `{ticket}`. It was written by the repository owner. Implement \
 what it asks, and no more. Add or update tests for what you change and run \
-`uv run pytest` until it passes.
+`{check}` until it passes.
+
+The Ticket is for the Project in `{project}/`. Build inside that folder. Read its \
+glossary and decision records (`{project}/GLOSSARY.md`, `{project}/docs/adr/`) as well.
 
 Do not commit, push or open a pull request: the factory does that after you \
 finish. Do not edit anything under `.github/`. Never print, log or write the \
@@ -91,7 +118,9 @@ Ticket."""
 
 
 def build_prompt(out: Path) -> str:
-    prompt = _BUILD.format(ticket=(out / "ticket.md").resolve())
+    project = f"{PROJECTS_DIR}/{_load(out)['project']}"
+    prompt = _BUILD.format(ticket=(out / "ticket.md").resolve(), project=project,
+                           check=f"{project}/check")
     if (out / "review.md").is_file():
         prompt += _REWORK.format(review=(out / "review.md").resolve())
     return prompt
@@ -128,6 +157,12 @@ def claim(args, gh: Optional[GitHub] = None) -> int:
         if others:
             reason = (f"one Ticket at a time: {', '.join(f'#{n}' for n in others)} is still "
                       f"`{PROGRESS_LABEL}`. Re-apply `{START_LABEL}` here when it is done")
+    project = None
+    if not reason:
+        try:
+            project = project_of(issue, Path(args.root))
+        except Refused as e:
+            reason = str(e)
     if reason:
         body = (f"The factory did not start this Ticket: {reason}.\n\n"
                 f"`{START_LABEL}` has been removed. [Run]({args.run_url})\n")
@@ -142,7 +177,7 @@ def claim(args, gh: Optional[GitHub] = None) -> int:
         out, "started.md", f"The factory started this Ticket. [Run]({args.run_url})\n"))
     _write_ticket(out, issue)
     _save(out, {"repo": args.repo, "issue": args.issue, "title": issue.get("title", ""),
-                "branch": branch_for(args.issue), "pr": None})
+                "branch": branch_for(args.issue), "pr": None, "project": project})
     print(f"Claimed Ticket {args.repo}#{args.issue}")
     return 0
 
@@ -171,13 +206,20 @@ def revise(args, gh: Optional[GitHub] = None) -> int:
     reason = refusal(args.login, [author(issue), author(pr)], owner, args.app_slug)
     if reason:
         raise RuntimeError(f"switch rule: {reason}")
+    try:
+        project = project_of(issue, Path(args.root))
+    except Refused as e:
+        body = (f"The factory did not start a rework round for PR #{args.pr}: {e}. "
+                f"[Run]({args.run_url})\n")
+        gh.comment(args.repo, number, write_comment(out, "refused.md", body))
+        raise RuntimeError(f"Ticket #{number}: {e}") from e
     review = latest_review(gh.pr_comments(args.repo, args.pr))
     if review is None:
         raise RuntimeError(f"PR {args.repo}#{args.pr} has no factory review to work from")
     _write_ticket(out, issue)
     (out / "review.md").write_text(review)
     _save(out, {"repo": args.repo, "issue": number, "title": issue.get("title", ""),
-                "branch": pr["headRefName"], "pr": args.pr})
+                "branch": pr["headRefName"], "pr": args.pr, "project": project})
     print(f"Rework round for PR {args.repo}#{args.pr} (Ticket #{number})")
     return 0
 
@@ -267,6 +309,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     c.add_argument("--login", choices=LOGINS, required=True)
     c.add_argument("--app-slug", required=True)
     c.add_argument("--run-url", required=True)
+    c.add_argument("--root", default=".", help="the factory checkout holding projects/")
 
     v = sub.add_parser("revise")
     v.add_argument("--repo", required=True)
@@ -274,6 +317,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     v.add_argument("--out", required=True)
     v.add_argument("--login", choices=LOGINS, required=True)
     v.add_argument("--app-slug", required=True)
+    v.add_argument("--root", default=".", help="the factory checkout holding projects/")
 
     b = sub.add_parser("build")
     b.add_argument("--out", required=True)
