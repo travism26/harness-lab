@@ -76,6 +76,14 @@ def test_turn_cap_from_env(env, monkeypatch):
     assert len(m.requests) == 1
 
 
+@pytest.mark.parametrize("bad", ["0", "-1"])
+def test_bad_max_turns_rejected(env, capsys, bad):
+    with StandInModel([text_reply("x")]) as m:
+        assert go(m, "--max-turns", bad) == 1
+    assert "at least 1" in capsys.readouterr().err
+    assert m.requests == []
+
+
 def test_provider_error(env, capsys):
     with StandInModel([error_reply(403, "Key limit exceeded")]) as m:
         assert go(m) == 1
@@ -104,6 +112,6 @@ def test_no_cost_when_not_reported(env):
     assert "cost" not in [e for e in events(env) if e["event"] == "usage"][0]
 
 
-def test_command_is_installed():
+def test_module_runs_with_help():
     out = subprocess.run([sys.executable, "-m", "harness_lab.cli", "--help"], capture_output=True, text=True)
     assert out.returncode == 0 and "question" in out.stdout

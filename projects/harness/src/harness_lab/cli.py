@@ -5,7 +5,7 @@ import os
 import sys
 
 from harness_lab.client import DEFAULT_ENDPOINT, ModelClient, ModelError
-from harness_lab.loop import resolve_max_turns, run
+from harness_lab.loop import ConfigError, resolve_max_turns, run
 
 ENDPOINT_VAR = "HARNESS_ENDPOINT"
 
@@ -21,7 +21,7 @@ def main(argv=None) -> int:
         client = ModelClient(endpoint=args.endpoint or os.environ.get(ENDPOINT_VAR) or DEFAULT_ENDPOINT,
                              model=args.model)
         result = run(args.question, client, max_turns=resolve_max_turns(args.max_turns))
-    except ModelError as err:
+    except (ModelError, ConfigError) as err:
         print(f"harness: {err}", file=sys.stderr)
         return 1
     if result.ok:

@@ -1,5 +1,6 @@
 """The harness's tools. Episode 1 has one: read_file, confined to the workspace."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 # projects/harness/workspace/, the only folder the tools may read.
@@ -24,26 +25,34 @@ READ_FILE_TOOL = {
 TOOLS = [READ_FILE_TOOL]
 
 
-def is_refused(path: str, workspace: Path = WORKSPACE) -> bool:
-    """True when the path resolves outside the workspace."""
-    try:
-        return not (workspace.resolve() / path).resolve().is_relative_to(workspace.resolve())
-    except (OSError, ValueError, RuntimeError):
-        return False
+@dataclass(frozen=True)
+class ToolResult:
+    """Outcome of a tool call: its text, and whether it was refused or failed."""
+
+    output: str
+    refused: bool = False
+    error: bool = False
 
 
-def read_file(path: str, workspace: Path = WORKSPACE) -> str:
-    """Return the file's text, or a message saying why it was refused or failed."""
+def run_read_file(path: str, workspace: Path = WORKSPACE) -> ToolResult:
+    """Read a workspace file. A path outside the workspace, or one that cannot be
+    resolved, is refused."""
     root = workspace.resolve()
     try:
         target = (root / path).resolve()
     except (OSError, ValueError, RuntimeError) as err:
-        return f"Error: cannot resolve path {path!r}: {err}"
+        return ToolResult(f"Error: cannot resolve path {path!r}: {err}", refused=True, error=True)
     if not target.is_relative_to(root):
-        return f"Error: {path!r} is outside the workspace and was refused."
+        return ToolResult(f"Error: {path!r} is outside the workspace and was refused.",
+                          refused=True, error=True)
     if not target.is_file():
-        return f"Error: file not found: {path!r}"
+        return ToolResult(f"Error: file not found: {path!r}", error=True)
     try:
-        return target.read_text(encoding="utf-8")
+        return ToolResult(target.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError) as err:
-        return f"Error: cannot read {path!r}: {err}"
+        return ToolResult(f"Error: cannot read {path!r}: {err}", error=True)
+
+
+def read_file(path: str, workspace: Path = WORKSPACE) -> str:
+    """Return the file's text, or a message saying why it was refused or failed."""
+    return run_read_file(path, workspace).output

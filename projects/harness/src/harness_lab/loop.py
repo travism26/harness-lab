@@ -6,10 +6,11 @@ Every Run writes one JSON-lines file under projects/harness/runs/ (gitignored).
 import json
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from harness_lab.client import ModelError
-from harness_lab.tools import TOOLS, WORKSPACE, is_refused, read_file
+from harness_lab.tools import TOOLS, WORKSPACE, ToolResult, run_read_file
 
 DEFAULT_MAX_TURNS = 10
 MAX_TURNS_VAR = "HARNESS_MAX_TURNS"
@@ -22,10 +23,16 @@ PROVIDER_ERROR = "provider_error"
 REFUSED_TOOL_CALL = "refused_tool_call"
 
 
+class ConfigError(ValueError):
+    """A bad setting."""
+
+
 def resolve_max_turns(value: int | None = None, env=None) -> int:
     """`--max-turns`, else HARNESS_MAX_TURNS, else 10."""
     env = os.environ if env is None else env
     if value is not None:
+        if value < 1:
+            raise ConfigError(f"--max-turns must be at least 1, got {value}")
         return value
     raw = env.get(MAX_TURNS_VAR)
     if not raw:
@@ -33,9 +40,9 @@ def resolve_max_turns(value: int | None = None, env=None) -> int:
     try:
         turns = int(raw)
     except ValueError:
-        raise ModelError(f"{MAX_TURNS_VAR} must be a whole number, got {raw!r}") from None
+        raise ConfigError(f"{MAX_TURNS_VAR} must be a whole number, got {raw!r}") from None
     if turns < 1:
-        raise ModelError(f"{MAX_TURNS_VAR} must be at least 1, got {turns}")
+        raise ConfigError(f"{MAX_TURNS_VAR} must be at least 1, got {turns}")
     return turns
 
 
@@ -63,13 +70,12 @@ class RunLog:
         self._file.close()
 
 
+@dataclass
 class RunResult:
-    def __init__(self, stop_reason: str, answer: str | None = None, error: str | None = None,
-                 log_path: Path | None = None):
-        self.stop_reason = stop_reason
-        self.answer = answer
-        self.error = error
-        self.log_path = log_path
+    stop_reason: str
+    answer: str | None = None
+    error: str | None = None
+    log_path: Path | None = None
 
     @property
     def ok(self) -> bool:
@@ -121,15 +127,14 @@ def _loop(question, client, max_turns, log, workspace) -> RunResult:
             name, args = call.get("name"), call.get("input") or {}
             log.event("tool_call", turn=turn, id=call.get("id"), name=name, input=args)
             if name != "read_file" or not isinstance(args.get("path"), str):
-                output = f"Error: unknown tool or bad input for {name!r}"
-                refused = False
+                outcome = ToolResult(f"Error: unknown tool or bad input for {name!r}", error=True)
             else:
-                refused = is_refused(args["path"], workspace)
-                output = read_file(args["path"], workspace)
-            log.event("tool_result", turn=turn, id=call.get("id"), output=output, refused=refused)
-            if refused:
-                return RunResult(REFUSED_TOOL_CALL, error=output)
-            results.append({"type": "tool_result", "tool_use_id": call.get("id"), "content": output,
-                            **({"is_error": True} if output.startswith("Error:") else {})})
+                outcome = run_read_file(args["path"], workspace)
+            log.event("tool_result", turn=turn, id=call.get("id"), output=outcome.output,
+                      refused=outcome.refused)
+            if outcome.refused:
+                return RunResult(REFUSED_TOOL_CALL, error=outcome.output)
+            results.append({"type": "tool_result", "tool_use_id": call.get("id"),
+                            "content": outcome.output, **({"is_error": True} if outcome.error else {})})
         messages.append({"role": "user", "content": results})
     return RunResult(TURN_CAP, error=f"Stopped at the turn cap of {max_turns} without a final answer.")
