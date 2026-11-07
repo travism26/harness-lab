@@ -51,7 +51,6 @@ def _root(tmp_path, name="harness", executable=True):
 
 
 def _args(tmp_path, **kw):
-    _root(tmp_path)
     base = dict(root=str(tmp_path / "root"), repo=REPO, issue=4, pr=9, out=str(tmp_path / "out"), login="subscription",
                 app_slug="harness-factory", run_url="https://run", work=str(tmp_path),
                 model="sonnet", max_budget_usd=5.0)
@@ -60,6 +59,7 @@ def _args(tmp_path, **kw):
 
 
 def test_claim_labels_the_ticket_and_writes_it(tmp_path):
+    _root(tmp_path)
     gh = FakeGitHub(issue=_issue())
     assert ticket.claim(_args(tmp_path), gh) == 0
     assert gh.removed == ["ready-for-agent"] and gh.added == ["in-progress"]
@@ -78,8 +78,8 @@ def test_claim_labels_the_ticket_and_writes_it(tmp_path):
     (("ready-for-agent", "project:harness"), False, "no executable `projects/harness/check`"),
 ])
 def test_claim_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, executable, match):
-    args = _args(tmp_path)
     _root(tmp_path, executable=executable)
+    args = _args(tmp_path)
     gh = FakeGitHub(issue=_issue(labels=labels))
     with pytest.raises(ticket.Refused, match=match):
         ticket.claim(args, gh)
@@ -87,13 +87,23 @@ def test_claim_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, ex
     assert "did not start" in gh.posted[0][1] and not (tmp_path / "out" / "context.json").exists()
 
 
-def test_revise_refuses_a_ticket_without_a_project(tmp_path):
-    gh = FakeGitHub(issue=_issue(labels=()), pr=_pr(), comments=[{"body": MARKER}])
-    with pytest.raises(RuntimeError, match="no `project:<name>` label"):
+@pytest.mark.parametrize("labels, executable, match", [
+    ((), True, "no `project:<name>` label"),
+    (("project:harness", "project:other"), True, "more than one"),
+    (("project:missing",), True, "no executable `projects/missing/check`"),
+    (("project:harness",), False, "no executable `projects/harness/check`"),
+])
+def test_revise_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, executable, match):
+    _root(tmp_path, executable=executable)
+    gh = FakeGitHub(issue=_issue(labels=labels), pr=_pr(), comments=[{"body": MARKER}])
+    with pytest.raises(RuntimeError, match=match):
         ticket.revise(_args(tmp_path), gh)
+    assert "did not start a rework round" in gh.posted[0][1]
+    assert not (tmp_path / "out" / "review.md").exists()
 
 
 def test_claim_refuses_a_second_ticket_in_progress(tmp_path):
+    _root(tmp_path)
     gh = FakeGitHub(issue=_issue(), in_progress=[2, 4])
     with pytest.raises(ticket.Refused, match="one Ticket at a time: #2"):
         ticket.claim(_args(tmp_path), gh)
@@ -102,12 +112,14 @@ def test_claim_refuses_a_second_ticket_in_progress(tmp_path):
 
 
 def test_claim_refuses_someone_elses_ticket_on_the_subscription(tmp_path):
+    _root(tmp_path)
     gh = FakeGitHub(issue=_issue(author="stranger"))
     with pytest.raises(ticket.Refused, match="switch rule"):
         ticket.claim(_args(tmp_path), gh)
 
 
 def test_claim_allows_someone_elses_ticket_on_openrouter(tmp_path):
+    _root(tmp_path)
     gh = FakeGitHub(issue=_issue(author="stranger"))
     assert ticket.claim(_args(tmp_path, login="openrouter"), gh) == 0
 
@@ -119,6 +131,7 @@ def _pr(labels=("rework", "rework:1"), branch="factory/issue-4"):
 
 
 def test_revise_takes_the_latest_factory_review(tmp_path):
+    _root(tmp_path)
     comments = [{"body": f"{MARKER}\nold"}, {"body": "human chat"}, {"body": f"{MARKER}\nnew"}]
     gh = FakeGitHub(issue=_issue(), pr=_pr(), comments=comments)
     assert ticket.revise(_args(tmp_path), gh) == 0
@@ -131,12 +144,14 @@ def test_revise_takes_the_latest_factory_review(tmp_path):
 @pytest.mark.parametrize("pr", [_pr(labels=("rework", "ready-for-human")), _pr(labels=()),
                                 _pr(branch="fm/hand-made")])
 def test_revise_refuses_prs_not_waiting_for_factory_rework(tmp_path, pr):
+    _root(tmp_path)
     gh = FakeGitHub(issue=_issue(), pr=pr, comments=[{"body": MARKER}])
     with pytest.raises(RuntimeError):
         ticket.revise(_args(tmp_path), gh)
 
 
 def test_build_runs_the_agent_in_the_work_checkout(tmp_path):
+    _root(tmp_path)
     out = tmp_path / "out"
     out.mkdir()
     (out / "ticket.md").write_text("# t\n")
@@ -154,7 +169,9 @@ def test_build_runs_the_agent_in_the_work_checkout(tmp_path):
     assert "`CLAUDE.md`, `GLOSSARY-MAP.md`" in seen["prompt"]
     assert "`docs/design.md`" not in seen["prompt"]
     assert "`projects/harness/check`" in seen["prompt"]
-    assert "`projects/harness/`" in seen["prompt"] or "projects/harness/GLOSSARY.md" in seen["prompt"]
+    assert "`projects/harness/`" in seen["prompt"]
+    assert "projects/harness/GLOSSARY.md" in seen["prompt"]
+    assert "projects/harness/docs/adr/" in seen["prompt"]
     assert "uv run pytest" not in seen["prompt"]
     assert (out / "summary.md").read_text() == "Added the loop.\n"
 

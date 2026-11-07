@@ -209,6 +209,9 @@ def revise(args, gh: Optional[GitHub] = None) -> int:
     try:
         project = project_of(issue, Path(args.root))
     except Refused as e:
+        body = (f"The factory did not start a rework round for PR #{args.pr}: {e}. "
+                f"[Run]({args.run_url})\n")
+        gh.comment(args.repo, number, write_comment(out, "refused.md", body))
         raise RuntimeError(f"Ticket #{number}: {e}") from e
     review = latest_review(gh.pr_comments(args.repo, args.pr))
     if review is None:
