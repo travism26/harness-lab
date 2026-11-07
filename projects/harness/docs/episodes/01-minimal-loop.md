@@ -7,7 +7,7 @@ Episode notes: source material for the post, which is written separately in
 
 The harness can now run a model in a tool loop: it sends a question, runs the model's `read_file` Tool calls against a workspace folder, sends back the Tool results, and repeats until a final answer. Every Run writes a Run log.
 
-- Plain HTTP client for OpenRouter's Anthropic-format Messages endpoint, with no SDK ([ADR 0009](adr/0009-plain-http-in-anthropics-format-not-the-python-sdk.md)).
+- Plain HTTP client for OpenRouter's Anthropic-format Messages endpoint, with no SDK ([ADR 0009](../adr/0009-plain-http-in-anthropics-format-not-the-python-sdk.md)).
 - Model choice: Haiku by default; shortcuts `haiku`, `sonnet`, `opus`, `deepseek`; any other OpenRouter model name passes through.
 - One tool, `read_file`, confined to `projects/harness/workspace/`. A path outside it is refused and stops the Run.
 - A turn cap (default 10), and a Run log in JSON lines under `projects/harness/runs/`.
@@ -19,7 +19,7 @@ The harness can now run a model in a tool loop: it sends a question, runs the mo
 | <https://github.com/travism26/harness-lab/issues/7> | <https://github.com/travism26/harness-lab/pull/11> | not recorded in the Ticket | merged before the live Run |
 | <https://github.com/travism26/harness-lab/issues/8> | <https://github.com/travism26/harness-lab/pull/23> | not recorded in the Ticket | merged before the live Run |
 | <https://github.com/travism26/harness-lab/issues/9> | <https://github.com/travism26/harness-lab/pull/24> | 2 | went to `ready-for-human`; the owner finished it by hand, then merged |
-| <https://github.com/travism26/harness-lab/issues/10> | this PR | 1 (this round) | open |
+| <https://github.com/travism26/harness-lab/issues/10> | this PR | not recorded | open |
 
 ## What broke
 
@@ -98,7 +98,7 @@ Exit 0. Run log `run-20261107T110717.jsonl`. Stop reason `final_answer`. Model `
 
 ```
 harness: refused tool call: Error: '../README.md' is outside the workspace and was refused.
-harness: run log: /Users/rickjms/code/harness-lab/projects/harness/runs/run-20261107T110730.jsonl
+harness: run log: projects/harness/runs/run-20261107T110730.jsonl
 ```
 
 Non-zero exit. In Turn 1, Haiku asked for `read_file {"path": "../README.md"}`. The Tool result was refused (`refused: true`) and the Run stopped with stop reason `refused_tool_call`. Turn 1 used 401 input / 50 output tokens and cost $0.0000651.
