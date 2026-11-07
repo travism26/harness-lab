@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The harness's check: its tests, run in the root's locked environment (the
-# same one CI uses). Exits non-zero on failure.
+# The harness's check: its tests, in the workspace's locked environment (the
+# same uv.lock CI uses). Exits non-zero on failure.
 set -euo pipefail
-cd "$(dirname "$0")/../.."
-exec uv run --locked pytest -c pyproject.toml projects/harness/tests "$@"
+cd "$(dirname "$0")"
+exec uv run --locked --package harness-lab pytest "$@"

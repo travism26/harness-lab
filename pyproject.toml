@@ -1,22 +1,28 @@
 [project]
-name = "harness-lab"
+name = "harness-lab-root"
 version = "0.0.0"
-description = "The harness-lab repo: one shared factory and the projects it builds."
+description = "The Lab's root: the shared factory's scripts, and the uv workspace holding every Python project."
 requires-python = ">=3.12"
-dependencies = []
+# Every Python project, so `uv sync` and the root `uv run pytest` cover them all.
+dependencies = ["harness-lab"]
 
 [dependency-groups]
 dev = ["pytest>=8"]
 
-# The root is not a package: it holds the factory's scripts (factory/) and runs
-# every project's tests. Each project has its own pyproject.toml.
+# The root is not a package: it holds the factory's scripts (factory/).
 [tool.uv]
 package = false
 
+# Each Python project under projects/ is a workspace member, sharing the one
+# uv.lock. Projects in other languages are not listed here.
+[tool.uv.workspace]
+members = ["projects/harness"]
+
+[tool.uv.sources]
+harness-lab = { workspace = true }
+
 [tool.pytest.ini_options]
 testpaths = ["tests", "projects/harness/tests"]
-# The factory's scripts live in factory/ at the repo root; the harness package
-# lives in projects/harness/src. The tests import both from there.
-# Adding a project under projects/<name>/ means adding its tests to testpaths
-# and its src to pythonpath here.
-pythonpath = [".", "projects/harness/src"]
+# The factory's scripts live in factory/ at the repo root; projects are
+# installed from the workspace.
+pythonpath = ["."]

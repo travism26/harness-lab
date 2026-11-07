@@ -2,6 +2,12 @@ version = 1
 revision = 5
 requires-python = ">=3.12"
 
+[manifest]
+members = [
+    "harness-lab",
+    "harness-lab-root",
+]
+
 [[package]]
 name = "colorama"
 version = "0.4.6"
@@ -14,7 +20,7 @@ wheels = [
 [[package]]
 name = "harness-lab"
 version = "0.0.0"
-source = { virtual = "." }
+source = { editable = "projects/harness" }
 
 [package.dev-dependencies]
 dev = [
@@ -22,6 +28,25 @@ dev = [
 ]
 
 [package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8" }]
+
+[[package]]
+name = "harness-lab-root"
+version = "0.0.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "harness-lab" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "harness-lab", editable = "projects/harness" }]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8" }]
