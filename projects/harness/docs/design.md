@@ -30,7 +30,7 @@ When the factory finishes an episode it writes an episode notes file in this rep
 
 - Python, run with uv.
 - A raw loop that calls the Claude API directly with its own tool loop, no Agent SDK. A later post may compare the two.
-- Claude Haiku 5.5 by default, with one setting to switch to Sonnet 5.5 or Opus 5.5.
+- Claude Haiku 5.5 by default. One setting (`--model` or `HARNESS_MODEL`) changes the model. It takes a shortcut (`haiku`, `sonnet`, `opus` or `deepseek`) or any OpenRouter model name, which passes through unchanged. The cheap models (Haiku, DeepSeek) keep Runs inexpensive. Requests are plain HTTP, not the Anthropic SDK ([0009](adr/0009-plain-http-in-anthropics-format-not-the-python-sdk.md)).
 - Always calls Claude through OpenRouter, in Anthropic's request format via OpenRouter's Anthropic-compatible endpoint. The endpoint address is a setting.
 - The OpenRouter key is the harness's only credential. It never uses a Claude subscription token, because Anthropic's February 2026 terms forbid subscription tokens in other tools.
 

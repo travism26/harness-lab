@@ -23,3 +23,23 @@ _Avoid_: Article, write-up
 **Episode notes**:
 The file the factory writes in this repo when an episode finishes: what was built, what broke, key snippets, PR links. Source material for the post.
 _Avoid_: Changelog, summary
+
+**Run**:
+One execution of the harness on one question, from the question to a stop (final answer, turn cap, provider error or refused tool call). Each Run writes one Run log.
+_Avoid_: Session, job, conversation
+
+**Turn**:
+One request to the model and its reply, within a Run. A Run has at most the turn cap of Turns.
+_Avoid_: Step, iteration, round (a Rework round is a different, lab-wide term)
+
+**Tool call**:
+The model's request, in a reply, to run one of the harness's tools with given input.
+_Avoid_: Function call, action
+
+**Tool result**:
+What the harness sends back to the model for a Tool call: the tool's output, or its error.
+_Avoid_: Observation, tool output
+
+**Run log**:
+The JSON-lines file a Run writes under `projects/harness/runs/`, one event per line: each request, reply, Tool call, Tool result and the stop.
+_Avoid_: Transcript, trace, history
