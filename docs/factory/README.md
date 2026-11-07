@@ -19,7 +19,7 @@ fails with a message naming what is missing. It never goes green without doing a
    whose body closes the Ticket.
 3. **Review** (`.github/workflows/review.yml`) runs on the new PR. A fresh agent with read-only
    tools reviews the diff along two axes: Spec (does it do what the Ticket asks?) and Standards
-   (does it follow `CLAUDE.md`, `GLOSSARY.md` and `docs/adr/`?). It posts one report on the PR.
+   (does it follow `CLAUDE.md`, the glossaries and the decision records?). It posts one report on the PR.
 4. If the Spec axis finds a blocker, Review labels the PR `rework` and `rework:1`. That label
    starts **Rework** (`.github/workflows/rework.yml`). Claude Code fixes what the review named on the
    PR's branch and pushes, and the push starts Review again.
@@ -31,7 +31,7 @@ fails with a message naming what is missing. It never goes green without doing a
 
 ## Brakes
 
-Each brake from [the design](../design.md#factory), and where it is enforced.
+Each brake, from the lab-wide [decision records](../adr/) and [the harness design brief](../../projects/harness/docs/design.md), and where it is enforced.
 
 | Brake | Where |
 |---|---|
@@ -104,7 +104,7 @@ on the subscription token (`factory/switch_rule.py`):
   plan's usage limits, switch.
 
 The harness itself never uses the subscription token
-([ADR 0002](../adr/0002-openrouter-only-provider-and-sole-credential.md)). This rule covers only the
+([ADR 0002](../../projects/harness/docs/adr/0002-openrouter-only-provider-and-sole-credential.md)). This rule covers only the
 factory's Claude Code.
 
 ## Pieces
@@ -163,7 +163,7 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 ## Not built yet
 
 - **The episode notes step.** At the end of an episode the factory writes episode notes from
-  [the template](../episodes/TEMPLATE.md). For now this is a Ticket like any other.
+  [the template](../../projects/harness/docs/episodes/TEMPLATE.md). For now this is a Ticket like any other.
 - **Retries after the concurrency queue.** GitHub keeps one pending run per concurrency group. If
   the owner labels three Tickets at once, the middle one's run is dropped and its label stays. Label
   one Ticket at a time.

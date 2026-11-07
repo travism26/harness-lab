@@ -207,7 +207,7 @@ These facts were checked against the providers' own pages on 2026-11-06, for pos
   [Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance). The usage policy
   lists "services that route requests through consumer subscriptions" under platform abuse.
   [Usage policy](https://www.anthropic.com/legal/aup). This supports
-  [ADR 0002](../adr/0002-openrouter-only-provider-and-sole-credential.md): the harness never uses a
+  [ADR 0002](../../projects/harness/docs/adr/0002-openrouter-only-provider-and-sole-credential.md): the harness never uses a
   subscription token.
 - **Not confirmed: the February 2026 date and wording.** The Register (2026-02-20) quotes a
   sentence that forbids subscription tokens "in any other product, tool, or service — including the

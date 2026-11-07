@@ -55,10 +55,10 @@ The map's section 4 is the full list. These four are the ones that change a read
 | Who merges | A human, after QA | A non-author verdict on that patch can merge under a full-autonomy grant. Otherwise a human does | A human merges |
 | When intent is fixed | Grill until the open questions are settled, before the away-from-keyboard run | An experiment can settle an empirical question during the run. Irreversible actions wait | Grill, then tickets, before the factory runs |
 | Pull request state | The loop stops at a reviewable branch or pull request | The mechanics note describes pull requests opened ready | Draft only |
-| What counts as done | Types, tests, then human QA | A per-app skill drives the real app. The author does not grade | The review step reads the diff. A run-the-app verifier is not a brake in the design brief |
+| What counts as done | Types, tests, then human QA | A per-app skill drives the real app. The author does not grade | The review step reads the diff. A run-the-app verifier is not a brake in the [harness design brief](../../projects/harness/docs/design.md) |
 
 ## ADW stays at the source
 
 [`workflows/adw/overview.md`](https://github.com/travism26/claude-code-adw/blob/b2e37ed6be82085269ce2c12a4035111b2a9994a/docs/research/software-factory/workflows/adw/overview.md) is a stage-by-stage reading of claude-code-adw's own pipeline: Python under `adws/` driving Claude Code from a ticket to a draft pull request a human merges. Its operating docs (`docs/factory/`), its skills (`.claude/skills/`), and its milestone plans stay in that repo. They are implementation and operating notes for that harness, not general factory material.
 
-harness-lab's Factory is the GitHub Actions setup in the design brief, committed on `main` by merged [harness-lab#3](https://github.com/travism26/harness-lab/pull/3). The operating description is [the factory doc](../factory/README.md). This folder does not restate it.
+harness-lab's Factory is the GitHub Actions setup in the [harness design brief](../../projects/harness/docs/design.md), committed on `main` by merged [harness-lab#3](https://github.com/travism26/harness-lab/pull/3). The operating description is [the factory doc](../factory/README.md). This folder does not restate it.

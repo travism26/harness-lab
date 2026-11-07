@@ -1,32 +1,20 @@
 # harness-lab
 
-A small agent harness, built in public by a software factory, with one blog post per episode.
+A lab: one repository where a shared software factory builds small projects. Terms used across the lab are here; each project's own terms are in its glossary, listed in [GLOSSARY-MAP.md](GLOSSARY-MAP.md).
 
 ## Language
 
-**Harness**:
-The small program in this repo that runs a model in a tool loop. It is the thing the series teaches.
-_Avoid_: Agent framework, bot
+**Lab**:
+This repository: one shared factory and the projects it builds.
+_Avoid_: Monorepo, platform
+
+**Project**:
+One self-contained application under `projects/`, with its own glossary, decisions and check.
+_Avoid_: App, module, package
 
 **Factory**:
-The GitHub Actions setup that turns labelled issues into draft PRs against this repo, with a review step. It builds the harness.
+The GitHub Actions setup that turns labelled issues into draft PRs against this repo, with a review step. It builds the lab's projects, not the harness.
 _Avoid_: Pipeline, CI bot, automation
-
-**Episode**:
-One numbered stage of the series (0 to 5), delivered as a set of tickets and one post.
-_Avoid_: Chapter, part, milestone
-
-**Post 0**:
-The first episode, which sets up the factory through the skeleton PR.
-_Avoid_: Bootstrap post, intro
-
-**Post**:
-The blog article for an episode, written in the author's voice in the separate blog repo.
-_Avoid_: Article, write-up
-
-**Episode notes**:
-The file the factory writes in this repo when an episode finishes: what was built, what broke, key snippets, PR links. Source material for the post.
-_Avoid_: Changelog, summary
 
 **Ticket**:
 A GitHub issue written for the factory to act on.

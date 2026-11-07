@@ -1,6 +1,6 @@
 # Design brief
 
-This records the decisions settled in the design grill of 2026-11-04 (four rounds). It is the starting point for post 0; it does not describe code that exists yet. Terms are defined in [GLOSSARY.md](../GLOSSARY.md) and the hardest-to-reverse choices are in [docs/adr/](adr/).
+This records the decisions settled in the design grill of 2026-11-04 (four rounds). It is the starting point for post 0; it does not describe code that exists yet. Terms are defined in [GLOSSARY.md](../GLOSSARY.md) (with the lab-wide terms in the [root glossary](../../../GLOSSARY.md)) and the hardest-to-reverse choices are in [docs/adr/](adr/) and the lab-wide [root decision records](../../../docs/adr/).
 
 ## Series and audience
 
@@ -36,12 +36,7 @@ When the factory finishes an episode it writes an episode notes file in this rep
 
 ## Factory
 
-- **Bootstrap:** a regular worker lays down the skeleton as one PR: uv project, tests, CI check, triage labels, and factory workflows copied from [claude-code-adw](https://github.com/travism26/claude-code-adw) PR 8 (label triggers, a review step on every PR, a rework cap). From episode 1, every change is an issue for the factory.
-- **Brakes:** draft PRs only, a review step on every PR, stop after two rework rounds per ticket, one ticket at a time, and a human merges.
-- **Identity:** one GitHub App, shared with claude-code-adw.
-- **Claude Code login switch rule:** while only the owner's work is involved, the factory's Claude Code runs on the owner's subscription token. It switches to an OpenRouter key before anyone else's issue or PR is acted on, before an unattended scheduled job runs, or if it strains subscription usage. The rule goes in the repo's factory doc.
-- **Spend:** about 20 USD in total on OpenRouter, split into two keys with per-key credit limits: 10 USD for GitHub test runs and 10 USD for local runs and the daily groceries job. The limit is the hard stop.
-- **Public-repo safety:** the factory starts only on a label the owner applies, never on issue open. PRs from forks never get secrets.
+The factory is shared by every project in the lab, so it is no longer described here. See [the factory doc](../../../docs/factory/README.md) for the brakes, identity, switch rule and spend, and the lab-wide [decision records](../../../docs/adr/) ([0003](../../../docs/adr/0003-factory-claude-code-on-subscription-token-with-switch-rule.md), [0004](../../../docs/adr/0004-per-key-credit-limits-as-the-spend-stop.md), [0005](../../../docs/adr/0005-label-only-factory-start-and-no-secrets-for-forks.md), [0007](../../../docs/adr/0007-factory-scripts-from-the-default-branch-agents-without-github-token.md)).
 
 ## Location privacy
 
@@ -59,7 +54,7 @@ The post 0 PR includes a step-by-step guide for the owner-only setup: the GitHub
 
 ## Facts to verify in post 0
 
-Checked against the providers' own pages on 2026-11-06. Quotes and links are in the [setup guide](factory/setup.md#what-was-verified-and-where).
+Checked against the providers' own pages on 2026-11-06. Quotes and links are in the [setup guide](../../../docs/factory/setup.md#what-was-verified-and-where).
 
 - **OpenRouter's Anthropic-compatible endpoint: confirmed.** OpenRouter's own docs document an endpoint that accepts Anthropic's Messages format (`https://openrouter.ai/api/v1/messages`), and a Claude Code setup with base URL `https://openrouter.ai/api`. The secondhand source was [Morph](https://www.morphllm.com/openrouter-anthropic-skin).
 - **Per-key credit limits: confirmed.** Each key can have its own credit limit in USD. Without a reset interval the limit is a lifetime cap. A key at its limit gets `403 Key limit exceeded`.

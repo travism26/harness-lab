@@ -1,24 +1,20 @@
 [project]
 name = "harness-lab"
 version = "0.0.0"
-description = "A small agent harness, built in public by a software factory."
-readme = "README.md"
-license = "MIT"
+description = "The harness-lab repo: one shared factory and the projects it builds."
 requires-python = ">=3.12"
 dependencies = []
 
 [dependency-groups]
 dev = ["pytest>=8"]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/harness_lab"]
+# The root is not a package: it holds the factory's scripts (factory/) and runs
+# every project's tests. Each project has its own pyproject.toml.
+[tool.uv]
+package = false
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-# The factory's scripts live in factory/ at the repo root, outside the
-# harness package; the tests import them from there.
-pythonpath = ["."]
+testpaths = ["tests", "projects/harness/tests"]
+# The factory's scripts live in factory/ at the repo root; the harness package
+# lives in projects/harness/src. The tests import both from there.
+pythonpath = [".", "projects/harness/src"]

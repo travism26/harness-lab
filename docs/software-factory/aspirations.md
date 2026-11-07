@@ -1,6 +1,6 @@
 # Research proposals from 2026-10-24
 
-[`decisions-to-grill.md`](https://github.com/travism26/claude-code-adw/blob/b2e37ed6be82085269ce2c12a4035111b2a9994a/docs/research/software-factory/decisions-to-grill.md) records a grilling session in claude-code-adw. The settled rows below are proposals for a personal pilot that would learn two existing workflows and, later, a personal Claude Code plugin. They are not decision records of harness-lab. They do not change [docs/design.md](../design.md) or anything under [docs/adr/](../adr/).
+[`decisions-to-grill.md`](https://github.com/travism26/claude-code-adw/blob/b2e37ed6be82085269ce2c12a4035111b2a9994a/docs/research/software-factory/decisions-to-grill.md) records a grilling session in claude-code-adw. The settled rows below are proposals for a personal pilot that would learn two existing workflows and, later, a personal Claude Code plugin. They are not decision records of harness-lab. They do not change [the harness design brief](../../projects/harness/docs/design.md) or anything under [docs/adr/](../adr/).
 
 The open question list in that file (autonomy per risk tier, who owns the oracle, loop shape, liveness, cost ceilings, and the extra questions from each dissection) was an agenda. It stays at the source. Nothing in this folder answers it.
 
@@ -32,7 +32,7 @@ The curriculum that turns R1–R15 into four supervised exercises on private pil
 |---|---|
 | R3, verifier merge on low-risk tiers | The design brief: a human merges every factory pull request. "Never a dark factory" is the part that matches. Low-risk self-merge is not a brake or a goal in the brief. |
 | R4, Claude Max 5x as the budget | [ADR 0004](../adr/0004-per-key-credit-limits-as-the-spend-stop.md): about 20 USD on OpenRouter, two keys, the key limit is the stop. |
-| R5, Claude Code only | The Factory's agent is Claude Code, with the switch rule in [ADR 0003](../adr/0003-factory-claude-code-on-subscription-token-with-switch-rule.md). The Harness calls Claude through OpenRouter and does not use a subscription token ([ADR 0002](../adr/0002-openrouter-only-provider-and-sole-credential.md)). |
+| R5, Claude Code only | The Factory's agent is Claude Code, with the switch rule in [ADR 0003](../adr/0003-factory-claude-code-on-subscription-token-with-switch-rule.md). The Harness calls Claude through OpenRouter and does not use a subscription token ([ADR 0002](../../projects/harness/docs/adr/0002-openrouter-only-provider-and-sole-credential.md)). |
 | R8, a personal plugin, and claude-code-adw as reference only | This repo is the series repo the Factory builds. The Harness is a small program in this repo, not a Claude Code plugin. |
 | R10, no external orchestrator | The Factory is GitHub Actions. That is the orchestrator the design brief specifies. |
 | R12, a user-level pstack model file | This repo commits no model map. A user-level file, if it exists on a given machine, is outside this repository. |

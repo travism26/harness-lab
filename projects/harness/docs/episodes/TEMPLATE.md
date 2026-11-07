@@ -1,7 +1,7 @@
 # Episode N: <topic>
 
 Episode notes: source material for the post, which is written separately in
-[travism26/blog](https://github.com/travism26/blog). Copy this file to `docs/episodes/NN-<slug>.md`
+[travism26/blog](https://github.com/travism26/blog). Copy this file to `projects/harness/docs/episodes/NN-<slug>.md`
 when an episode finishes, and fill it in from the episode's Tickets, PRs and factory runs. Keep to
 facts. No productivity figures.
 
