@@ -85,9 +85,9 @@ _Avoid_: Response, explanation, output
 ### Who the Caller is
 
 **Login**:
-The fixed synthetic step that establishes the Caller to the Agent. Demo-only, not real authentication.
+The fixed synthetic step that establishes the Caller to the Agent and signs the Caller assertion. Demo-only, not real authentication.
 _Avoid_: Auth, sign-in, session
 
-**Caller context**:
-Who the Caller is, as the Warden receives it alongside the Agent's JWT-SVID. Never taken from model output or an arbitrary header.
-_Avoid_: Session, delegation, on-behalf-of token
+**Caller assertion**:
+The Login's signed, short-lived statement of who the Caller is and which Agent may act for them. The Agent carries it untouched to the Warden alongside its JWT-SVID, and the Warden trusts it only once the signature verifies and it names that Agent. Never taken from model output, a request body or an unsigned header.
+_Avoid_: Caller context, session, delegation, on-behalf-of token
