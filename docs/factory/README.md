@@ -126,7 +126,23 @@ factory's Claude Code.
 | Rework round | `.github/workflows/rework.yml`, `factory/ticket.py` (`revise`, `build`, `publish`) |
 | Live check | `.github/workflows/factory-check.yml`, `factory/check.py` |
 | Claude Code login | `factory/claude.py`, `factory/switch_rule.py` |
-| CI check | `.github/workflows/ci.yml` (`uv run pytest`) |
+| CI check | `.github/workflows/ci.yml`, `factory/ci_projects.py` (see [CI](#ci)) |
+
+## CI
+
+`.github/workflows/ci.yml` runs on every PR and on every push to `main`, with no secrets and
+`persist-credentials: false` ([ADR 0005](../adr/0005-label-only-factory-start-and-no-secrets-for-forks.md)).
+
+1. The **factory tests** job always runs `uv run pytest tests/factory`.
+2. That job then chooses which Projects to check (`factory/ci_projects.py`). It diffs the change
+   against its base: a PR's base commit, or the commit before a push to `main`.
+   - Each Project (`projects/<name>/` with a `check`) whose files changed is checked.
+   - A change to `factory/`, `.github/` or the root `pyproject.toml` or `uv.lock` checks every Project,
+     because they all depend on those.
+   - With no base to diff against (a new branch's first push), every Project is checked.
+   - A change that touches no Project and nothing shared checks no Project. Only the factory tests run.
+3. A **check `<name>`** job runs `projects/<name>/check` for each chosen Project, in parallel. Every
+   job gets uv. A Project with a `go.mod` also gets Go, at the version its `go.mod` names.
 
 ## Labels
 

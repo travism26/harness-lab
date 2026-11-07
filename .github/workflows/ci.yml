@@ -1,4 +1,5 @@
-# The CI check: the tests, with uv, on every pull request and on main.
+# The CI check, on every pull request and on main: the factory's own tests, then the `check` of
+# each Project the change touches (factory/ci_projects.py chooses which; docs/factory/README.md).
 #
 # Plain `pull_request`, no secrets: it runs fork PRs' code, so it holds nothing
 # worth taking (docs/adr/0005).
@@ -18,15 +19,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  factory:
+    name: factory tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      projects: ${{ steps.choose.outputs.projects }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0  # the diff against the base needs its history
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Install
+        run: uv sync --locked
+      - name: Test
+        run: uv run pytest tests/factory
+      - name: Choose the Projects to check
+        id: choose
+        env:
+          # A PR diffs against its base; a push to main against the commit before it.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          projects=$(uv run python -m factory.ci_projects --base "$BASE")
+          echo "Projects to check: $projects"
+          echo "projects=$projects" >> "$GITHUB_OUTPUT"
+
+  project:
+    name: check ${{ matrix.project }}
+    needs: factory
+    if: needs.factory.outputs.projects != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.factory.outputs.projects) }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v10.3.3
-      - name: Install
-        run: uv sync --locked
-      - name: Test
-        run: uv run pytest
+      - uses: actions/setup-go@v7.0.0
+        if: hashFiles(format('projects/{0}/go.mod', matrix.project)) != ''
+        with:
+          go-version-file: projects/${{ matrix.project }}/go.mod
+          cache-dependency-path: projects/${{ matrix.project }}/go.sum
+      - name: Check
+        env:
+          PROJECT: ${{ matrix.project }}  # through env: a fork PR names the folders
+        run: "./projects/$PROJECT/check"
