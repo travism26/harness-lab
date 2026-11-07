@@ -101,8 +101,9 @@ ls -l "$WORK/f.jwt" 2>&1
 
 for fmt in summary json; do
   hdr "inspect jwt --format $fmt --headers"
-  "$BIN" inspect jwt --format "$fmt" --headers "$(cat "$WORK/agent.jwt")" 2>&1 \
-    || "$BIN" inspect jwt --format "$fmt" --headers <"$WORK/agent.jwt" 2>&1
+  "$BIN" inspect jwt --format "$fmt" --headers "$WORK/agent.jwt" 2>&1 \
+    || "$BIN" inspect jwt --format "$fmt" --headers --filename "$WORK/agent.jwt" 2>&1 \
+    || "$BIN" inspect jwt --help 2>&1 | sed -n '1,25p'
 done
 
 hdr "get bundle jwt -t $TD  (from the warden socket)"
@@ -113,16 +114,22 @@ hdr "get bundle --format jwt (the doc page's form)"
 "$BIN" get bundle --format jwt -s "unix://$SOCK/warden.sock" -t "$TD" 2>&1 | head -3
 
 hdr "verify jwt-svid via the warden socket (go-spiffe NewJWTSource path)"
-"$BIN" verify jwt-svid --help 2>&1 | sed -n '1,30p'
-"$BIN" verify jwt-svid -s "unix://$SOCK/warden.sock" --audiences warden "$(cat "$WORK/agent.jwt")" 2>&1 \
-  || "$BIN" verify jwt-svid -s "unix://$SOCK/warden.sock" --audiences warden --token "$(cat "$WORK/agent.jwt")" 2>&1
+"$BIN" verify jwt-svid -s "unix://$SOCK/warden.sock" --audiences warden --filename "$WORK/agent.jwt" 2>&1; echo "exit=$?"
 
 hdr "verify jwt-svid --bundle file"
-"$BIN" verify jwt-svid --bundle "$WORK/bundle.jwks" --audiences warden "$(cat "$WORK/agent.jwt")" 2>&1 \
-  || "$BIN" verify jwt-svid --bundle "$WORK/bundle.jwks" --audiences warden --token "$(cat "$WORK/agent.jwt")" 2>&1
+"$BIN" verify jwt-svid --bundle "$WORK/bundle.jwks" --trust-domain "$TD" --audiences warden --filename "$WORK/agent.jwt" 2>&1; echo "exit=$?"
+
+hdr "verify an unlisted-agent token (same trust domain)"
+"$BIN" get jwt-svid -s "unix://$SOCK/unlisted-agent.sock" --audiences warden --filename "$WORK/unlisted.jwt"
+"$BIN" verify jwt-svid -s "unix://$SOCK/warden.sock" --audiences warden --filename "$WORK/unlisted.jwt" 2>&1; echo "exit=$?"
+
+hdr "short-lived token, 3s after mint"
+"$BIN" get jwt-svid -s "unix://$SOCK/short-lived.sock" --audiences warden --filename "$WORK/short.jwt"
+sleep 3
+"$BIN" verify jwt-svid -s "unix://$SOCK/warden.sock" --audiences warden --filename "$WORK/short.jwt" 2>&1; echo "exit=$?"
 
 hdr "verify with the wrong audience"
-"$BIN" verify jwt-svid -s "unix://$SOCK/warden.sock" --audiences billing "$(cat "$WORK/agent.jwt")" 2>&1 | head -3
+"$BIN" verify jwt-svid -s "unix://$SOCK/warden.sock" --audiences billing --filename "$WORK/agent.jwt" 2>&1 | head -3
 
 hdr "restart: old token against the new keys"
 kill $RUNPID; wait $RUNPID 2>/dev/null
@@ -130,7 +137,7 @@ kill $RUNPID; wait $RUNPID 2>/dev/null
 RUNPID=$!
 for i in $(seq 1 50); do [[ -S $SOCK/warden.sock ]] && break; sleep 0.2; done
 sleep 0.5
-"$BIN" verify jwt-svid -s "unix://$SOCK/warden.sock" --audiences warden "$(cat "$WORK/agent.jwt")" 2>&1 | head -3
+"$BIN" verify jwt-svid -s "unix://$SOCK/warden.sock" --audiences warden --filename "$WORK/agent.jwt" 2>&1 | head -3
 
 if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
   hdr "OpenRouter: temperature 0 + strict tool, anthropic/claude-haiku-5.5"
