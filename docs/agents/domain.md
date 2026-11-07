@@ -12,7 +12,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 ## File structure
 
-This repo is **multi-context**: `GLOSSARY-MAP.md` at the root lists the lab-wide `GLOSSARY.md` and `projects/harness/GLOSSARY.md`. Project decisions are in `projects/<name>/docs/adr/`.
+This repo is **multi-context**: `GLOSSARY-MAP.md` at the root lists the lab-wide `GLOSSARY.md` and one `GLOSSARY.md` per project (`projects/harness/GLOSSARY.md`, `projects/agent-identity/GLOSSARY.md`). Project decisions are in `projects/<name>/docs/adr/`.
 
 Layout that applies here:
 
