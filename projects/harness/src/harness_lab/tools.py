@@ -24,6 +24,14 @@ READ_FILE_TOOL = {
 TOOLS = [READ_FILE_TOOL]
 
 
+def is_refused(path: str, workspace: Path = WORKSPACE) -> bool:
+    """True when the path resolves outside the workspace."""
+    try:
+        return not (workspace.resolve() / path).resolve().is_relative_to(workspace.resolve())
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def read_file(path: str, workspace: Path = WORKSPACE) -> str:
     """Return the file's text, or a message saying why it was refused or failed."""
     root = workspace.resolve()

@@ -4,3 +4,6 @@ __pycache__/
 .pytest_cache/
 dist/
 .env
+
+# Run logs: one JSON-lines file per Run.
+projects/harness/runs/
