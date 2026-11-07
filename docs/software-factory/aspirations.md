@@ -1,6 +1,6 @@
 # Research proposals from 2026-10-24
 
-[`decisions-to-grill.md`](https://github.com/travism26/claude-code-adw/blob/b2e37ed6be82085269ce2c12a4035111b2a9994a/docs/research/software-factory/decisions-to-grill.md) records a grilling session in claude-code-adw. The settled rows below are proposals for a personal pilot that would learn two existing workflows and, later, a personal Claude Code plugin. They are not decision records of harness-lab. They do not change [the harness design brief](../../projects/harness/docs/design.md) or anything under [docs/adr/](../adr/).
+[`decisions-to-grill.md`](https://github.com/travism26/claude-code-adw/blob/b2e37ed6be82085269ce2c12a4035111b2a9994a/docs/research/software-factory/decisions-to-grill.md) records a grilling session in claude-code-adw. The settled rows below are proposals for a personal pilot that would learn two existing workflows and, later, a personal Claude Code plugin. They are not decision records of harness-lab. They do not change [the factory doc](../factory/README.md) or anything under [docs/adr/](../adr/).
 
 The open question list in that file (autonomy per risk tier, who owns the oracle, loop shape, liveness, cost ceilings, and the extra questions from each dissection) was an agenda. It stays at the source. Nothing in this folder answers it.
 

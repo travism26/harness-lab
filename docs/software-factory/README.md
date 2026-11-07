@@ -2,7 +2,7 @@
 
 This folder is a research record consolidated from [claude-code-adw](https://github.com/travism26/claude-code-adw). It is a reading of other people's workflows and of decisions recorded there on 2026-10-24. It is not the specification of this repo's Factory. The committed factory is [the factory doc](../factory/README.md).
 
-**Settled for this repo.** The [harness design brief](../../projects/harness/docs/design.md), the [glossary](../../GLOSSARY.md), and the [decision records](../adr/) say what the Factory is here: the GitHub Actions setup that turns labelled issues into draft pull requests, with a review step and a human merge. The Harness is a separate object, the small program the series teaches.
+**Settled for this repo.** The [factory doc](../factory/README.md), the [glossary](../../GLOSSARY.md), and the [decision records](../adr/) say what the Factory is here: the GitHub Actions setup that turns labelled issues into draft pull requests, with a review step and a human merge. The Harness is a separate object, the small program the series teaches.
 
 **On `main` after [pull request #3](https://github.com/travism26/harness-lab/pull/3).** That pull request is merged (`c48e6a04292a03be0047b607d6faa5e5a775ad68`). It commits the factory workflows, the `factory/` scripts, the setup guide, and the episode-notes template. The factory doc says those workflows are adapted from [claude-code-adw#8](https://github.com/travism26/claude-code-adw/pull/8). The teaching loop is still the stub in `projects/harness/src/harness_lab/__init__.py`. The same factory doc says a run stops until the owner finishes the setup guide. This record does not copy those operating docs.
 

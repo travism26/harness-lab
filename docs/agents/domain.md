@@ -14,7 +14,20 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 This repo is **multi-context**: `GLOSSARY-MAP.md` at the root lists the lab-wide `GLOSSARY.md` and `projects/harness/GLOSSARY.md`. Project decisions are in `projects/<name>/docs/adr/`.
 
-Single-context repo (most repos):
+Layout that applies here:
+
+```
+/
+├── GLOSSARY-MAP.md
+├── GLOSSARY.md                        ← lab-wide terms
+├── docs/adr/                          ← lab-wide decisions
+└── projects/
+    └── harness/
+        ├── GLOSSARY.md
+        └── docs/adr/                  ← project decisions
+```
+
+For reference, a generic single-context repo (not this one):
 
 ```
 /
@@ -23,21 +36,6 @@ Single-context repo (most repos):
 │   ├── 0001-event-sourced-orders.md
 │   └── 0002-postgres-for-write-model.md
 └── src/
-```
-
-Multi-context repo (presence of `GLOSSARY-MAP.md` at the root):
-
-```
-/
-├── GLOSSARY-MAP.md
-├── docs/adr/                          ← system-wide decisions
-└── src/
-    ├── ordering/
-    │   ├── GLOSSARY.md
-    │   └── docs/adr/                  ← context-specific decisions
-    └── billing/
-        ├── GLOSSARY.md
-        └── docs/adr/
 ```
 
 ## Use the glossary's vocabulary

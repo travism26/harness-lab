@@ -17,4 +17,6 @@ package = false
 testpaths = ["tests", "projects/harness/tests"]
 # The factory's scripts live in factory/ at the repo root; the harness package
 # lives in projects/harness/src. The tests import both from there.
+# Adding a project under projects/<name>/ means adding its tests to testpaths
+# and its src to pythonpath here.
 pythonpath = [".", "projects/harness/src"]

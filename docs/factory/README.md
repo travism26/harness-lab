@@ -31,7 +31,7 @@ fails with a message naming what is missing. It never goes green without doing a
 
 ## Brakes
 
-Each brake, from the lab-wide [decision records](../adr/) and [the harness design brief](../../projects/harness/docs/design.md), and where it is enforced.
+Each brake, from the lab-wide [decision records](../adr/) (0003, 0004, 0005, 0007), and where it is enforced.
 
 | Brake | Where |
 |---|---|
