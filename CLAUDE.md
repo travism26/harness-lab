@@ -1,5 +1,9 @@
 # harness-lab
 
+## Coding standards
+
+Before building, changing or reviewing code, or writing a Ticket, read `CODING_STANDARDS.md`: Lab-wide rules for project layout, dependencies and paths.
+
 ## Agent skills
 
 ### Issue tracker
