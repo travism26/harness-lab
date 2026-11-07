@@ -38,13 +38,21 @@ class FakeGitHub:
         self.removed += list(labels)
 
 
-def _issue(author="travism26", state="OPEN", labels=("ready-for-agent",)):
+def _issue(author="travism26", state="OPEN", labels=("ready-for-agent", "project:harness")):
     return {"title": "Add a loop", "body": "Acceptance: it loops", "state": state,
             "author": {"login": author}, "labels": [{"name": n} for n in labels]}
 
 
+def _root(tmp_path, name="harness", executable=True):
+    check = tmp_path / "root" / "projects" / name / "check"
+    check.parent.mkdir(parents=True, exist_ok=True)
+    check.write_text("#!/usr/bin/env bash\n")
+    check.chmod(0o755 if executable else 0o644)
+
+
 def _args(tmp_path, **kw):
-    base = dict(repo=REPO, issue=4, pr=9, out=str(tmp_path / "out"), login="subscription",
+    _root(tmp_path)
+    base = dict(root=str(tmp_path / "root"), repo=REPO, issue=4, pr=9, out=str(tmp_path / "out"), login="subscription",
                 app_slug="harness-factory", run_url="https://run", work=str(tmp_path),
                 model="sonnet", max_budget_usd=5.0)
     base.update(kw)
@@ -57,7 +65,32 @@ def test_claim_labels_the_ticket_and_writes_it(tmp_path):
     assert gh.removed == ["ready-for-agent"] and gh.added == ["in-progress"]
     ctx = json.loads((tmp_path / "out" / "context.json").read_text())
     assert ctx["branch"] == "factory/issue-4" and ctx["pr"] is None
+    assert ctx["project"] == "harness"
+    prompt = ticket.build_prompt(tmp_path / "out")
+    assert "projects/harness/check" in prompt and "projects/harness/GLOSSARY.md" in prompt
     assert "it loops" in (tmp_path / "out" / "ticket.md").read_text()
+
+
+@pytest.mark.parametrize("labels, executable, match", [
+    (("ready-for-agent",), True, "no `project:<name>` label"),
+    (("ready-for-agent", "project:harness", "project:other"), True, "more than one"),
+    (("ready-for-agent", "project:missing"), True, "no executable `projects/missing/check`"),
+    (("ready-for-agent", "project:harness"), False, "no executable `projects/harness/check`"),
+])
+def test_claim_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, executable, match):
+    args = _args(tmp_path)
+    _root(tmp_path, executable=executable)
+    gh = FakeGitHub(issue=_issue(labels=labels))
+    with pytest.raises(ticket.Refused, match=match):
+        ticket.claim(args, gh)
+    assert gh.added == [] and gh.removed == ["ready-for-agent"]
+    assert "did not start" in gh.posted[0][1] and not (tmp_path / "out" / "context.json").exists()
+
+
+def test_revise_refuses_a_ticket_without_a_project(tmp_path):
+    gh = FakeGitHub(issue=_issue(labels=()), pr=_pr(), comments=[{"body": MARKER}])
+    with pytest.raises(RuntimeError, match="no `project:<name>` label"):
+        ticket.revise(_args(tmp_path), gh)
 
 
 def test_claim_refuses_a_second_ticket_in_progress(tmp_path):
@@ -107,6 +140,7 @@ def test_build_runs_the_agent_in_the_work_checkout(tmp_path):
     out = tmp_path / "out"
     out.mkdir()
     (out / "ticket.md").write_text("# t\n")
+    (out / "context.json").write_text(json.dumps({"project": "harness"}))
     seen = {}
 
     def agent(prompt, **kw):
@@ -119,6 +153,9 @@ def test_build_runs_the_agent_in_the_work_checkout(tmp_path):
     assert "rework round" not in seen["prompt"]
     assert "`CLAUDE.md`, `GLOSSARY-MAP.md`" in seen["prompt"]
     assert "`docs/design.md`" not in seen["prompt"]
+    assert "`projects/harness/check`" in seen["prompt"]
+    assert "`projects/harness/`" in seen["prompt"] or "projects/harness/GLOSSARY.md" in seen["prompt"]
+    assert "uv run pytest" not in seen["prompt"]
     assert (out / "summary.md").read_text() == "Added the loop.\n"
 
 
