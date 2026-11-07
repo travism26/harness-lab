@@ -31,6 +31,8 @@ def resolve_max_turns(value: int | None = None, env=None) -> int:
     """`--max-turns`, else HARNESS_MAX_TURNS, else 10."""
     env = os.environ if env is None else env
     if value is not None:
+        if value < 1:
+            raise ConfigError(f"--max-turns must be at least 1, got {value}")
         return value
     raw = env.get(MAX_TURNS_VAR)
     if not raw:
@@ -39,6 +41,8 @@ def resolve_max_turns(value: int | None = None, env=None) -> int:
         turns = int(raw)
     except ValueError:
         raise ConfigError(f"{MAX_TURNS_VAR} must be a whole number, got {raw!r}") from None
+    if turns < 1:
+        raise ConfigError(f"{MAX_TURNS_VAR} must be at least 1, got {turns}")
     return turns
 
 

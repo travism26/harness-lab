@@ -42,13 +42,13 @@ class ToolResult:
 
 
 def run_read_file(path: str, workspace: Path = WORKSPACE) -> ToolResult:
-    """Read a workspace file. A path outside the workspace, or one that cannot be
-    resolved, is refused."""
+    """Read a workspace file. A path outside the workspace is refused; one that
+    cannot be resolved is an ordinary error."""
     root = workspace.resolve()
     try:
         target = (root / path).resolve()
     except (OSError, ValueError, RuntimeError) as err:
-        return ToolResult(f"Error: cannot resolve path {path!r}: {err}", status="refused")
+        return ToolResult(f"Error: cannot resolve path {path!r}: {err}", status="error")
     if not target.is_relative_to(root):
         return ToolResult(f"Error: {path!r} is outside the workspace and was refused.",
                           status="refused")

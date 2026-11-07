@@ -87,6 +87,35 @@ def test_turn_cap_from_env(env, monkeypatch):
     assert len(m.requests) == 1
 
 
+@pytest.mark.parametrize("turns", ["0", "-3"])
+def test_turn_cap_below_one_rejected_from_flag(env, capsys, turns):
+    with StandInModel([text_reply("x")]) as m:
+        assert go(m, "--max-turns", turns) == 1
+    assert "--max-turns must be at least 1" in capsys.readouterr().err
+    assert m.requests == []
+
+
+@pytest.mark.parametrize("turns", ["0", "-3"])
+def test_turn_cap_below_one_rejected_from_env(env, monkeypatch, capsys, turns):
+    monkeypatch.setenv("HARNESS_MAX_TURNS", turns)
+    with StandInModel([text_reply("x")]) as m:
+        assert go(m) == 1
+    assert "HARNESS_MAX_TURNS must be at least 1" in capsys.readouterr().err
+    assert m.requests == []
+
+
+def test_unresolvable_path_is_an_error_not_a_refusal(env, capsys):
+    replies = [tool_use_reply("read_file", {"path": "a\x00b"}), text_reply("recovered")]
+    with StandInModel(replies) as m:
+        assert go(m) == 0
+    assert capsys.readouterr().out == "recovered\n"
+    assert stop(env) == "final_answer"
+    result = m.requests[1]["body"]["messages"][-1]["content"][0]
+    assert result["is_error"] is True and "cannot resolve path" in result["content"]
+    res = [e for e in events(env) if e["event"] == "tool_result"][0]
+    assert res["refused"] is False
+
+
 def test_provider_error(env, capsys):
     with StandInModel([error_reply(403, "Key limit exceeded")]) as m:
         assert go(m) == 1
