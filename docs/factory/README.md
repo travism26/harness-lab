@@ -13,13 +13,13 @@ fails with a message naming what is missing. It never goes green without doing a
 ## How a Ticket moves
 
 1. The owner writes a Ticket (a GitHub issue), applies one `project:<name>` label and applies
-   `ready-for-agent`. The `project:<name>` label names the Project the Ticket builds
+   `ready-for-factory`. The `project:<name>` label names the Project the Ticket builds
    (`projects/<name>/`). Adding a Project means adding one such label to `factory/labels.json`.
    The Project must have an executable `projects/<name>/check`: that script, not a fixed command,
    is how the factory tests the Project, so a Project can be in any language. A Ticket with no
    `project:` label, more than one, or a label whose folder has no executable `check` is refused
-   before any agent runs: the factory comments why on the Ticket and removes `ready-for-agent`.
-2. **Implement** (`.github/workflows/implement.yml`) claims it. It removes `ready-for-agent`, adds
+   before any agent runs: the factory comments why on the Ticket and removes `ready-for-factory`.
+2. **Implement** (`.github/workflows/implement.yml`) claims it. It removes `ready-for-factory`, adds
    `in-progress` and comments with a link to the run. Claude Code builds the change in a fresh
    checkout; its prompt names `projects/<name>/` and tells it to run `projects/<name>/check` until it
    passes, and to read that Project's glossary and decision records. The factory then commits it
@@ -46,7 +46,7 @@ Each brake, from the lab-wide [decision records](../adr/) (0003, 0004, 0005, 000
 | Draft PRs only | `factory/ticket.py` `publish` opens every PR with `--draft`. Nothing in the factory marks a PR ready or merges it. |
 | A review step on every PR | `review.yml` runs on `opened`, `synchronize`, `reopened` and `ready_for_review` for every PR from a branch of this repo, draft or not, the owner's own PRs included. Fork PRs are the exception: see public-repo safety below. |
 | Stop after two rework rounds per Ticket | `factory/review_pr.py`: `MAX_REWORK = 2`. The counter lives in the `rework:N` label. The blocker after `rework:2` adds `ready-for-human`. |
-| One Ticket at a time | `implement.yml` runs in one concurrency group, `factory-ticket`, which is never cancelled. `factory/ticket.py` `claim` refuses a Ticket while another open Ticket is labelled `in-progress`. The refusal is posted on the Ticket and `ready-for-agent` is removed. |
+| One Ticket at a time | `implement.yml` runs in one concurrency group, `factory-ticket`, which is never cancelled. `factory/ticket.py` `claim` refuses a Ticket while another open Ticket is labelled `in-progress`. The refusal is posted on the Ticket and `ready-for-factory` is removed. |
 | A human merges | The App has no permission to merge or approve, and no step asks it to. |
 
 Further limits:
@@ -148,12 +148,13 @@ factory's Claude Code.
 
 | Label | Who adds it | Meaning |
 |---|---|---|
-| `ready-for-agent` | Owner | Start the factory on this Ticket |
+| `ready-for-factory` | Owner | Start the factory on this Ticket |
 | `in-progress` | Factory | The factory is working on this Ticket. It stays until the Ticket closes. |
 | `rework`, `rework:1`, `rework:2` | Factory (Review) | Review found a Spec blocker; the counter is the rework round |
 | `ready-for-human` | Factory (Review) | Two rework rounds were not enough; the factory has stopped |
 | `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds: `projects/<name>/`, tested with its own `check` |
 | `factory-check` | Owner | Run the live check |
+| `ready-for-agent` | Owner or a skill | Triage only: fully specified. It does not start the factory, so a Ticket can carry it and still be built on the laptop |
 | `needs-triage`, `needs-info`, `wontfix` | Owner | Triage, see [triage-labels.md](../agents/triage-labels.md) |
 
 To change a label, edit `factory/labels.json` and run
@@ -179,7 +180,7 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 
 | What you see | What to do |
 |---|---|
-| A comment says the factory did not start the Ticket | Read the reason. For "one Ticket at a time", finish or close the other Ticket. For "switch rule", switch to `openrouter`. Then re-apply `ready-for-agent`. |
+| A comment says the factory did not start the Ticket | Read the reason. For "one Ticket at a time", finish or close the other Ticket. For "switch rule", switch to `openrouter`. Then re-apply `ready-for-factory`. |
 | A comment says the factory run failed | Open the run. The Ticket has lost `in-progress`, so it can be retried. |
 | A factory PR is closed without merging | Remove `in-progress` from its Ticket by hand. Otherwise one-at-a-time keeps every other Ticket waiting. |
 | A PR is labelled `ready-for-human` | Finish it by hand, or close it. The factory will not touch it again. |

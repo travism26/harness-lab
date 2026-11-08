@@ -38,7 +38,7 @@ class FakeGitHub:
         self.removed += list(labels)
 
 
-def _issue(author="travism26", state="OPEN", labels=("ready-for-agent", "project:harness")):
+def _issue(author="travism26", state="OPEN", labels=("ready-for-factory", "project:harness")):
     return {"title": "Add a loop", "body": "Acceptance: it loops", "state": state,
             "author": {"login": author}, "labels": [{"name": n} for n in labels]}
 
@@ -62,7 +62,7 @@ def test_claim_labels_the_ticket_and_writes_it(tmp_path):
     _root(tmp_path)
     gh = FakeGitHub(issue=_issue())
     assert ticket.claim(_args(tmp_path), gh) == 0
-    assert gh.removed == ["ready-for-agent"] and gh.added == ["in-progress"]
+    assert gh.removed == ["ready-for-factory"] and gh.added == ["in-progress"]
     ctx = json.loads((tmp_path / "out" / "context.json").read_text())
     assert ctx["branch"] == "factory/issue-4" and ctx["pr"] is None
     assert ctx["project"] == "harness"
@@ -72,10 +72,10 @@ def test_claim_labels_the_ticket_and_writes_it(tmp_path):
 
 
 @pytest.mark.parametrize("labels, executable, match", [
-    (("ready-for-agent",), True, "no `project:<name>` label"),
-    (("ready-for-agent", "project:harness", "project:other"), True, "more than one"),
-    (("ready-for-agent", "project:missing"), True, "no executable `projects/missing/check`"),
-    (("ready-for-agent", "project:harness"), False, "no executable `projects/harness/check`"),
+    (("ready-for-factory",), True, "no `project:<name>` label"),
+    (("ready-for-factory", "project:harness", "project:other"), True, "more than one"),
+    (("ready-for-factory", "project:missing"), True, "no executable `projects/missing/check`"),
+    (("ready-for-factory", "project:harness"), False, "no executable `projects/harness/check`"),
 ])
 def test_claim_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, executable, match):
     _root(tmp_path, executable=executable)
@@ -83,7 +83,7 @@ def test_claim_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, ex
     gh = FakeGitHub(issue=_issue(labels=labels))
     with pytest.raises(ticket.Refused, match=match):
         ticket.claim(args, gh)
-    assert gh.added == [] and gh.removed == ["ready-for-agent"]
+    assert gh.added == [] and gh.removed == ["ready-for-factory"]
     assert "did not start" in gh.posted[0][1] and not (tmp_path / "out" / "context.json").exists()
 
 
@@ -107,7 +107,7 @@ def test_claim_refuses_a_second_ticket_in_progress(tmp_path):
     gh = FakeGitHub(issue=_issue(), in_progress=[2, 4])
     with pytest.raises(ticket.Refused, match="one Ticket at a time: #2"):
         ticket.claim(_args(tmp_path), gh)
-    assert gh.added == [] and gh.removed == ["ready-for-agent"]
+    assert gh.added == [] and gh.removed == ["ready-for-factory"]
     assert "did not start" in gh.posted[0][1]
 
 
