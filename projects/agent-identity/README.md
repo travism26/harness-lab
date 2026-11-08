@@ -87,7 +87,7 @@ go run ./cmd/demo ask "Can Tom approve invoices?" --live
 go run ./cmd/demo ask "Can Tom approve invoices?" --live --provider openrouter --model anthropic/claude-sonnet-5.5
 ```
 
-Anthropic is the default when its key is present ([ADR 0003](docs/adr/0003-anthropic-api-as-a-second-model-provider.md)). A missing key exits non-zero before any request.
+`--provider anthropic|openrouter` names one. Without it, the demo uses Anthropic when its key is present and OpenRouter otherwise, decided once before the first request and never per call ([ADR 0003](docs/adr/0003-anthropic-api-as-a-second-model-provider.md)). A missing key exits non-zero before any request.
 
 **Real spiffecli** (`--spiffe-socket`). Start spiffecli by hand in its own terminal, because the demo never starts or stops it:
 
@@ -151,8 +151,8 @@ Sonnet 5.5 and Opus 5.5 (report-only) also scored 100% in every category, at abo
 
 - One question asks about one Permission for one person, so a two-part question gets an answer to only one part, and the Reply shows which ([`TestOneProposalForTwoPartQuestionMakesOneLookup`](internal/agent/ask_test.go)).
 - The Agent gives up on the Warden after 5 seconds and records `warden_unreachable`, even if the Warden goes on to record a decision ([`TestWardenUnreachable`](internal/agent/ask_test.go)).
-- Both services share one clock, with a fixed 1-minute leeway on both tokens: go-spiffe's own for the JWT-SVID, and an injected clock for the Caller assertion ([`TestCallerAssertionClockLeeway`](internal/warden/warden_test.go), [ADR 0002](docs/adr/0002-login-signs-the-caller-assertion.md)).
-- A stolen pair of tokens can be replayed for up to 5 minutes against the one audience they name, because there's no `jti` cache, and binding the tokens with `jti`, DPoP or mTLS is out of scope ([`TestExactlyMaxLifetimeTokenIsAccepted`](internal/warden/warden_test.go)).
+- The JWT-SVID and the Caller assertion each get 60 seconds of leeway past `exp`, from two different places. The JWT-SVID's is go-spiffe's own, and it reads the real clock, so a test can't move it. The Caller assertion's is checked against an injected clock ([`TestCallerAssertionClockLeeway`](internal/warden/warden_test.go), [ADR 0002](docs/adr/0002-login-signs-the-caller-assertion.md)). Clock skew beyond that leeway isn't covered, because the demo runs on one clock.
+- A stolen pair of tokens can be replayed, because there's no `jti` cache, and binding the tokens with `jti`, DPoP or mTLS is out of scope. The Warden refuses any token whose `exp − iat` is over 5 minutes ([`TestExactlyMaxLifetimeTokenIsAccepted`](internal/warden/warden_test.go)). The pair is accepted until the earlier of the JWT-SVID's `exp` + 60 s and the Caller assertion's `exp` + 60 s, so at most about 6 minutes after issue, not after expiry. The two tokens need not share an issue or expiry time, and the replay is against the one audience they name.
 - Replies read like templates, because they are ([ADR 0001](docs/adr/0001-model-only-proposes-replies-are-templates.md)).
 - spiffecli does no workload attestation, so any process that can open a socket gets that workload's identity ([`TestSpiffecliConfig`](cmd/demo/spiffecli_test.go), [spiffecli/workloads.toml](spiffecli/workloads.toml)).
 - The Login is a stand-in and the Seed data is synthetic, so nothing here is real authentication ([ADR 0002](docs/adr/0002-login-signs-the-caller-assertion.md), [internal/warden/seed.go](internal/warden/seed.go)).
