@@ -1,6 +1,9 @@
 package login_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"testing"
 	"time"
 
@@ -71,5 +74,39 @@ func TestNilClockMeansNow(t *testing.T) {
 	}
 	if d := time.Since(std.IssuedAt.Time()); d < -time.Second || d > time.Minute {
 		t.Errorf("iat is %v from now", d)
+	}
+}
+
+func TestNewWithKeyRejectsANilOrNonP256KeyAndSignsWithAValidOne(t *testing.T) {
+	if _, err := login.NewWithKey(nil, nil); err == nil {
+		t.Error("nil key accepted")
+	}
+	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := login.NewWithKey(nil, p384); err == nil {
+		t.Error("P-384 key accepted")
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lg, err := login.NewWithKey(nil, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := lg.Sign("acme/alice", "spiffe://example.com/warden", "spiffe://example.com/permission-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := jwt.ParseSigned(string(a), []jose.SignatureAlgorithm{jose.ES256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var std jwt.Claims
+	if err := tok.Claims(&key.PublicKey, &std); err != nil {
+		t.Errorf("assertion does not verify under the injected key: %v", err)
 	}
 }

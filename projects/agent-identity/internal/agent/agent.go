@@ -1,7 +1,7 @@
 // Package agent is the Agent client: it fetches a JWT-SVID through the Workload
 // API and makes a Lookup against the Warden with it, returning the Warden's
 // real Answer. This is the scripted path, used without a Model. It shares types
-// with the Warden only through internal/wire and never imports the Warden.
+// with the Warden only through projects/agent-identity/internal/wire and never imports the Warden.
 package agent
 
 import (
@@ -10,7 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
@@ -18,7 +21,7 @@ import (
 )
 
 // SVIDSource is the small Workload API interface the Agent fetches its JWT-SVID
-// through. The stand-in (internal/standin/workload) serves it in check;
+// through. The stand-in (projects/agent-identity/internal/standin/workload) serves it in check;
 // go-spiffe's workloadapi.JWTSource plugs in live.
 type SVIDSource interface {
 	FetchJWTSVID(ctx context.Context, params jwtsvid.Params) (*jwtsvid.SVID, error)
@@ -34,11 +37,20 @@ type Config struct {
 	Source SVIDSource
 	// HTTPClient makes the request. Nil means http.DefaultClient.
 	HTTPClient *http.Client
+	// WardenTimeout is the deadline on one Ask's Warden call; zero means 5s.
+	WardenTimeout time.Duration
+	// Model configures the Model client Ask uses. Nil means Ask is unavailable.
+	Model *ModelConfig
+	// NewCorrelationID makes a Correlation ID. Nil means 16 random bytes, hex.
+	NewCorrelationID func() string
+	// Audit, if set, takes one JSON-lines Audit record per question or Lookup.
+	Audit io.Writer
 }
 
 // Agent makes Lookups against the Warden as one workload.
 type Agent struct {
-	cfg Config
+	cfg     Config
+	auditMu sync.Mutex
 }
 
 // New builds an Agent. An empty WardenURL or Audience, or a nil Source, is an
@@ -76,9 +88,37 @@ type Response struct {
 // 401 or 403 is a normal Response, not an error; the error return is for a
 // failed fetch or a failed transport. Errors never include either token.
 func (a *Agent) Lookup(ctx context.Context, assertion wire.CallerAssertion, req wire.LookupRequest) (Response, error) {
+	corr := a.newCorrelationID()
+	res, err := a.lookup(ctx, assertion, req, corr, 0)
+	_, sub := unverifiedSub(assertion)
+	a.writeAudit(AuditRecord{CorrelationID: corr, CallerUnverified: sub, WardenStatus: res.Status})
+	return res, err
+}
+
+func (a *Agent) newCorrelationID() string {
+	if a.cfg.NewCorrelationID != nil {
+		return a.cfg.NewCorrelationID()
+	}
+	return randomID()
+}
+
+// fetchError marks a failed JWT-SVID fetch, as opposed to a failed Warden call.
+type fetchError struct{ err error }
+
+func (e fetchError) Error() string { return fmt.Sprintf("agent: fetch JWT-SVID: %v", e.err) }
+func (e fetchError) Unwrap() error { return e.err }
+
+// lookup is Lookup with an optional Correlation-Id header and an optional
+// deadline (zero: none) on the Warden call itself, not on the JWT-SVID fetch.
+func (a *Agent) lookup(ctx context.Context, assertion wire.CallerAssertion, req wire.LookupRequest, correlationID string, timeout time.Duration) (Response, error) {
 	svid, err := a.cfg.Source.FetchJWTSVID(ctx, jwtsvid.Params{Audience: a.cfg.Audience})
 	if err != nil {
-		return Response{}, fmt.Errorf("agent: fetch JWT-SVID: %w", err)
+		return Response{}, fetchError{err}
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -90,6 +130,9 @@ func (a *Agent) Lookup(ctx context.Context, assertion wire.CallerAssertion, req 
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set(wire.HeaderAuthorization, string(wire.BearerFor(wire.JWTSVID(svid.Marshal()))))
+	if correlationID != "" {
+		httpReq.Header.Set(wire.HeaderCorrelationID, correlationID)
+	}
 	if assertion != "" {
 		httpReq.Header.Set(wire.HeaderCallerAssertion, string(assertion))
 	}

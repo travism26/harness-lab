@@ -33,6 +33,7 @@ type Source struct {
 	keyID  string
 	signer jose.Signer
 	bundle *jwtbundle.Bundle
+	key    *ecdsa.PrivateKey
 }
 
 // New makes a Source for the trust domain with a fresh ES256 key.
@@ -40,6 +41,15 @@ func New(td spiffeid.TrustDomain) (*Source, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("workload stand-in: generate key: %w", err)
+	}
+	return NewWithKey(td, key)
+}
+
+// NewWithKey makes a Source for the trust domain that signs with key, which
+// must be a P-256 key.
+func NewWithKey(td spiffeid.TrustDomain, key *ecdsa.PrivateKey) (*Source, error) {
+	if key == nil || key.Curve != elliptic.P256() {
+		return nil, errors.New("workload stand-in: key must be a non-nil P-256 key")
 	}
 	keyID := rand.Text()
 	signer, err := jose.NewSigner(
@@ -52,6 +62,7 @@ func New(td spiffeid.TrustDomain) (*Source, error) {
 	return &Source{
 		td:     td,
 		keyID:  keyID,
+		key:    key,
 		signer: signer,
 		bundle: jwtbundle.FromJWTAuthorities(td, map[string]crypto.PublicKey{keyID: key.Public()}),
 	}, nil

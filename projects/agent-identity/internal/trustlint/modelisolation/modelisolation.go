@@ -27,7 +27,8 @@ func New(cfg Config) *analysis.Analyzer {
 }
 
 func run(pass *analysis.Pass, cfg Config) error {
-	self := strings.TrimSuffix(pass.Pkg.Path(), "_test")
+	// An external test package is path_test, and its test main is path.test.
+	self := strings.TrimSuffix(strings.TrimSuffix(pass.Pkg.Path(), ".test"), "_test")
 	if isUnder(self, cfg.ModelClient) {
 		return nil
 	}

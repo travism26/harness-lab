@@ -41,6 +41,10 @@ type fixture struct {
 	url      string
 	loginKey *ecdsa.PrivateKey
 
+	audit syncBuffer
+	// header is sent on every request, such as a Correlation-Id.
+	header http.Header
+
 	mu        sync.Mutex
 	decisions []warden.Decision
 	clock     time.Time
@@ -70,13 +74,14 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{source: source, loginKey: key, clock: time.Now().Truncate(time.Second)}
+	f := &fixture{source: source, loginKey: key, clock: time.Now().Truncate(time.Second), header: http.Header{}}
 	w, err := warden.New(warden.Config{
 		Audience:  wardenAudience,
 		Bundles:   source,
 		Allowlist: []spiffeid.ID{agentID},
 		LoginKey:  &key.PublicKey,
 		Now:       f.now,
+		Audit:     &f.audit,
 		OnDecision: func(d warden.Decision) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -183,6 +188,7 @@ func (f *fixture) withClaims(t *testing.T, mut func(*assertionClaims)) wire.Call
 type response struct {
 	status int
 	body   string
+	header http.Header
 }
 
 // post sends a Lookup with the given Authorization and Caller-Assertion headers
@@ -206,6 +212,9 @@ func (f *fixture) postRaw(t *testing.T, authorization wire.Bearer, assertion wir
 	if err != nil {
 		t.Fatal(err)
 	}
+	for k, v := range f.header {
+		req.Header[k] = v
+	}
 	if authorization != "" {
 		req.Header.Set(wire.HeaderAuthorization, string(authorization))
 	}
@@ -221,7 +230,7 @@ func (f *fixture) postRaw(t *testing.T, authorization wire.Bearer, assertion wir
 	if err != nil {
 		t.Fatal(err)
 	}
-	return response{status: resp.StatusCode, body: strings.TrimSpace(string(raw))}
+	return response{status: resp.StatusCode, body: strings.TrimSpace(string(raw)), header: resp.Header}
 }
 
 func (f *fixture) lastDecision(t *testing.T) warden.Decision {

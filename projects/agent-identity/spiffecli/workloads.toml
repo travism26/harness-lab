@@ -1,0 +1,24 @@
+# spiffecli config for the agent-identity demo's --spiffe-socket mode.
+# Start it by hand from projects/agent-identity/ (the demo never starts it):
+#
+#   mkdir -p /tmp/agent-identity && spiffecli run --config spiffecli/workloads.toml
+#
+# then: go run ./cmd/demo tour --spiffe-socket /tmp/agent-identity/permission-agent.sock \
+#         --spiffe-socket-other /tmp/agent-identity/unlisted-agent.sock
+#
+# The Warden takes its bundle from warden.sock, found beside the Agent's socket
+# (override with --spiffe-socket-warden). Sockets stay under /tmp/agent-identity/
+# because a macOS socket path may be at most 104 bytes. There is no table for
+# the HTTP bundle endpoint, so nothing listens on :8080.
+
+[td."example.com".workload.permission-agent]
+socket_path  = "/tmp/agent-identity/permission-agent.sock"
+jwt_svid_ttl = "5m"
+
+[td."example.com".workload.warden]
+socket_path  = "/tmp/agent-identity/warden.sock"
+jwt_svid_ttl = "5m"
+
+[td."example.com".workload.unlisted-agent]
+socket_path  = "/tmp/agent-identity/unlisted-agent.sock"
+jwt_svid_ttl = "5m"

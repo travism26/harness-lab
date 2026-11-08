@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"time"
 
@@ -32,6 +33,15 @@ func New(now func() time.Time) (*Login, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("login: generate key: %w", err)
+	}
+	return NewWithKey(now, key)
+}
+
+// NewWithKey makes a Login that signs with key, which must be a P-256 key. A
+// nil now means time.Now.
+func NewWithKey(now func() time.Time, key *ecdsa.PrivateKey) (*Login, error) {
+	if key == nil || key.Curve != elliptic.P256() {
+		return nil, errors.New("login: key must be a non-nil P-256 key")
 	}
 	if now == nil {
 		now = time.Now

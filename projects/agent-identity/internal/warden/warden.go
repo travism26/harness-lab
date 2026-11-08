@@ -8,10 +8,12 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
@@ -56,6 +58,12 @@ const (
 // Target and Permission are set once the Lookup body has decoded, and Role only
 // on answer_yes. It never holds a token or a raw error.
 type Decision struct {
+	// CorrelationID is the ID echoed and audited: the Agent's if it was valid,
+	// else one the Warden minted. RejectedCorrelationIDLen is the length of an
+	// invalid one the Agent sent, else nil.
+	CorrelationID            string
+	RejectedCorrelationIDLen *int
+
 	Status      int
 	Outcome     Outcome
 	FailedCheck FailedCheck
@@ -82,6 +90,8 @@ type Config struct {
 	// OnDecision, if set, is called with each Decision before the response is
 	// written.
 	OnDecision func(Decision)
+	// Audit, if set, takes one JSON-lines Audit record per Lookup.
+	Audit io.Writer
 	// Logger takes operational noise, including raw verification errors at
 	// debug level. Nil means slog.Default().
 	Logger *slog.Logger
@@ -99,6 +109,8 @@ type Warden struct {
 	loginKey   *ecdsa.PublicKey
 	now        func() time.Time
 	onDecision func(Decision)
+	audit      io.Writer
+	auditMu    sync.Mutex
 	log        *slog.Logger
 	mux        *http.ServeMux
 }
@@ -122,6 +134,7 @@ func New(cfg Config) (*Warden, error) {
 		loginKey:   cfg.LoginKey,
 		now:        cfg.Now,
 		onDecision: cfg.OnDecision,
+		audit:      cfg.Audit,
 		log:        cfg.Logger,
 		mux:        http.NewServeMux(),
 	}
@@ -144,38 +157,34 @@ func (w *Warden) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *Warden) lookup(rw http.ResponseWriter, r *http.Request) {
+	// The Correlation ID is read before any token check and echoed on every
+	// response.
+	id, rejected := correlationID(r.Header.Get(wire.HeaderCorrelationID))
+	rw.Header().Set(wire.HeaderCorrelationID, id)
+	base := Decision{CorrelationID: id, RejectedCorrelationIDLen: rejected}
 	svid, reason := w.verifyJWTSVID(wire.Bearer(r.Header.Get(wire.HeaderAuthorization)))
 	if svid == nil {
-		w.respond(rw, Decision{
-			Status:      http.StatusUnauthorized,
-			Outcome:     OutcomeUnauthenticated,
-			FailedCheck: CheckJWTSVID,
-			Reason:      reason,
-		}, wire.ErrorBody{Error: wire.ErrUnauthenticated})
+		d := base
+		d.Status, d.Outcome, d.FailedCheck, d.Reason = http.StatusUnauthorized, OutcomeUnauthenticated, CheckJWTSVID, reason
+		w.respond(rw, d, wire.ErrorBody{Error: wire.ErrUnauthenticated})
 		return
 	}
 	agent := svid.ID.String()
 	if !w.allowlist[svid.ID] {
-		w.respond(rw, Decision{
-			Status:      http.StatusForbidden,
-			Outcome:     OutcomeAgentNotAllowed,
-			FailedCheck: CheckAllowlist,
-			Agent:       agent,
-		}, wire.ErrorBody{Error: wire.ErrAgentNotAllowed})
+		d := base
+		d.Status, d.Outcome, d.FailedCheck, d.Agent = http.StatusForbidden, OutcomeAgentNotAllowed, CheckAllowlist, agent
+		w.respond(rw, d, wire.ErrorBody{Error: wire.ErrAgentNotAllowed})
 		return
 	}
 	caller, reason := w.verifyCallerAssertion(wire.CallerAssertion(r.Header.Get(wire.HeaderCallerAssertion)), agent)
 	if caller == "" {
-		w.respond(rw, Decision{
-			Status:      http.StatusUnauthorized,
-			Outcome:     OutcomeUnauthenticated,
-			FailedCheck: CheckCallerAssertion,
-			Reason:      reason,
-			Agent:       agent,
-		}, wire.ErrorBody{Error: wire.ErrUnauthenticated})
+		d := base
+		d.Status, d.Outcome, d.FailedCheck, d.Reason, d.Agent = http.StatusUnauthorized, OutcomeUnauthenticated, CheckCallerAssertion, reason, agent
+		w.respond(rw, d, wire.ErrorBody{Error: wire.ErrUnauthenticated})
 		return
 	}
-	w.answer(rw, r, agent, caller)
+	base.Agent, base.Caller = agent, caller
+	w.answer(rw, r, base)
 }
 
 // maxBodyBytes caps the Lookup body.
@@ -184,8 +193,8 @@ const maxBodyBytes = 4 << 10
 // answer runs the Lookup check and answers. The Caller's Tenant comes from the
 // Seed data, never from the request, and the check never reads the Target's
 // Seed entry, so a refusal looks the same whether or not the Target exists.
-func (w *Warden) answer(rw http.ResponseWriter, r *http.Request, agent, caller string) {
-	d := Decision{Agent: agent, Caller: caller}
+func (w *Warden) answer(rw http.ResponseWriter, r *http.Request, d Decision) {
+	caller := d.Caller
 	denied := func(check FailedCheck) {
 		d.Status, d.Outcome, d.FailedCheck = http.StatusForbidden, OutcomeDenial, check
 		w.respond(rw, d, wire.ErrorBody{Error: wire.ErrDenied})
@@ -312,6 +321,7 @@ func (w *Warden) respond(rw http.ResponseWriter, d Decision, body any) {
 	if w.onDecision != nil {
 		w.onDecision(d)
 	}
+	w.writeAudit(d)
 	rw.Header().Set("Content-Type", "application/json")
 	rw.WriteHeader(d.Status)
 	if err := json.NewEncoder(rw).Encode(body); err != nil {
