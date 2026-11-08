@@ -1,6 +1,6 @@
 # harness-lab
 
-A lab where a software factory builds small projects, built in public. Work arrives as GitHub issues: the owner labels a Ticket `ready-for-agent`, and the factory builds it as a draft PR, reviews it, and leaves the merge to a human.
+A lab where a software factory builds small projects, built in public. Work arrives as GitHub issues: the owner labels a Ticket `ready-for-factory`, and the factory builds it as a draft PR, reviews it, and leaves the merge to a human.
 
 - [Harness](projects/harness/): a small agent harness, one blog post per episode. Start at its [README](projects/harness/README.md).
 - [Glossary map](GLOSSARY-MAP.md), the lab [glossary](GLOSSARY.md) and [decision records](docs/adr/): terms and the hard-to-reverse choices.

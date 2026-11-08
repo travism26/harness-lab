@@ -1,7 +1,7 @@
 # The factory's build step (docs/factory/README.md).
 #
 # Turns a Ticket into a draft PR when the repository owner labels it
-# `ready-for-agent`. Nothing else starts it: not opening an issue, not a label
+# `ready-for-factory`. Nothing else starts it: not opening an issue, not a label
 # from anyone else (docs/adr/0005). One Ticket at a time: `claim` refuses while
 # another open Ticket is `in-progress`.
 #
@@ -23,7 +23,7 @@ concurrency:
   # identical to the job's `if:` below.
   group: >-
     ${{
-      (github.event.label.name == 'ready-for-agent'
+      (github.event.label.name == 'ready-for-factory'
         && github.event.sender.login == github.repository_owner
         && !github.event.issue.pull_request)
       && 'factory-ticket'
@@ -37,9 +37,9 @@ env:
 
 jobs:
   implement:
-    # Only the owner's `ready-for-agent` label on an issue (not a PR).
+    # Only the owner's `ready-for-factory` label on an issue (not a PR).
     if: >-
-      github.event.label.name == 'ready-for-agent'
+      github.event.label.name == 'ready-for-factory'
       && github.event.sender.login == github.repository_owner
       && !github.event.issue.pull_request
     runs-on: ubuntu-latest

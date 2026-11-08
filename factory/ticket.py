@@ -40,7 +40,7 @@ from factory.github import GitHub, GitHubError, author, label_names, write_comme
 from factory.review_pr import HUMAN_LABEL, MARKER, REWORK_LABEL, linked_ticket
 from factory.switch_rule import LOGINS, refusal
 
-START_LABEL = "ready-for-agent"
+START_LABEL = "ready-for-factory"
 PROGRESS_LABEL = "in-progress"
 PROJECT_PREFIX = "project:"
 PROJECTS_DIR = "projects"

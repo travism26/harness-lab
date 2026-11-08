@@ -155,7 +155,7 @@ the App token mints, Claude Code answers on the configured login, and the App po
    3. Run `gh variable delete FACTORY_CLAUDE_LOGIN` to go back to the subscription token.
 5. Close the issue.
 
-The factory is ready. The first real Ticket gets `ready-for-agent`.
+The factory is ready. The first real Ticket gets `ready-for-factory`.
 
 ## If something goes wrong
 
