@@ -227,7 +227,7 @@ func (f *fakeSockets) open(_ context.Context, socket string) (jwtSource, error) 
 	defer f.mu.Unlock()
 	f.opened = append(f.opened, socket)
 	if socket == f.failOn {
-		return nil, errors.New("dial unix " + socket + ": no such file")
+		return nil, errors.New("dial unix: no such file")
 	}
 	s := &fakeJWTSource{f: f, socket: socket}
 	switch {
