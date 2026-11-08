@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelclient"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 )
 
 // Categories lists the case categories in report order.
@@ -82,18 +83,6 @@ func (c Case) validate() error {
 	return nil
 }
 
-// Provider describes one live provider: its API root and the environment
-// variable that holds its key.
-type Provider struct {
-	Name, BaseURL, KeyEnv string
-}
-
-// Providers are the two live providers (ADR 0003).
-var Providers = map[string]Provider{
-	"anthropic":  {"anthropic", "https://api.anthropic.com", "ANTHROPIC_API_KEY"},
-	"openrouter": {"openrouter", "https://openrouter.ai/api", "OPENROUTER_API_KEY"},
-}
-
 // ClientConfig names a live Model client. Empty Model and BaseURL take the
 // provider's defaults.
 type ClientConfig struct {
@@ -103,7 +92,7 @@ type ClientConfig struct {
 // NewClient builds the Model client for cfg and returns it with the model id
 // it will use. cmd/eval cannot import the Model client itself (trustlint R1).
 func NewClient(cfg ClientConfig) (Proposer, string, error) {
-	p, ok := Providers[cfg.Provider]
+	p, ok := provider.Providers[cfg.Provider]
 	if !ok {
 		return nil, "", fmt.Errorf("eval: unknown provider %q", cfg.Provider)
 	}

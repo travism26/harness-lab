@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/eval"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 )
 
 func main() {
@@ -24,7 +25,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	runs := fs.Int("runs", 3, "runs per case")
 	minAcc := fs.Float64("min-accuracy", 0.9, "accuracy every counted category must reach; 0 is report-only")
 	modelID := fs.String("model", "", "model id (default by provider)")
-	provider := fs.String("provider", "", "anthropic or openrouter (default: anthropic if its key is set, else openrouter)")
+	providerName := fs.String("provider", "", "anthropic or openrouter (default: anthropic if its key is set, else openrouter)")
 	cases := fs.String("cases", "evals/cases.jsonl", "the cases file")
 	baseURL := fs.String("base-url", "", "override the provider's API root (for tests against the stand-in Model)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *runs < 1 || *minAcc < 0 || *minAcc > 1 {
@@ -32,25 +33,13 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		return 2
 	}
 
-	// Provider and key selection is deliberately minimal until ticket #68
-	// replaces it with .env loading and the full ADR 0003 rules.
-	name := *provider
-	if name == "" {
-		name = "openrouter"
-		if getenv(eval.Providers["anthropic"].KeyEnv) != "" {
-			name = "anthropic"
-		}
-	}
-	p, ok := eval.Providers[name]
-	if !ok {
-		fmt.Fprintf(stderr, "eval: unknown provider %q\n", name)
+	// The shared selection rule; ticket #68 feeds it a getenv that also reads .env.
+	choice, err := provider.Select(*providerName, getenv)
+	if err != nil {
+		fmt.Fprintf(stderr, "eval: %v\n", err)
 		return 2
 	}
-	key := getenv(p.KeyEnv)
-	if key == "" {
-		fmt.Fprintf(stderr, "eval: provider %s needs %s\n", name, p.KeyEnv)
-		return 2
-	}
+	name, key := choice.Name, choice.Key
 
 	f, err := os.Open(*cases)
 	if err != nil {
