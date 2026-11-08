@@ -91,3 +91,13 @@ _Avoid_: Auth, sign-in, session
 **Caller assertion**:
 The Login's signed, short-lived statement of who the Caller is and which Agent may act for them. The Agent carries it untouched to the Warden alongside its JWT-SVID, and the Warden trusts it only once the signature verifies and it names that Agent. Never taken from model output, a request body or an unsigned header.
 _Avoid_: Caller context, session, delegation, on-behalf-of token
+
+### Judging the Model
+
+**Eval**:
+A scored run of hand-written questions through the live Model client, measuring how often the Model's Proposal matches what each question asked. It judges the Model, never the Warden.
+_Avoid_: Benchmark, test suite, test
+
+**Eval case**:
+One question in an Eval, with the Proposals accepted for it, or the expectation that the Model makes no Proposal.
+_Avoid_: Test case, fixture, sample
