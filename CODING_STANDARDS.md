@@ -5,7 +5,7 @@ These rules apply across the Lab. The factory's builder follows them, and its re
 ## Projects and dependencies
 
 - **Every Python project is a uv workspace member.** It is listed in the root manifest's workspace members and its dependencies, and locked in the one root `uv.lock`. A project in another language commits its own lockfile (for Go, `go.sum`).
-- **A project's `check` runs against committed, locked dependencies only, and exits non-zero on failure.** For a Python project, that means `uv run --locked --package <name> pytest` from the project folder.
+- **A project's `check` runs against committed, locked dependencies only, and exits non-zero on failure.** For a Python project, that means `uv run --locked --package <name> pytest` from the project folder. A Go project's `check` runs `go vet` and the tests against `go.sum`, with linters pinned as `tool` dependencies in `go.mod` and run with `go tool`.
 - **Every manifest, config file and setting is read by something.** Add one when the code that reads it lands, in the same change.
 - **Package and module names are unique across the Lab.**
 

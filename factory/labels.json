@@ -11,6 +11,7 @@
     {"name": "rework:1", "color": "f9d0c4", "description": "Factory review blocked this PR once"},
     {"name": "rework:2", "color": "f9d0c4", "description": "Factory review blocked this PR twice; the next blocker goes to a human"},
     {"name": "project:harness", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/harness/)"},
+    {"name": "project:agent-identity", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/agent-identity/)"},
     {"name": "ready-for-factory", "color": "0b6e2c", "description": "Owner-applied: the factory builds this ticket"},
     {"name": "factory-check", "color": "bfdadc", "description": "Owner-applied: the factory answers with a short live check"}
   ]
