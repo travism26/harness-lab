@@ -1,6 +1,11 @@
 package warden
 
-import "strings"
+import (
+	"errors"
+	"strings"
+
+	"github.com/go-jose/go-jose/v4/jwt"
+)
 
 // Reason is a closed-set code for why a token failed. It is safe to record: it
 // never carries the raw error.
@@ -14,6 +19,16 @@ const (
 	ReasonJWTSVIDAudience  Reason = "jwt_svid_audience"
 	ReasonJWTSVIDLifetime  Reason = "jwt_svid_lifetime"
 	ReasonJWTSVIDOther     Reason = "jwt_svid_other"
+
+	ReasonAssertionMissing        Reason = "assertion_missing"
+	ReasonAssertionMalformed      Reason = "assertion_malformed"
+	ReasonAssertionSignature      Reason = "assertion_signature"
+	ReasonAssertionExpired        Reason = "assertion_expired"
+	ReasonAssertionAudience       Reason = "assertion_audience"
+	ReasonAssertionLifetime       Reason = "assertion_lifetime"
+	ReasonAssertionOther          Reason = "assertion_other"
+	ReasonAssertionMayActMismatch Reason = "assertion_may_act_mismatch"
+	ReasonAssertionUnknownCaller  Reason = "assertion_unknown_caller"
 )
 
 // jwtsvidReasons maps go-spiffe's error text to a Reason, first match wins. It
@@ -43,4 +58,16 @@ func JWTSVIDReason(err error) Reason {
 		}
 	}
 	return ReasonJWTSVIDOther
+}
+
+// AssertionReason maps a go-jose claim validation error to a Reason. An error it
+// does not know, including a token issued in the future, is ReasonAssertionOther.
+func AssertionReason(err error) Reason {
+	switch {
+	case errors.Is(err, jwt.ErrExpired):
+		return ReasonAssertionExpired
+	case errors.Is(err, jwt.ErrInvalidAudience):
+		return ReasonAssertionAudience
+	}
+	return ReasonAssertionOther
 }

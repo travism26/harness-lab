@@ -128,3 +128,25 @@ func TestJWTSVIDReasonOnRealGoSpiffeErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestAssertionReasonMapsGoJoseErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want warden.Reason
+	}{
+		{"expired", jwt.ErrExpired, "assertion_expired"},
+		{"wrapped expired", fmt.Errorf("x: %w", jwt.ErrExpired), "assertion_expired"},
+		{"audience", jwt.ErrInvalidAudience, "assertion_audience"},
+		{"issued in the future", jwt.ErrIssuedInTheFuture, "assertion_other"},
+		{"not yet valid", jwt.ErrNotValidYet, "assertion_other"},
+		{"unknown", errors.New("something nobody planned for"), "assertion_other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := warden.AssertionReason(tc.err); got != tc.want {
+				t.Errorf("AssertionReason(%q) = %s; want %s", tc.err, got, tc.want)
+			}
+		})
+	}
+}

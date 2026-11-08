@@ -65,10 +65,11 @@ type Response struct {
 	Error string
 }
 
-// Lookup fetches a fresh JWT-SVID and POSTs the Lookup to the Warden. A 401 or
-// 403 is a normal Response, not an error; the error return is for a failed fetch
-// or a failed transport. Errors never include the token.
-func (a *Agent) Lookup(ctx context.Context, req wire.LookupRequest) (Response, error) {
+// Lookup fetches a fresh JWT-SVID and POSTs the Lookup to the Warden, carrying
+// the Caller assertion in its own header. An empty assertion sends no header. A
+// 401 or 403 is a normal Response, not an error; the error return is for a
+// failed fetch or a failed transport. Errors never include either token.
+func (a *Agent) Lookup(ctx context.Context, assertion wire.CallerAssertion, req wire.LookupRequest) (Response, error) {
 	svid, err := a.cfg.Source.FetchJWTSVID(ctx, jwtsvid.Params{Audience: a.cfg.Audience})
 	if err != nil {
 		return Response{}, fmt.Errorf("agent: fetch JWT-SVID: %w", err)
@@ -83,6 +84,9 @@ func (a *Agent) Lookup(ctx context.Context, req wire.LookupRequest) (Response, e
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set(wire.HeaderAuthorization, string(wire.BearerFor(wire.JWTSVID(svid.Marshal()))))
+	if assertion != "" {
+		httpReq.Header.Set(wire.HeaderCallerAssertion, string(assertion))
+	}
 	resp, err := a.cfg.HTTPClient.Do(httpReq)
 	if err != nil {
 		// The transport error is a *url.Error holding URL and cause, never headers.

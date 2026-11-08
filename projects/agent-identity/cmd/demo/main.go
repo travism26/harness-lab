@@ -13,6 +13,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/login"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
@@ -84,6 +85,10 @@ func runTokens(ctx context.Context, stdout io.Writer, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	lg, err := login.New(nil)
+	if err != nil {
+		return err
+	}
 	var (
 		mu   sync.Mutex
 		last warden.Decision
@@ -92,6 +97,7 @@ func runTokens(ctx context.Context, stdout io.Writer, log *slog.Logger) error {
 		Audience:  wardenAud,
 		Bundles:   source,
 		Allowlist: []spiffeid.ID{permissionAgent},
+		LoginKey:  lg.PublicKey(),
 		OnDecision: func(d warden.Decision) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -125,7 +131,11 @@ func runTokens(ctx context.Context, stdout io.Writer, log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		res, err := a.Lookup(ctx, req)
+		assertion, err := lg.Sign("acme/alice", wardenAud, c.id.String())
+		if err != nil {
+			return err
+		}
+		res, err := a.Lookup(ctx, assertion, req)
 		if err != nil {
 			return err
 		}

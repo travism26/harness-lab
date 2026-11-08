@@ -3,6 +3,9 @@ package warden_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -12,9 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/login"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
@@ -31,11 +37,27 @@ var (
 // fixture is a real Warden on loopback HTTP, trusting the stand-in's bundle,
 // with the Decisions it made.
 type fixture struct {
-	source *workload.Source
-	url    string
+	source   *workload.Source
+	url      string
+	loginKey *ecdsa.PrivateKey
 
 	mu        sync.Mutex
 	decisions []warden.Decision
+	clock     time.Time
+}
+
+// now is the Warden's clock for the Caller assertion. It starts at the real time
+// and tests move it with setNow.
+func (f *fixture) now() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.clock
+}
+
+func (f *fixture) setNow(t time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clock = t
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -44,11 +66,17 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{source: source}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fixture{source: source, loginKey: key, clock: time.Now().Truncate(time.Second)}
 	w, err := warden.New(warden.Config{
 		Audience:  wardenAudience,
 		Bundles:   source,
 		Allowlist: []spiffeid.ID{agentID},
+		LoginKey:  &key.PublicKey,
+		Now:       f.now,
 		OnDecision: func(d warden.Decision) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -91,13 +119,75 @@ func (f *fixture) sign(t *testing.T, id spiffeid.ID, audience []string, iat, exp
 	return token
 }
 
+// assertionClaims is the payload of a hand-signed Caller assertion.
+type assertionClaims struct {
+	Iss    string          `json:"iss"`
+	Sub    string          `json:"sub"`
+	Aud    string          `json:"aud"`
+	Iat    *int64          `json:"iat,omitempty"`
+	Exp    *int64          `json:"exp,omitempty"`
+	MayAct *map[string]any `json:"may_act,omitempty"`
+}
+
+// goodClaims are the claims of a valid assertion for acme/alice through agentID,
+// issued at the fixture clock.
+func (f *fixture) goodClaims() assertionClaims {
+	iat, exp := f.now().Unix(), f.now().Add(login.Lifetime).Unix()
+	return assertionClaims{
+		Iss:    login.Issuer,
+		Sub:    "acme/alice",
+		Aud:    wardenAudience,
+		Iat:    &iat,
+		Exp:    &exp,
+		MayAct: &map[string]any{"sub": agentID.String()},
+	}
+}
+
+// signAssertion signs claims with key. alg is ES256 or HS256 (HS256 ignores key
+// and uses a fixed secret); kid "" omits the kid header.
+func signAssertion(t *testing.T, key *ecdsa.PrivateKey, alg jose.SignatureAlgorithm, kid string, claims assertionClaims) wire.CallerAssertion {
+	t.Helper()
+	opts := (&jose.SignerOptions{}).WithType("JWT")
+	if kid != "" {
+		opts = opts.WithHeader(jose.HeaderKey("kid"), kid)
+	}
+	var k any = key
+	if alg == jose.HS256 {
+		k = []byte("0123456789abcdef0123456789abcdef")
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: alg, Key: k}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := jwt.Signed(signer).Claims(claims).Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wire.CallerAssertion(token)
+}
+
+// valid is a good assertion signed by the fixture's Login key.
+func (f *fixture) valid(t *testing.T) wire.CallerAssertion {
+	t.Helper()
+	return signAssertion(t, f.loginKey, jose.ES256, "", f.goodClaims())
+}
+
+// withClaims is a good assertion after mut has changed its claims.
+func (f *fixture) withClaims(t *testing.T, mut func(*assertionClaims)) wire.CallerAssertion {
+	t.Helper()
+	c := f.goodClaims()
+	mut(&c)
+	return signAssertion(t, f.loginKey, jose.ES256, "", c)
+}
+
 type response struct {
 	status int
 	body   string
 }
 
-// post sends a Lookup with the given Authorization header ("" sends none).
-func (f *fixture) post(t *testing.T, authorization wire.Bearer) response {
+// post sends a Lookup with the given Authorization and Caller-Assertion headers
+// ("" sends none).
+func (f *fixture) post(t *testing.T, authorization wire.Bearer, assertion wire.CallerAssertion) response {
 	t.Helper()
 	body, _ := json.Marshal(wire.LookupRequest{Target: "acme/tom", Permission: "invoice:approve"})
 	req, err := http.NewRequest(http.MethodPost, f.url+wire.PathLookup, bytes.NewReader(body))
@@ -106,6 +196,9 @@ func (f *fixture) post(t *testing.T, authorization wire.Bearer) response {
 	}
 	if authorization != "" {
 		req.Header.Set(wire.HeaderAuthorization, string(authorization))
+	}
+	if assertion != "" {
+		req.Header.Set(wire.HeaderCallerAssertion, string(assertion))
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -132,7 +225,7 @@ func (f *fixture) lastDecision(t *testing.T) warden.Decision {
 func TestAllowlistedAgentWithValidJWTSVIDGets200(t *testing.T) {
 	f := newFixture(t)
 
-	got := f.post(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)))
+	got := f.post(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)), f.valid(t))
 
 	if got.status != http.StatusOK {
 		t.Fatalf("status = %d, body %s; want 200", got.status, got.body)
@@ -220,7 +313,7 @@ func TestUnauthenticatedCasesAnswer401WithOneBody(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := f.post(t, tc.authorization)
+			got := f.post(t, tc.authorization, f.valid(t))
 
 			if got.status != http.StatusUnauthorized {
 				t.Errorf("status = %d; want 401", got.status)
@@ -239,7 +332,7 @@ func TestUnauthenticatedCasesAnswer401WithOneBody(t *testing.T) {
 func TestJWTSVIDWithoutIATFailsTheLifetimeCheck(t *testing.T) {
 	f := newFixture(t)
 
-	got := f.post(t, wire.BearerFor(f.sign(t, agentID, []string{wardenAudience}, time.Time{}, time.Now().Add(time.Minute))))
+	got := f.post(t, wire.BearerFor(f.sign(t, agentID, []string{wardenAudience}, time.Time{}, time.Now().Add(time.Minute))), f.valid(t))
 
 	if got.status != http.StatusUnauthorized || got.body != unauthenticatedBody {
 		t.Errorf("response = %d %s; want 401 unauthenticated", got.status, got.body)
@@ -252,7 +345,7 @@ func TestJWTSVIDWithoutIATFailsTheLifetimeCheck(t *testing.T) {
 func TestVerifiedAgentOffTheAllowlistGets403(t *testing.T) {
 	f := newFixture(t)
 
-	got := f.post(t, wire.BearerFor(f.fetch(t, unlistedID, wardenAudience)))
+	got := f.post(t, wire.BearerFor(f.fetch(t, unlistedID, wardenAudience)), f.valid(t))
 
 	if got.status != http.StatusForbidden || got.body != `{"error":"agent not allowed"}` {
 		t.Errorf("response = %d %s; want 403 agent not allowed", got.status, got.body)
@@ -281,7 +374,7 @@ func TestAudienceAsStringOrArrayIsAccepted(t *testing.T) {
 				t.Fatalf("aud claim = %s; want %s", got, tc.wantJSON)
 			}
 
-			got := f.post(t, wire.BearerFor(token))
+			got := f.post(t, wire.BearerFor(token), f.valid(t))
 
 			if got.status != http.StatusOK {
 				t.Errorf("status = %d, body %s; want 200", got.status, got.body)
@@ -294,7 +387,7 @@ func TestExactlyMaxLifetimeTokenIsAccepted(t *testing.T) {
 	f := newFixture(t)
 	now := time.Now().Truncate(time.Second)
 
-	got := f.post(t, wire.BearerFor(f.sign(t, agentID, []string{wardenAudience}, now, now.Add(5*time.Minute))))
+	got := f.post(t, wire.BearerFor(f.sign(t, agentID, []string{wardenAudience}, now, now.Add(5*time.Minute))), f.valid(t))
 
 	if got.status != http.StatusOK {
 		t.Errorf("status = %d, body %s; want 200", got.status, got.body)
@@ -308,6 +401,177 @@ func TestNewRefusesAnEmptyAudience(t *testing.T) {
 	}
 
 	w, err := warden.New(warden.Config{Audience: "", Bundles: source})
+
+	if err == nil || w != nil {
+		t.Errorf("New = %v, %v; want nil Warden and an error", w, err)
+	}
+}
+
+func at(t time.Time) *int64 {
+	n := t.Unix()
+	return &n
+}
+
+func TestBadCallerAssertionsAnswer401WithTheSameBody(t *testing.T) {
+	f := newFixture(t)
+	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := f.now()
+	otherAgent := spiffeid.RequireFromString("spiffe://example.com/other-agent")
+
+	cases := []struct {
+		name      string
+		assertion wire.CallerAssertion
+		want      warden.Reason
+	}{
+		{"missing", "", "assertion_missing"},
+		{"whitespace", "   ", "assertion_missing"},
+		{"not a jwt", "not.a.jwt", "assertion_malformed"},
+		{"HS256", signAssertion(t, nil, jose.HS256, "", f.goodClaims()), "assertion_malformed"},
+		{"bad signature", signAssertion(t, otherKey, jose.ES256, "", f.goodClaims()), "assertion_signature"},
+		{"expired", f.withClaims(t, func(c *assertionClaims) {
+			c.Iat, c.Exp = at(now.Add(-10*time.Minute)), at(now.Add(-5*time.Minute))
+		}), "assertion_expired"},
+		{"wrong audience", f.withClaims(t, func(c *assertionClaims) { c.Aud = "spiffe://example.com/not-the-warden" }), "assertion_audience"},
+		{"may_act mismatch", f.withClaims(t, func(c *assertionClaims) { c.MayAct = &map[string]any{"sub": otherAgent.String()} }), "assertion_may_act_mismatch"},
+		{"may_act absent", f.withClaims(t, func(c *assertionClaims) { c.MayAct = nil }), "assertion_may_act_mismatch"},
+		{"unknown caller", f.withClaims(t, func(c *assertionClaims) { c.Sub = "acme/nobody" }), "assertion_unknown_caller"},
+		{"10 minute lifetime", f.withClaims(t, func(c *assertionClaims) { c.Exp = at(now.Add(10 * time.Minute)) }), "assertion_lifetime"},
+		{"10 minute lifetime, long expired", f.withClaims(t, func(c *assertionClaims) {
+			c.Iat, c.Exp = at(now.Add(-time.Hour)), at(now.Add(-50*time.Minute))
+		}), "assertion_lifetime"},
+		{"no iat", f.withClaims(t, func(c *assertionClaims) { c.Iat = nil }), "assertion_lifetime"},
+		{"no exp", f.withClaims(t, func(c *assertionClaims) { c.Exp = nil }), "assertion_lifetime"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := f.post(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)), tc.assertion)
+
+			if got.status != http.StatusUnauthorized || got.body != unauthenticatedBody {
+				t.Errorf("response = %d %s; want 401 %s", got.status, got.body, unauthenticatedBody)
+			}
+			d := f.lastDecision(t)
+			if d.Outcome != warden.OutcomeUnauthenticated || d.FailedCheck != warden.CheckCallerAssertion || d.Reason != tc.want || d.Caller != "" || d.Agent != agentID.String() {
+				t.Errorf("decision = %+v; want unauthenticated/caller_assertion/%s, agent set, no caller", d, tc.want)
+			}
+		})
+	}
+}
+
+func TestCallerAssertionClockLeeway(t *testing.T) {
+	f := newFixture(t)
+	now := f.now()
+
+	cases := []struct {
+		name    string
+		iat     time.Time
+		exp     time.Time
+		want    int
+		wantWhy warden.Reason
+	}{
+		{"exp 30s ago", now.Add(-30*time.Second - 5*time.Minute), now.Add(-30 * time.Second), 200, ""},
+		{"exp 61s ago", now.Add(-61*time.Second - 5*time.Minute), now.Add(-61 * time.Second), 401, "assertion_expired"},
+		{"iat 30s ahead", now.Add(30 * time.Second), now.Add(30*time.Second + 5*time.Minute), 200, ""},
+		{"iat 2m ahead", now.Add(2 * time.Minute), now.Add(2*time.Minute + 5*time.Minute), 401, "assertion_other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := f.withClaims(t, func(c *assertionClaims) { c.Iat, c.Exp = at(tc.iat), at(tc.exp) })
+
+			got := f.post(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)), a)
+
+			if got.status != tc.want {
+				t.Errorf("status = %d; want %d", got.status, tc.want)
+			}
+			if d := f.lastDecision(t); d.Reason != tc.wantWhy {
+				t.Errorf("reason = %q; want %q", d.Reason, tc.wantWhy)
+			}
+		})
+	}
+}
+
+func TestClockMovesWithTheInjectedNow(t *testing.T) {
+	f := newFixture(t)
+	a := f.valid(t)
+
+	f.setNow(f.now().Add(10 * time.Minute))
+	got := f.post(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)), a)
+
+	if got.status != http.StatusUnauthorized || f.lastDecision(t).Reason != warden.ReasonAssertionExpired {
+		t.Errorf("response = %d, reason %s; want 401 assertion_expired", got.status, f.lastDecision(t).Reason)
+	}
+}
+
+func TestUnlistedAgentGets403WhateverItsAssertion(t *testing.T) {
+	f := newFixture(t)
+	named := f.withClaims(t, func(c *assertionClaims) { c.MayAct = &map[string]any{"sub": unlistedID.String()} })
+
+	for name, assertion := range map[string]wire.CallerAssertion{
+		"valid and naming it": named,
+		"none":                "",
+		"garbage":             "garbage",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := f.post(t, wire.BearerFor(f.fetch(t, unlistedID, wardenAudience)), assertion)
+
+			if got.status != http.StatusForbidden || got.body != `{"error":"agent not allowed"}` {
+				t.Errorf("response = %d %s; want 403 agent not allowed", got.status, got.body)
+			}
+			if d := f.lastDecision(t); d.FailedCheck != warden.CheckAllowlist || d.Caller != "" {
+				t.Errorf("decision = %+v; want allowlist, no caller", d)
+			}
+		})
+	}
+}
+
+func TestAssertionKidHeaderIsIgnored(t *testing.T) {
+	f := newFixture(t)
+	a := signAssertion(t, f.loginKey, jose.ES256, "whatever-kid", f.goodClaims())
+
+	got := f.post(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)), a)
+
+	if got.status != http.StatusOK {
+		t.Errorf("status = %d, body %s; want 200", got.status, got.body)
+	}
+}
+
+func TestValidAssertionNamesTheCallerInTheDecision(t *testing.T) {
+	f := newFixture(t)
+
+	got := f.post(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)), f.valid(t))
+
+	if got.status != http.StatusOK {
+		t.Fatalf("status = %d, body %s; want 200", got.status, got.body)
+	}
+	if d := f.lastDecision(t); d.Caller != "acme/alice" || d.Agent != agentID.String() {
+		t.Errorf("decision = %+v; want caller acme/alice, agent %s", d, agentID)
+	}
+}
+
+func TestEverySeedUserIsAcceptedAsCaller(t *testing.T) {
+	f := newFixture(t)
+	for _, user := range []string{"acme/alice", "acme/tom", "acme/bob", "globex/tom", "globex/sam"} {
+		t.Run(user, func(t *testing.T) {
+			a := f.withClaims(t, func(c *assertionClaims) { c.Sub = user })
+
+			got := f.post(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)), a)
+
+			if got.status != http.StatusOK || f.lastDecision(t).Caller != user {
+				t.Errorf("response = %d, decision %+v; want 200 for %s", got.status, f.lastDecision(t), user)
+			}
+		})
+	}
+}
+
+func TestNewRefusesANilLoginKey(t *testing.T) {
+	source, err := workload.New(trustDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := warden.New(warden.Config{Audience: wardenAudience, Bundles: source})
 
 	if err == nil || w != nil {
 		t.Errorf("New = %v, %v; want nil Warden and an error", w, err)

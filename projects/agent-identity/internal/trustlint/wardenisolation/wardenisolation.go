@@ -24,21 +24,21 @@ type Config struct {
 }
 
 // reachFact records the forbidden packages a package imports, directly or
-// transitively. Via maps each forbidden package path to the import chain that
-// reaches it, e.g. "a/helper -> a/agent".
-type reachFact struct{ Via map[string]string }
+// transitively. Via holds one edge per forbidden package, sorted by Forbidden.
+// It is a sorted slice rather than a map because gob encodes maps in random
+// order and the analysis checker rejects facts whose encoding is nondeterministic.
+type reachFact struct{ Via []reachEdge }
+
+// reachEdge maps a forbidden package path to the import chain that reaches it,
+// e.g. "a/helper -> a/agent".
+type reachEdge struct{ Forbidden, Chain string }
 
 func (*reachFact) AFact() {}
 
 func (f *reachFact) String() string {
-	keys := make([]string, 0, len(f.Via))
-	for k := range f.Via {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, len(keys))
-	for i, k := range keys {
-		parts[i] = fmt.Sprintf("%s via %s", k, f.Via[k])
+	parts := make([]string, len(f.Via))
+	for i, e := range f.Via {
+		parts[i] = fmt.Sprintf("%s via %s", e.Forbidden, e.Chain)
 	}
 	return "reaches " + strings.Join(parts, ", ")
 }
@@ -57,7 +57,7 @@ func run(pass *analysis.Pass, cfg Config) error {
 	self := strings.TrimSuffix(pass.Pkg.Path(), "_test")
 	isWarden := underAny(self, cfg.Warden)
 
-	own := &reachFact{Via: map[string]string{}}
+	own := map[string]string{}
 	for _, f := range pass.Files {
 		for _, spec := range f.Imports {
 			path, err := strconv.Unquote(spec.Path.Value)
@@ -71,8 +71,8 @@ func run(pass *analysis.Pass, cfg Config) error {
 			}
 			sort.Strings(keys)
 			for _, k := range keys {
-				if _, seen := own.Via[k]; !seen {
-					own.Via[k] = via[k]
+				if _, seen := own[k]; !seen {
+					own[k] = via[k]
 				}
 				if !isWarden {
 					continue
@@ -87,8 +87,13 @@ func run(pass *analysis.Pass, cfg Config) error {
 	}
 	// A main package or an external test package cannot be imported, so its
 	// reach is never needed downstream.
-	if len(own.Via) > 0 && pass.Pkg.Name() != "main" && !strings.HasSuffix(pass.Pkg.Path(), "_test") {
-		pass.ExportPackageFact(own)
+	if len(own) > 0 && pass.Pkg.Name() != "main" && !strings.HasSuffix(pass.Pkg.Path(), "_test") {
+		fact := &reachFact{Via: make([]reachEdge, 0, len(own))}
+		for k, chain := range own {
+			fact.Via = append(fact.Via, reachEdge{k, chain})
+		}
+		sort.Slice(fact.Via, func(i, j int) bool { return fact.Via[i].Forbidden < fact.Via[j].Forbidden })
+		pass.ExportPackageFact(fact)
 	}
 	return nil
 }
@@ -108,8 +113,8 @@ func reach(pass *analysis.Pass, cfg Config, spec *ast.ImportSpec, path string) m
 		return nil
 	}
 	out := make(map[string]string, len(f.Via))
-	for k, chain := range f.Via {
-		out[k] = path + " -> " + chain
+	for _, e := range f.Via {
+		out[e.Forbidden] = path + " -> " + e.Chain
 	}
 	return out
 }
