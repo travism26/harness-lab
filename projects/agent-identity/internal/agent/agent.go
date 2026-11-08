@@ -1,5 +1,6 @@
-// Package agent is the minimal Agent client: it fetches a JWT-SVID through the
-// Workload API and makes a Lookup against the Warden with it. It shares types
+// Package agent is the Agent client: it fetches a JWT-SVID through the Workload
+// API and makes a Lookup against the Warden with it, returning the Warden's
+// real Answer. This is the scripted path, used without a Model. It shares types
 // with the Warden only through internal/wire and never imports the Warden.
 package agent
 
@@ -57,12 +58,17 @@ func New(cfg Config) (*Agent, error) {
 	return &Agent{cfg: cfg}, nil
 }
 
-// Response is what the Warden returned for one Lookup: the HTTP status and, on a non-200, the error body's value.
+// Response is what the Warden returned for one Lookup: the HTTP status, the
+// Answer on a 200 and the error body's value on a non-200.
 type Response struct {
 	// Status is the HTTP status code.
 	Status int
 	// Error is the ErrorBody error field on a non-200, and "" on a 200.
 	Error string
+	// Holds is the Answer on a 200: whether the Target holds the Permission.
+	Holds bool
+	// Role is the Target's Role on a yes, and "" otherwise.
+	Role string
 }
 
 // Lookup fetches a fresh JWT-SVID and POSTs the Lookup to the Warden, carrying
@@ -100,6 +106,12 @@ func (a *Agent) Lookup(ctx context.Context, assertion wire.CallerAssertion, req 
 			return res, fmt.Errorf("agent: decode error body (status %d): %w", resp.StatusCode, err)
 		}
 		res.Error = eb.Error
+		return res, nil
 	}
+	var ans wire.Answer
+	if err := json.NewDecoder(resp.Body).Decode(&ans); err != nil {
+		return res, fmt.Errorf("agent: decode answer: %w", err)
+	}
+	res.Holds, res.Role = ans.Holds, ans.Role
 	return res, nil
 }

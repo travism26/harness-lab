@@ -2,8 +2,10 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
@@ -67,8 +69,8 @@ func lookupAs(t *testing.T, id spiffeid.ID) agent.Response {
 }
 
 func TestLookupAllowlistedAgent(t *testing.T) {
-	if got := lookupAs(t, listedID); got != (agent.Response{Status: 200}) {
-		t.Fatalf("got %+v, want status 200", got)
+	if got := lookupAs(t, listedID); got != (agent.Response{Status: 200, Holds: true, Role: "Finance Approver"}) {
+		t.Fatalf("got %+v, want 200 holds true as Finance Approver", got)
 	}
 }
 
@@ -105,6 +107,7 @@ func TestLookupSendsTheAssertionHeaderUntouchedAndOmitsItWhenEmpty(t *testing.T)
 	var got []http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		got = append(got, r.Header.Clone())
+		rw.Write([]byte(`{"holds":false}`))
 	}))
 	t.Cleanup(srv.Close)
 	a, err := agent.New(agent.Config{WardenURL: srv.URL, Audience: wardenAudience, Source: wl})
@@ -127,5 +130,56 @@ func TestLookupSendsTheAssertionHeaderUntouchedAndOmitsItWhenEmpty(t *testing.T)
 	}
 	if _, present := got[1][http.CanonicalHeaderKey(wire.HeaderCallerAssertion)]; present {
 		t.Error("an empty assertion still sent the header")
+	}
+}
+
+func TestLookupSendsOnlyTargetAndPermissionAndDecodesTheAnswer(t *testing.T) {
+	source, err := workload.New(trustDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wl, err := source.Workload(listedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var (
+		method, path string
+		header       http.Header
+		body         map[string]any
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		method, path, header = r.Method, r.URL.Path, r.Header.Clone()
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		rw.Header().Set("Content-Type", "application/json")
+		rw.Write([]byte(`{"holds":false}`))
+	}))
+	t.Cleanup(srv.Close)
+	a, err := agent.New(agent.Config{WardenURL: srv.URL, Audience: wardenAudience, Source: wl})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := a.Lookup(context.Background(), "a.b.c", wire.LookupRequest{Target: "acme/tom", Permission: "invoice:approve"})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (agent.Response{Status: 200, Holds: false}) {
+		t.Errorf("got %+v; want status 200, holds false", got)
+	}
+	if method != http.MethodPost || path != "/lookup" {
+		t.Errorf("request = %s %s; want POST /lookup", method, path)
+	}
+	if auth := header.Get("Authorization"); !strings.HasPrefix(auth, "Bearer ") || len(auth) == len("Bearer ") {
+		t.Error("Authorization is not a Bearer with a token")
+	}
+	if v := header.Get("Caller-Assertion"); v != "a.b.c" {
+		t.Errorf("Caller-Assertion = %q; want a.b.c", v)
+	}
+	want := map[string]any{"target": "acme/tom", "permission": "invoice:approve"}
+	if len(body) != len(want) || body["target"] != want["target"] || body["permission"] != want["permission"] {
+		t.Errorf("body = %v; want exactly %v", body, want)
 	}
 }
