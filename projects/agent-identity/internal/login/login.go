@@ -39,6 +39,10 @@ func New(now func() time.Time) (*Login, error) {
 	return &Login{key: key, now: now}, nil
 }
 
+// SigningKeyD is the private scalar D of the signing key, 32 big-endian bytes.
+// It exists so a test can assert the key never reaches a log.
+func (l *Login) SigningKeyD() []byte { b, _ := l.key.Bytes(); return b }
+
 // PublicKey is the key the Warden trusts to verify assertions.
 func (l *Login) PublicKey() *ecdsa.PublicKey {
 	return &l.key.PublicKey

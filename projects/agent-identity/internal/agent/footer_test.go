@@ -14,12 +14,11 @@ import (
 func TestFooterNamesTheBackend(t *testing.T) {
 	for _, tc := range []struct {
 		provider string
-		bearer   bool
 		want     string
 	}{
-		{"stand-in", false, "[model: stand-in · id "},
-		{"anthropic", false, "[model: live · id "},
-		{"openrouter", true, "[model: live · id "},
+		{"stand-in", "[model: stand-in · id "},
+		{"anthropic", "[model: live · id "},
+		{"openrouter", "[model: live · id "},
 	} {
 		t.Run(tc.provider, func(t *testing.T) {
 			e := newAskEnv(t)
@@ -27,7 +26,7 @@ func TestFooterNamesTheBackend(t *testing.T) {
 			defer m.Close()
 			a, err := agent.New(agent.Config{
 				WardenURL: e.url, Audience: wardenAudience, Source: e.source,
-				Model: &agent.ModelConfig{BaseURL: m.URL, APIKey: "k", Provider: tc.provider, BearerAuth: tc.bearer},
+				Model: &agent.ModelConfig{BaseURL: m.URL, APIKey: "k", Provider: tc.provider},
 			})
 			if err != nil {
 				t.Fatal(err)

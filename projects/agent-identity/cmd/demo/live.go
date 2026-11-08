@@ -123,7 +123,7 @@ type spiffeIdentities struct {
 }
 
 // openSpiffe opens the sockets a run names. The Warden's defaults to
-// warden.sock beside the Agent's, as in spiffecli/workloads.toml.
+// warden.sock beside the Agent's, as in projects/agent-identity/spiffecli/workloads.toml.
 func openSpiffe(ctx context.Context, d deps, agentSock, wardenSock, otherSock string) (identities, error) {
 	if wardenSock == "" {
 		wardenSock = filepath.Join(filepath.Dir(agentSock), "warden.sock")

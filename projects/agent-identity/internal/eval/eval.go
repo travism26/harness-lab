@@ -28,7 +28,8 @@ type Case struct {
 	Question string `json:"question"`
 	// Accept lists the Proposals that pass, by exact match.
 	Accept []modelclient.Proposal `json:"accept,omitempty"`
-	// NoProposal makes a fatal no-Proposal failure pass.
+	// NoProposal makes a refusal or a text-only reply pass; any other failure
+	// (provider error, stop reason, exhausted repair) still fails.
 	NoProposal bool `json:"no_proposal,omitempty"`
 	// ReportOnly cases are shown but don't count toward the bar.
 	ReportOnly bool `json:"report_only,omitempty"`
@@ -90,27 +91,18 @@ type ClientConfig struct {
 }
 
 // NewClient builds the Model client for cfg and returns it with the model id
-// it will use. cmd/eval cannot import the Model client itself (trustlint R1).
+// it will use. projects/agent-identity/cmd/eval cannot import the Model client itself (trustlint R1).
 func NewClient(cfg ClientConfig) (Proposer, string, error) {
 	p, ok := provider.Providers[cfg.Provider]
 	if !ok {
 		return nil, "", fmt.Errorf("eval: unknown provider %q", cfg.Provider)
 	}
-	mc := modelclient.Config{
-		BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Model, Provider: p.Name,
-		Auth: modelclient.AuthAnthropic,
-	}
+	mc := modelclient.Config{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Model, Provider: p.Name}
 	if mc.BaseURL == "" {
 		mc.BaseURL = p.BaseURL
 	}
-	if p.Name == "openrouter" {
-		mc.Auth = modelclient.AuthBearer
-	}
 	if mc.Model == "" {
-		mc.Model = modelclient.DefaultModel
-		if p.Name == "openrouter" {
-			mc.Model = modelclient.DefaultOpenRouterModel
-		}
+		mc.Model = p.DefaultModel
 	}
 	c, err := modelclient.New(mc)
 	if err != nil {
@@ -216,8 +208,8 @@ func runOnce(ctx context.Context, p Proposer, c Case) RunResult {
 	}
 	var f *modelclient.Failure
 	if errors.As(err, &f) {
-		rr.Outcome = f.Code
-		rr.Pass = c.NoProposal && f.Kind == modelclient.Fatal
+		rr.Outcome = string(f.Code)
+		rr.Pass = c.NoProposal && (f.Code == modelclient.CodeRefusal || f.Code == modelclient.CodeTextOnly)
 	} else {
 		rr.Outcome = "error"
 	}

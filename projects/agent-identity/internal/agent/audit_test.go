@@ -3,7 +3,10 @@ package agent_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"math/big"
 	"net"
 	"strings"
 	"sync"
@@ -165,7 +168,7 @@ func TestAskWritesOneAgentRecordWithTheProposalAndTheWardensRecordShareItsID(t *
 	}
 	g := recs[0]
 	if len(g.CorrelationID) != 32 || g.CorrelationID != r.CorrelationID || g.CallerUnverified != "acme/alice" ||
-		g.Question != "Can Tom approve invoices?" || g.Backend != "stand-in" || g.Model != "stand-in-model" || g.Attempts != 1 ||
+		g.Question != "Can Tom approve invoices?" || g.Backend != "stand-in" || g.Model != "stand-in" || g.Attempts != 1 ||
 		g.Proposal == nil || g.Proposal.Target != "tom" || g.Proposal.Permission != "invoice:approve" || g.ModelFailure != nil ||
 		g.ModelText != "" || g.WardenStatus != 200 || g.Reply != agent.ReplyYes || g.TS.IsZero() {
 		t.Errorf("record = %+v", g)
@@ -196,7 +199,7 @@ func TestEveryOutcomeHasOneRecordPerServiceAndNoCanaryInEitherLog(t *testing.T) 
 		url      string
 		timeout  time.Duration
 		script   []model.Reply
-		reply    string
+		reply    agent.ReplyID
 		wardened bool // the Warden answers, so it writes a record
 	}{
 		{"yes", listedID, "acme/alice", e.url, 0, []model.Reply{model.ToolUse("tom", "invoice:approve")}, agent.ReplyYes, true},
@@ -272,6 +275,13 @@ func TestEveryOutcomeHasOneRecordPerServiceAndNoCanaryInEitherLog(t *testing.T) 
 
 	// Canary: no token or key byte, and nothing of the raw Model reply, is in either log.
 	canaries := []string{e.modelAPIKey, "TAILBEYOND500"}
+	// The Login's and the Workload stand-in's signing keys, in the encodings a
+	// log could carry: base64url (JWK), base64, hex and decimal.
+	for _, d := range [][]byte{e.login.SigningKeyD(), e.source.SigningKeyD()} {
+		canaries = append(canaries,
+			base64.RawURLEncoding.EncodeToString(d), base64.StdEncoding.EncodeToString(d),
+			hex.EncodeToString(d), new(big.Int).SetBytes(d).String())
+	}
 	for _, as := range e.assertions {
 		canaries = append(canaries, string(as), strings.Split(string(as), ".")[2])
 	}

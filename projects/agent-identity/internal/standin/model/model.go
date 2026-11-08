@@ -50,6 +50,9 @@ func ToolUses(inputs ...any) Reply {
 	return message("tool_use", blocks...)
 }
 
+// ToolUseNone is a tool_use stop with no tool_use block in its content.
+func ToolUseNone() Reply { return message("tool_use") }
+
 // Text is a text-only reply that ends the turn.
 func Text(s string) Reply {
 	return message("end_turn", map[string]any{"type": "text", "text": s})
@@ -78,7 +81,7 @@ type Server struct {
 	srv      *httptest.Server
 	mu       sync.Mutex
 	script   []Reply
-	table    map[string]Reply
+	table    map[string]Reply // replies by exact question; non-nil only for NewDemo, which serves from it
 	requests []Request
 }
 
@@ -151,12 +154,12 @@ func NewDemo() *Server {
 }
 
 // tableReply finds the reply for the first user message of a request body.
-func tableReply(body map[string]any) Reply {
+func (s *Server) tableReply(body map[string]any) Reply {
 	msgs, _ := body["messages"].([]any)
 	if len(msgs) > 0 {
 		first, _ := msgs[0].(map[string]any)
 		if q, ok := first["content"].(string); ok {
-			if rep, found := demoTable[q]; found {
+			if rep, found := s.table[q]; found {
 				return rep
 			}
 		}
@@ -182,7 +185,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	s.requests = append(s.requests, Request{Header: r.Header.Clone(), Body: body, Auth: authOf(r.Header)})
 	var rep Reply
 	if s.table != nil {
-		rep = tableReply(body)
+		rep = s.tableReply(body)
 	} else if len(s.script) == 0 {
 		s.mu.Unlock()
 		http.Error(w, "stand-in script exhausted", http.StatusInternalServerError)

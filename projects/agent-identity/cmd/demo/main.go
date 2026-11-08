@@ -90,7 +90,7 @@ func runWith(args []string, stdout, stderr io.Writer, d deps) int {
 	fs := flag.NewFlagSet("demo", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var opts options
-	fs.StringVar(&opts.As, "as", "acme/alice", "the Caller to sign for, as tenant/name (scripted only)")
+	fs.StringVar(&opts.As, "as", "acme/alice", "the Caller to sign for, as tenant/name")
 	fs.StringVar(&opts.Out, "out", "", "the directory for the Audit logs (default runs/<UTC timestamp>)")
 	fs.BoolVar(&opts.Live, "live", false, "send the Model call to a live provider (ask)")
 	fs.StringVar(&opts.Model, "model", "", "with --live, the model id (default by provider)")
@@ -147,7 +147,7 @@ func runWith(args []string, stdout, stderr io.Writer, d deps) int {
 			fmt.Fprintf(stderr, "demo: --live: %v\n", err)
 			return 2
 		}
-		mc := &agent.ModelConfig{BaseURL: choice.BaseURL, APIKey: choice.Key, Model: opts.Model, Provider: choice.Name, BearerAuth: choice.Name == "openrouter"}
+		mc := &agent.ModelConfig{BaseURL: choice.BaseURL, APIKey: choice.Key, Model: opts.Model, Provider: choice.Name}
 		if d.modelBaseURL != "" {
 			mc.BaseURL = d.modelBaseURL
 		}

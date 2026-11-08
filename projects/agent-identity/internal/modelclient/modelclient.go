@@ -1,7 +1,7 @@
 // Package modelclient turns a question into a Proposal {target, permission} or
 // a typed Failure, through a Messages endpoint (Anthropic's API or
 // OpenRouter's) with a strict lookup_permission tool. It knows nothing about the
-// Caller. Only internal/agent and internal/eval may import it (trustlint R1).
+// Caller. Only projects/agent-identity/internal/agent and projects/agent-identity/internal/eval may import it (trustlint R1).
 package modelclient
 
 import (
@@ -15,16 +15,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
-)
 
-// AuthStyle is how the API key is sent.
-type AuthStyle int
-
-const (
-	// AuthAnthropic sends x-api-key and anthropic-version.
-	AuthAnthropic AuthStyle = iota
-	// AuthBearer sends Authorization: Bearer (OpenRouter).
-	AuthBearer
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 )
 
 const (
@@ -33,11 +25,6 @@ const (
 	maxTokens        = 1024
 	callTimeout      = 20 * time.Second
 	maxBody          = 1 << 20
-
-	// DefaultModel is the default Anthropic model id.
-	DefaultModel = "claude-haiku-5-5"
-	// DefaultOpenRouterModel is the default model id on OpenRouter.
-	DefaultOpenRouterModel = "anthropic/claude-haiku-5.5"
 )
 
 // Config is what a Client is given at startup.
@@ -45,12 +32,11 @@ type Config struct {
 	// BaseURL is the API root; the client posts to BaseURL + "/v1/messages".
 	BaseURL string
 	APIKey  string
-	// Model defaults by Provider: DefaultOpenRouterModel for "openrouter",
-	// DefaultModel otherwise.
+	// Model defaults to the Provider's DefaultModel in projects/agent-identity/internal/provider.
 	Model string
-	// Provider labels each Attempt: "anthropic", "openrouter" or "stand-in".
+	// Provider is "anthropic", "openrouter" or "stand-in". It labels each
+	// Attempt and sets the auth style and the default Model (projects/agent-identity/internal/provider).
 	Provider string
-	Auth     AuthStyle
 	// HTTPClient makes the request. Nil means http.DefaultClient; every call
 	// also gets a 20s context deadline.
 	HTTPClient *http.Client
@@ -60,7 +46,10 @@ type Config struct {
 func (c *Client) Model() string { return c.cfg.Model }
 
 // Client calls the Model.
-type Client struct{ cfg Config }
+type Client struct {
+	cfg  Config
+	prov provider.Provider
+}
 
 // New builds a Client. An empty BaseURL or APIKey is an error.
 func New(cfg Config) (*Client, error) {
@@ -70,17 +59,15 @@ func New(cfg Config) (*Client, error) {
 	case cfg.APIKey == "":
 		return nil, errors.New("modelclient: an API key is required")
 	}
+	prov, _ := provider.Lookup(cfg.Provider)
 	if cfg.Model == "" {
-		cfg.Model = DefaultModel
-		if cfg.Provider == "openrouter" {
-			cfg.Model = DefaultOpenRouterModel
-		}
+		cfg.Model = prov.DefaultModel
 	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = http.DefaultClient
 	}
 	cfg.BaseURL = strings.TrimSuffix(cfg.BaseURL, "/")
-	return &Client{cfg: cfg}, nil
+	return &Client{cfg: cfg, prov: prov}, nil
 }
 
 // Proposal is what the Model proposes: a name from the question or "self", and
@@ -116,12 +103,26 @@ const (
 	Fatal     Kind = "fatal"
 )
 
+// FailureCode is the closed set of short names a Failure carries.
+type FailureCode string
+
+const (
+	// CodeRefusal, CodeTextOnly, CodeStopReason and CodeProviderError are fatal.
+	CodeRefusal       FailureCode = "refusal"
+	CodeTextOnly      FailureCode = "text_only"
+	CodeStopReason    FailureCode = "stop_reason"
+	CodeProviderError FailureCode = "provider_error"
+	// CodeToolUseCount, CodeToolName, CodeDecode and CodeFormat are retryable.
+	CodeToolUseCount FailureCode = "tool_use_count"
+	CodeToolName     FailureCode = "tool_name"
+	CodeDecode       FailureCode = "decode"
+	CodeFormat       FailureCode = "format"
+)
+
 // Failure is the typed failure Propose returns as its error.
 type Failure struct {
 	Kind Kind
-	// Code is a short closed-set name: stop_reason, refusal, text_only,
-	// provider_error, tool_use_count, tool_name, decode or format.
-	Code string
+	Code FailureCode
 	// Text is the Model's text on a text-only reply, else empty.
 	Text string
 	msg  string
@@ -194,7 +195,14 @@ func (c *Client) Propose(ctx context.Context, question string) (Result, error) {
 		if ferr.Kind != Retryable || try == 1 {
 			return res, ferr
 		}
-		messages = append(messages, map[string]any{"role": "assistant", "content": resp.Content})
+		// Echo the Model's turn, then answer it. Every tool_use block needs a
+		// tool_result; with none, the error goes back as plain user text. Neither
+		// message may carry null or empty content.
+		assistant := any(resp.Content)
+		if len(resp.Content) == 0 {
+			assistant = []any{map[string]any{"type": "text", "text": "(no content)"}}
+		}
+		messages = append(messages, map[string]any{"role": "assistant", "content": assistant})
 		var results []any
 		for _, b := range resp.Content {
 			if b.Type == "tool_use" {
@@ -203,12 +211,16 @@ func (c *Client) Propose(ctx context.Context, question string) (Result, error) {
 				})
 			}
 		}
-		messages = append(messages, map[string]any{"role": "user", "content": results})
+		var reply any = results
+		if len(results) == 0 {
+			reply = ferr.msg
+		}
+		messages = append(messages, map[string]any{"role": "user", "content": reply})
 	}
 }
 
 func providerError(msg string) *Failure {
-	return &Failure{Kind: Fatal, Code: "provider_error", msg: msg}
+	return &Failure{Kind: Fatal, Code: CodeProviderError, msg: msg}
 }
 
 func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, error) {
@@ -232,10 +244,9 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 		return response{}, attempt, providerError("could not build the request")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	switch c.cfg.Auth {
-	case AuthBearer:
+	if c.prov.BearerAuth {
 		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	default:
+	} else {
 		req.Header.Set("x-api-key", c.cfg.APIKey)
 		req.Header.Set("anthropic-version", anthropicVersion)
 	}
@@ -262,28 +273,31 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 	return out, attempt, nil
 }
 
-// pricesPerMillion is USD per million input and output tokens (ADR 0003).
-var pricesPerMillion = map[string][2]float64{
-	"claude-haiku-5-5":  {0.10, 0.50},
-	"claude-sonnet-5-5": {2, 10},
-	"claude-opus-5-5":   {4, 20},
+// price is USD per million input and output tokens.
+type price struct{ input, output float64 }
+
+// pricesPerMillion is the price per model id (projects/agent-identity/docs/adr/0003-anthropic-api-as-a-second-model-provider.md).
+var pricesPerMillion = map[string]price{
+	"claude-haiku-5-5":  {input: 0.10, output: 0.50},
+	"claude-sonnet-5-5": {input: 2, output: 10},
+	"claude-opus-5-5":   {input: 4, output: 20},
 }
 
 func (c *Client) cost(r response) float64 {
 	if r.Usage.Cost != nil {
 		return *r.Usage.Cost
 	}
-	if c.cfg.Provider != "anthropic" {
+	if !c.prov.PricedByTable {
 		return 0
 	}
 	p := pricesPerMillion[c.cfg.Model]
-	return (r.Usage.InputTokens*p[0] + r.Usage.OutputTokens*p[1]) / 1e6
+	return (r.Usage.InputTokens*p.input + r.Usage.OutputTokens*p.output) / 1e6
 }
 
 // gate applies the five rules in order.
 func gate(r response) (Proposal, *Failure) {
 	if r.StopReason == "refusal" {
-		return Proposal{}, &Failure{Kind: Fatal, Code: "refusal", msg: "the Model refused"}
+		return Proposal{}, &Failure{Kind: Fatal, Code: CodeRefusal, msg: "the Model refused"}
 	}
 	if r.StopReason != "tool_use" {
 		var text []string
@@ -293,9 +307,9 @@ func gate(r response) (Proposal, *Failure) {
 			}
 		}
 		if r.StopReason == "end_turn" && len(text) > 0 {
-			return Proposal{}, &Failure{Kind: Fatal, Code: "text_only", Text: strings.Join(text, "\n"), msg: "text-only reply"}
+			return Proposal{}, &Failure{Kind: Fatal, Code: CodeTextOnly, Text: strings.Join(text, "\n"), msg: "text-only reply"}
 		}
-		return Proposal{}, &Failure{Kind: Fatal, Code: "stop_reason", msg: "stop_reason " + r.StopReason}
+		return Proposal{}, &Failure{Kind: Fatal, Code: CodeStopReason, msg: "stop_reason " + r.StopReason}
 	}
 	var uses []block
 	for _, b := range r.Content {
@@ -304,22 +318,22 @@ func gate(r response) (Proposal, *Failure) {
 		}
 	}
 	if len(uses) != 1 {
-		return Proposal{}, &Failure{Kind: Retryable, Code: "tool_use_count", msg: fmt.Sprintf("call %s exactly once, not %d times", toolName, len(uses))}
+		return Proposal{}, &Failure{Kind: Retryable, Code: CodeToolUseCount, msg: fmt.Sprintf("call %s exactly once, not %d times", toolName, len(uses))}
 	}
 	if uses[0].Name != toolName {
-		return Proposal{}, &Failure{Kind: Retryable, Code: "tool_name", msg: "the only tool is " + toolName}
+		return Proposal{}, &Failure{Kind: Retryable, Code: CodeToolName, msg: "the only tool is " + toolName}
 	}
 	var p Proposal
 	dec := json.NewDecoder(bytes.NewReader(uses[0].Input))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&p); err != nil || p.Target == "" || p.Permission == "" {
-		return Proposal{}, &Failure{Kind: Retryable, Code: "decode", msg: "input must be exactly {target, permission}, both non-empty strings"}
+		return Proposal{}, &Failure{Kind: Retryable, Code: CodeDecode, msg: "input must be exactly {target, permission}, both non-empty strings"}
 	}
 	if p.Target != "self" && !targetRe.MatchString(p.Target) {
-		return Proposal{}, &Failure{Kind: Retryable, Code: "format", msg: "target must be self or match ^[a-z][a-z0-9-]*$"}
+		return Proposal{}, &Failure{Kind: Retryable, Code: CodeFormat, msg: "target must be self or match ^[a-z][a-z0-9-]*$"}
 	}
 	if !permissionRe.MatchString(p.Permission) {
-		return Proposal{}, &Failure{Kind: Retryable, Code: "format", msg: "permission must match ^[a-z]+:[a-z]+$"}
+		return Proposal{}, &Failure{Kind: Retryable, Code: CodeFormat, msg: "permission must match ^[a-z]+:[a-z]+$"}
 	}
 	return p, nil
 }

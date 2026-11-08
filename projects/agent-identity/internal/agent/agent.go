@@ -1,7 +1,7 @@
 // Package agent is the Agent client: it fetches a JWT-SVID through the Workload
 // API and makes a Lookup against the Warden with it, returning the Warden's
 // real Answer. This is the scripted path, used without a Model. It shares types
-// with the Warden only through internal/wire and never imports the Warden.
+// with the Warden only through projects/agent-identity/internal/wire and never imports the Warden.
 package agent
 
 import (
@@ -21,7 +21,7 @@ import (
 )
 
 // SVIDSource is the small Workload API interface the Agent fetches its JWT-SVID
-// through. The stand-in (internal/standin/workload) serves it in check;
+// through. The stand-in (projects/agent-identity/internal/standin/workload) serves it in check;
 // go-spiffe's workloadapi.JWTSource plugs in live.
 type SVIDSource interface {
 	FetchJWTSVID(ctx context.Context, params jwtsvid.Params) (*jwtsvid.SVID, error)
@@ -41,7 +41,7 @@ type Config struct {
 	WardenTimeout time.Duration
 	// Model configures the Model client Ask uses. Nil means Ask is unavailable.
 	Model *ModelConfig
-	// NewCorrelationID makes a Correlation ID. Nil means 8 random bytes, hex.
+	// NewCorrelationID makes a Correlation ID. Nil means 16 random bytes, hex.
 	NewCorrelationID func() string
 	// Audit, if set, takes one JSON-lines Audit record per question or Lookup.
 	Audit io.Writer

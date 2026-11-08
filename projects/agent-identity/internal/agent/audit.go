@@ -30,7 +30,7 @@ type AuditRecord struct {
 	// WardenStatus is absent when the Warden gave no response.
 	WardenStatus int `json:"warden_status,omitempty"`
 	// Reply is one of the eight Reply ids; absent on a scripted Lookup.
-	Reply      string      `json:"reply,omitempty"`
+	Reply      ReplyID     `json:"reply,omitempty"`
 	ModelCalls []ModelCall `json:"model_calls,omitempty"`
 }
 
@@ -55,11 +55,13 @@ type ModelCall struct {
 
 // backendFor labels a provider as the stand-in or live.
 func backendFor(provider string) string {
-	if provider == "stand-in" {
-		return "stand-in"
+	if provider == backendStandIn {
+		return backendStandIn
 	}
 	return "live"
 }
+
+const backendStandIn = "stand-in"
 
 // modelCalls keeps only the audit fields of each attempt, never Raw.
 func modelCalls(attempts []modelclient.Attempt) []ModelCall {

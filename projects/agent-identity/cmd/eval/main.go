@@ -16,10 +16,12 @@ import (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Getenv))
+	os.Exit(runWith(os.Args[1:], os.Stdout, os.Stderr, os.Getenv, ""))
 }
 
-func run(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
+// runWith is the command. A non-empty baseURL replaces the provider's API root;
+// only tests set it, to point at the stand-in Model.
+func runWith(args []string, stdout, stderr io.Writer, getenv func(string) string, baseURL string) int {
 	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	runs := fs.Int("runs", 3, "runs per case")
@@ -27,7 +29,6 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	modelID := fs.String("model", "", "model id (default by provider)")
 	providerName := fs.String("provider", "", "anthropic or openrouter (default: anthropic if its key is set, else openrouter)")
 	cases := fs.String("cases", "evals/cases.jsonl", "the cases file")
-	baseURL := fs.String("base-url", "", "override the provider's API root (for tests against the stand-in Model)")
 	envFile := fs.String("env-file", provider.DotEnvPath, "file of KEY=VALUE provider keys; the process environment overrides it; a missing file is fine")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *runs < 1 || *minAcc < 0 || *minAcc > 1 {
 		fmt.Fprintln(stderr, "usage: eval [--runs N] [--min-accuracy F] [--model ID] [--provider anthropic|openrouter] [--cases FILE] [--env-file FILE]")
@@ -58,7 +59,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 2
 	}
-	client, usedModel, err := eval.NewClient(eval.ClientConfig{Provider: name, Model: *modelID, BaseURL: *baseURL, APIKey: key})
+	client, usedModel, err := eval.NewClient(eval.ClientConfig{Provider: name, Model: *modelID, BaseURL: baseURL, APIKey: key})
 	if err != nil {
 		fmt.Fprintf(stderr, "eval: %v\n", err)
 		return 2

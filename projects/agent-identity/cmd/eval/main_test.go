@@ -87,12 +87,12 @@ func TestMissingKeyExitsBeforeAnyRequest(t *testing.T) {
 	s := model.New(model.ToolUse("tom", "invoice:approve"))
 	defer s.Close()
 	for _, args := range [][]string{
-		{"--cases", casesFile(t, twoCases), "--base-url", s.URL},
-		{"--cases", casesFile(t, twoCases), "--base-url", s.URL, "--provider", "anthropic"},
-		{"--cases", casesFile(t, twoCases), "--base-url", s.URL, "--provider", "openrouter"},
+		{"--cases", casesFile(t, twoCases)},
+		{"--cases", casesFile(t, twoCases), "--provider", "anthropic"},
+		{"--cases", casesFile(t, twoCases), "--provider", "openrouter"},
 	} {
 		var out, errb bytes.Buffer
-		if code := run(args, &out, &errb, env(nil)); code == 0 {
+		if code := runWith(args, &out, &errb, env(nil), s.URL); code == 0 {
 			t.Errorf("%v: exit 0 without a key", args)
 		}
 		if !strings.Contains(errb.String(), "API_KEY") {
@@ -110,8 +110,8 @@ func TestProviderChoiceFollowsKeys(t *testing.T) {
 	defer s.Close()
 	cases := casesFile(t, twoCases)
 	var out, errb bytes.Buffer
-	code := run([]string{"--cases", cases, "--runs", "1", "--base-url", s.URL}, &out, &errb,
-		env(map[string]string{"OPENROUTER_API_KEY": "or"}))
+	code := runWith([]string{"--cases", cases, "--runs", "1"}, &out, &errb,
+		env(map[string]string{"OPENROUTER_API_KEY": "or"}), s.URL)
 	if code != 0 || !strings.Contains(out.String(), "provider: openrouter") {
 		t.Fatalf("code=%d out=%s err=%s", code, out.String(), errb.String())
 	}
@@ -119,8 +119,8 @@ func TestProviderChoiceFollowsKeys(t *testing.T) {
 		t.Errorf("Authorization = %q", got)
 	}
 	out.Reset()
-	code = run([]string{"--cases", cases, "--runs", "1", "--base-url", s.URL}, &out, &errb,
-		env(map[string]string{"OPENROUTER_API_KEY": "or", "ANTHROPIC_API_KEY": "an"}))
+	code = runWith([]string{"--cases", cases, "--runs", "1"}, &out, &errb,
+		env(map[string]string{"OPENROUTER_API_KEY": "or", "ANTHROPIC_API_KEY": "an"}), s.URL)
 	if code != 0 || !strings.Contains(out.String(), "provider: anthropic") {
 		t.Fatalf("code=%d out=%s", code, out.String())
 	}
@@ -137,15 +137,15 @@ func TestKeysComeFromTheEnvFileAndTheProcessOverridesIt(t *testing.T) {
 	s := model.New(model.ToolUse("tom", "invoice:approve"), model.Text("x"),
 		model.ToolUse("tom", "invoice:approve"), model.Text("x"))
 	defer s.Close()
-	args := []string{"--cases", casesFile(t, twoCases), "--runs", "1", "--base-url", s.URL, "--env-file", envFile}
+	args := []string{"--cases", casesFile(t, twoCases), "--runs", "1", "--env-file", envFile}
 	var out, errb bytes.Buffer
-	if code := run(args, &out, &errb, env(nil)); code != 0 || !strings.Contains(out.String(), "provider: anthropic") {
+	if code := runWith(args, &out, &errb, env(nil), s.URL); code != 0 || !strings.Contains(out.String(), "provider: anthropic") {
 		t.Fatalf("code=%d out=%s err=%s", code, out.String(), errb.String())
 	}
 	if got := s.Requests()[0].Header.Get("X-Api-Key"); got != "file-a" {
 		t.Errorf("x-api-key = %q, want the file's key", got)
 	}
-	if code := run(args, &out, &errb, env(map[string]string{"ANTHROPIC_API_KEY": "proc-a"})); code != 0 {
+	if code := runWith(args, &out, &errb, env(map[string]string{"ANTHROPIC_API_KEY": "proc-a"}), s.URL); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errb.String())
 	}
 	if got := s.Requests()[2].Header.Get("X-Api-Key"); got != "proc-a" {
@@ -156,7 +156,7 @@ func TestKeysComeFromTheEnvFileAndTheProcessOverridesIt(t *testing.T) {
 func TestMissingEnvFileIsNotAnError(t *testing.T) {
 	var out, errb bytes.Buffer
 	args := []string{"--cases", casesFile(t, twoCases), "--env-file", filepath.Join(t.TempDir(), "absent")}
-	code := run(args, &out, &errb, env(nil))
+	code := runWith(args, &out, &errb, env(nil), "")
 	if code != 2 || !strings.Contains(errb.String(), "API_KEY") {
 		t.Fatalf("code=%d err=%s", code, errb.String())
 	}
@@ -175,9 +175,9 @@ func TestExitCodeFollowsMinAccuracy(t *testing.T) {
 		{[]string{"--min-accuracy", "0"}, 0},
 	} {
 		s := wrong()
-		args := append([]string{"--cases", casesFile(t, twoCases), "--runs", "1", "--base-url", s.URL}, tc.args...)
+		args := append([]string{"--cases", casesFile(t, twoCases), "--runs", "1"}, tc.args...)
 		var out, errb bytes.Buffer
-		if code := run(args, &out, &errb, keys); code != tc.want {
+		if code := runWith(args, &out, &errb, keys, s.URL); code != tc.want {
 			t.Errorf("%v: code %d, want %d\n%s", tc.args, code, tc.want, out.String())
 		}
 		s.Close()
@@ -194,7 +194,7 @@ func TestBadUsage(t *testing.T) {
 		{"extra"},
 	} {
 		var out, errb bytes.Buffer
-		if code := run(args, &out, &errb, keys); code != 2 {
+		if code := runWith(args, &out, &errb, keys, ""); code != 2 {
 			t.Errorf("%v: code %d, want 2", args, code)
 		}
 	}

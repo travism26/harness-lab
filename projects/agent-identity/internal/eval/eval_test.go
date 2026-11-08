@@ -34,6 +34,23 @@ var named = eval.Case{ID: "n1", Category: "named", Question: "Can Tom approve in
 	Accept: []modelclient.Proposal{p("tom", "invoice:approve")}}
 var none = eval.Case{ID: "x1", Category: "no-proposal", Question: "Weather?", NoProposal: true}
 
+func TestNoProposalPassesOnlyOnRefusalOrTextOnly(t *testing.T) {
+	for name, tc := range map[string]struct {
+		reply model.Reply
+		want  bool
+	}{
+		"refusal":        {model.Refusal(), true},
+		"text only":      {model.Text("no"), true},
+		"provider error": {model.Error(500), false},
+		"max tokens":     {model.MaxTokens(), false},
+	} {
+		r := run(t, []eval.Case{none}, 1, tc.reply)
+		if got := r.Cases[0].Runs[0].Pass; got != tc.want {
+			t.Errorf("%s: pass = %v (%s), want %v", name, got, r.Cases[0].Runs[0].Outcome, tc.want)
+		}
+	}
+}
+
 func TestLoadCases(t *testing.T) {
 	good := `{"id":"a","category":"named","question":"q","accept":[{"target":"tom","permission":"invoice:approve"}]}
 {"id":"b","category":"no-proposal","question":"q","no_proposal":true}

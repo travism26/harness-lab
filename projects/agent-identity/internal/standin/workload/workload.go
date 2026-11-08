@@ -33,7 +33,12 @@ type Source struct {
 	keyID  string
 	signer jose.Signer
 	bundle *jwtbundle.Bundle
+	key    *ecdsa.PrivateKey
 }
+
+// SigningKeyD is the private scalar D of the signing key, 32 big-endian bytes.
+// It exists so a test can assert the key never reaches a log.
+func (s *Source) SigningKeyD() []byte { b, _ := s.key.Bytes(); return b }
 
 // New makes a Source for the trust domain with a fresh ES256 key.
 func New(td spiffeid.TrustDomain) (*Source, error) {
@@ -52,6 +57,7 @@ func New(td spiffeid.TrustDomain) (*Source, error) {
 	return &Source{
 		td:     td,
 		keyID:  keyID,
+		key:    key,
 		signer: signer,
 		bundle: jwtbundle.FromJWTAuthorities(td, map[string]crypto.PublicKey{keyID: key.Public()}),
 	}, nil

@@ -109,7 +109,7 @@ func TestAskReplies(t *testing.T) {
 		name   string
 		caller string
 		script []model.Reply
-		id     string
+		id     agent.ReplyID
 		want   string
 	}{
 		{"yes", "acme/alice", []model.Reply{model.ToolUse("tom", "invoice:approve")}, "yes",

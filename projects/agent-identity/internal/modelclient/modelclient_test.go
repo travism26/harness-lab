@@ -14,7 +14,7 @@ import (
 func newClient(t *testing.T, s *model.Server) *modelclient.Client {
 	t.Helper()
 	c, err := modelclient.New(modelclient.Config{
-		BaseURL: s.URL, APIKey: "k", Provider: "stand-in", Auth: modelclient.AuthAnthropic,
+		BaseURL: s.URL, APIKey: "k", Provider: "stand-in",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,10 +72,35 @@ func TestProposalAndRequestShape(t *testing.T) {
 	}
 }
 
+func TestRepairRetryAfterToolUseStopWithNoBlocksIsWellFormed(t *testing.T) {
+	s := model.New(model.ToolUseNone(), model.ToolUse("tom", "invoice:approve"))
+	defer s.Close()
+	res, err := propose(t, newClient(t, s))
+	if err != nil || len(res.Attempts) != 2 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	msgs, _ := s.Requests()[1].Body["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %v", msgs)
+	}
+	for i, m := range msgs {
+		mm := m.(map[string]any)
+		if mm["content"] == nil {
+			t.Errorf("message %d has null content: %v", i, mm)
+		}
+		if arr, ok := mm["content"].([]any); ok && len(arr) == 0 {
+			t.Errorf("message %d has empty content: %v", i, mm)
+		}
+	}
+	if last := msgs[2].(map[string]any); last["role"] != "user" {
+		t.Errorf("last message = %v", last)
+	}
+}
+
 func TestBearerAuthAndOpenRouterModel(t *testing.T) {
 	s := model.New(model.ToolUse("self", "a:b"))
 	defer s.Close()
-	c, err := modelclient.New(modelclient.Config{BaseURL: s.URL, APIKey: "k", Provider: "openrouter", Auth: modelclient.AuthBearer})
+	c, err := modelclient.New(modelclient.Config{BaseURL: s.URL, APIKey: "k", Provider: "openrouter"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +137,7 @@ func TestGateRejections(t *testing.T) {
 		name  string
 		reply model.Reply
 		kind  modelclient.Kind
-		code  string
+		code  modelclient.FailureCode
 	}{
 		{"stop reason", model.MaxTokens(), modelclient.Fatal, "stop_reason"},
 		{"refusal", model.Refusal(), modelclient.Fatal, "refusal"},
@@ -197,7 +222,7 @@ func TestScriptExhaustedIsProviderError(t *testing.T) {
 func TestComputedAnthropicCost(t *testing.T) {
 	s := model.New(model.ToolUse("tom", "a:b"))
 	defer s.Close()
-	c, _ := modelclient.New(modelclient.Config{BaseURL: s.URL, APIKey: "k", Provider: "anthropic", Auth: modelclient.AuthAnthropic})
+	c, _ := modelclient.New(modelclient.Config{BaseURL: s.URL, APIKey: "k", Provider: "anthropic"})
 	res, err := propose(t, c)
 	if err != nil {
 		t.Fatal(err)
@@ -219,7 +244,7 @@ func TestAttemptKeepsTheRawReply(t *testing.T) {
 
 func TestAnthropicCostPerModel(t *testing.T) {
 	// The stand-in reports 10 input and 5 output tokens; the expected USD are
-	// worked by hand from the ADR 0003 prices per million tokens.
+	// worked by hand from the prices in projects/agent-identity/docs/adr/0003-anthropic-api-as-a-second-model-provider.md, per million tokens.
 	for _, tc := range []struct {
 		model string
 		want  float64
@@ -245,7 +270,7 @@ func TestAnthropicCostPerModel(t *testing.T) {
 func TestOpenRouterCostIsAsReported(t *testing.T) {
 	s := model.New(model.WithCost(model.ToolUse("tom", "a:b"), 0.0042))
 	defer s.Close()
-	c, _ := modelclient.New(modelclient.Config{BaseURL: s.URL, APIKey: "k", Provider: "openrouter", Auth: modelclient.AuthBearer})
+	c, _ := modelclient.New(modelclient.Config{BaseURL: s.URL, APIKey: "k", Provider: "openrouter"})
 	res, err := propose(t, c)
 	if err != nil {
 		t.Fatal(err)

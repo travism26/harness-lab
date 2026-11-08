@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelclient"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
 )
 
@@ -24,35 +25,35 @@ type ModelConfig struct {
 	APIKey  string
 	// Model is the model id; empty means the provider's default.
 	Model string
-	// Provider is "anthropic", "openrouter" or "stand-in". The Reply footer
-	// says "stand-in" for the last and "live" for the others.
+	// Provider is "anthropic", "openrouter" or "stand-in". It sets the auth
+	// style and default model (projects/agent-identity/internal/provider). The Reply footer says
+	// "stand-in" for the last and "live" for the others.
 	Provider string
-	// BearerAuth sends Authorization: Bearer (OpenRouter) instead of x-api-key.
-	BearerAuth bool
 }
 
 // DefaultModel is the model id the Model client uses for provider when none is
 // given, so a command can print it without importing the Model client.
-func DefaultModel(provider string) string {
-	if provider == "openrouter" {
-		return modelclient.DefaultOpenRouterModel
-	}
-	return modelclient.DefaultModel
+func DefaultModel(name string) string {
+	p, _ := provider.Lookup(name)
+	return p.DefaultModel
 }
 
 // DefaultWardenTimeout is the deadline on the Warden call when none is given.
 const DefaultWardenTimeout = 5 * time.Second
 
+// ReplyID is one of the eight Reply ids.
+type ReplyID string
+
 // Reply ids.
 const (
-	ReplyYes               = "yes"
-	ReplyNo                = "no"
-	ReplyDenial            = "denial"
-	ReplyUnknownPermission = "unknown_permission"
-	ReplyUnauthenticated   = "unauthenticated"
-	ReplyNoProposal        = "no_proposal"
-	ReplyModelUnreachable  = "model_unreachable"
-	ReplyWardenUnreachable = "warden_unreachable"
+	ReplyYes               ReplyID = "yes"
+	ReplyNo                ReplyID = "no"
+	ReplyDenial            ReplyID = "denial"
+	ReplyUnknownPermission ReplyID = "unknown_permission"
+	ReplyUnauthenticated   ReplyID = "unauthenticated"
+	ReplyNoProposal        ReplyID = "no_proposal"
+	ReplyModelUnreachable  ReplyID = "model_unreachable"
+	ReplyWardenUnreachable ReplyID = "warden_unreachable"
 )
 
 const (
@@ -66,7 +67,7 @@ const (
 // the way for the caller's trace.
 type Reply struct {
 	// ID is one of the eight Reply ids.
-	ID string
+	ID ReplyID
 	// Text is the printable Reply with its footer. The Model's text is never in it.
 	Text string
 	// CorrelationID is the run's Correlation ID, also in the footer.
@@ -88,12 +89,8 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 	if mc == nil {
 		return Reply{}, errors.New("agent: no Model configured")
 	}
-	auth := modelclient.AuthAnthropic
-	if mc.BearerAuth {
-		auth = modelclient.AuthBearer
-	}
 	client, err := modelclient.New(modelclient.Config{
-		BaseURL: mc.BaseURL, APIKey: mc.APIKey, Model: mc.Model, Provider: mc.Provider, Auth: auth,
+		BaseURL: mc.BaseURL, APIKey: mc.APIKey, Model: mc.Model, Provider: mc.Provider,
 	})
 	if err != nil {
 		return Reply{}, fmt.Errorf("agent: %w", err)
@@ -106,7 +103,11 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 		CorrelationID: corr, CallerUnverified: sub, Question: question,
 		Backend: backendFor(mc.Provider), Model: client.Model(),
 	}
-	finish := func(r Reply, id, text string) (Reply, error) {
+	if rec.Backend == backendStandIn {
+		// A stand-in run never shows a real model id.
+		rec.Model = backendStandIn
+	}
+	finish := func(r Reply, id ReplyID, text string) (Reply, error) {
 		r.ID = id
 		r.CorrelationID = corr
 		rec.Attempts, rec.WardenStatus, rec.Reply = r.ModelAttempts, r.Status, id
@@ -122,12 +123,12 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 	if err != nil {
 		var f *modelclient.Failure
 		if errors.As(err, &f) {
-			rec.ModelFailure = &ModelFailure{Kind: string(f.Kind), Code: f.Code}
-			if f.Code == "text_only" {
+			rec.ModelFailure = &ModelFailure{Kind: string(f.Kind), Code: string(f.Code)}
+			if f.Code == modelclient.CodeTextOnly {
 				rec.ModelText = truncate(f.Text, maxModelText)
 			}
 		}
-		if f != nil && f.Code == "provider_error" {
+		if f != nil && f.Code == modelclient.CodeProviderError {
 			return finish(out, ReplyModelUnreachable, modelUnreachableText)
 		}
 		return finish(out, ReplyNoProposal, noProposalText)
