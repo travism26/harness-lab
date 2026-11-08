@@ -692,3 +692,37 @@ func TestDecisionCarriesTargetPermissionAndRoleOnYes(t *testing.T) {
 		t.Errorf("decision = %+v; want target acme/tom, permission invoice:approve, role Finance Approver, caller acme/alice", d)
 	}
 }
+
+// go-spiffe verifies the JWT-SVID against the real clock with its own 60 second
+// leeway; the Warden can't inject a clock there. So the boundary is tested with
+// tokens backdated or future-dated, 30 s inside and 30 s beyond the leeway.
+func TestJWTSVIDExpiryLeeway(t *testing.T) {
+	f := newFixture(t)
+	now := time.Now().Truncate(time.Second)
+
+	cases := []struct {
+		name    string
+		iat     time.Time
+		exp     time.Time
+		want    int
+		wantWhy warden.Reason
+	}{
+		{"exp 30s ago", now.Add(-30*time.Second - 5*time.Minute), now.Add(-30 * time.Second), 200, ""},
+		{"exp 90s ago", now.Add(-90*time.Second - 5*time.Minute), now.Add(-90 * time.Second), 401, warden.ReasonJWTSVIDExpired},
+		{"issued 4m ago, still valid", now.Add(-4 * time.Minute), now.Add(time.Minute), 200, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svid := f.sign(t, agentID, []string{wardenAudience}, tc.iat, tc.exp)
+
+			got := f.post(t, wire.BearerFor(svid), f.valid(t))
+
+			if got.status != tc.want {
+				t.Errorf("status = %d, body %s; want %d", got.status, got.body, tc.want)
+			}
+			if d := f.lastDecision(t); d.Reason != tc.wantWhy {
+				t.Errorf("reason = %q; want %q", d.Reason, tc.wantWhy)
+			}
+		})
+	}
+}
