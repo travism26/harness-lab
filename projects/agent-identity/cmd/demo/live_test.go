@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -58,6 +60,38 @@ func TestLiveAskUsesAnthropicByDefault(t *testing.T) {
 	}
 	if strings.Contains(errOut+out, "a-key") {
 		t.Error("the key leaked into the output")
+	}
+}
+
+func TestLiveReadsKeysFromTheEnvFileAndTheProcessOverridesIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(path, []byte("ANTHROPIC_API_KEY=file-a\nOPENROUTER_API_KEY=file-o\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := model.NewDemo()
+	defer m.Close()
+	// Only the file has keys: Anthropic by default.
+	_, errOut, code := runDeps(deps{getenv: keys(nil), envFile: path, modelBaseURL: m.URL}, "ask", question, "--live")
+	if code != 0 || !strings.Contains(errOut, "provider anthropic") {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	if got := m.Requests()[0].Header.Get("X-Api-Key"); got != "file-a" {
+		t.Errorf("x-api-key = %q, want the file's key", got)
+	}
+	// The process environment wins over the file.
+	_, _, code = runDeps(deps{getenv: keys(map[string]string{"ANTHROPIC_API_KEY": "proc-a"}), envFile: path, modelBaseURL: m.URL}, "ask", question, "--live")
+	if code != 0 {
+		t.Fatalf("code=%d", code)
+	}
+	if got := m.Requests()[1].Header.Get("X-Api-Key"); got != "proc-a" {
+		t.Errorf("x-api-key = %q, want the process key", got)
+	}
+}
+
+func TestLiveWithAnEnvFileThatIsMissingStillNeedsAKey(t *testing.T) {
+	_, errOut, code := runDeps(deps{getenv: keys(nil), envFile: filepath.Join(t.TempDir(), "absent")}, "ask", question, "--live")
+	if code == 0 || !strings.Contains(errOut, "API_KEY") {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
 }
 

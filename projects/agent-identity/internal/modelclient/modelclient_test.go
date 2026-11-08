@@ -217,6 +217,44 @@ func TestAttemptKeepsTheRawReply(t *testing.T) {
 	}
 }
 
+func TestAnthropicCostPerModel(t *testing.T) {
+	// The stand-in reports 10 input and 5 output tokens; the expected USD are
+	// worked by hand from the ADR 0003 prices per million tokens.
+	for _, tc := range []struct {
+		model string
+		want  float64
+	}{
+		{"claude-haiku-5-5", 3.5e-6},
+		{"claude-sonnet-5-5", 70e-6},
+		{"claude-opus-5-5", 140e-6},
+		{"claude-unpriced-9", 0},
+	} {
+		s := model.New(model.ToolUse("tom", "a:b"))
+		c, _ := modelclient.New(modelclient.Config{BaseURL: s.URL, APIKey: "k", Model: tc.model, Provider: "anthropic"})
+		res, err := propose(t, c)
+		s.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := res.Attempts[0].Cost; got < tc.want*0.999 || got > tc.want*1.001 {
+			t.Errorf("%s: cost = %v, want %v", tc.model, got, tc.want)
+		}
+	}
+}
+
+func TestOpenRouterCostIsAsReported(t *testing.T) {
+	s := model.New(model.WithCost(model.ToolUse("tom", "a:b"), 0.0042))
+	defer s.Close()
+	c, _ := modelclient.New(modelclient.Config{BaseURL: s.URL, APIKey: "k", Provider: "openrouter", Auth: modelclient.AuthBearer})
+	res, err := propose(t, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Attempts[0].Cost != 0.0042 {
+		t.Errorf("cost = %v", res.Attempts[0].Cost)
+	}
+}
+
 func TestConfigRequiresBaseURLAndKey(t *testing.T) {
 	if _, err := modelclient.New(modelclient.Config{APIKey: "k"}); err == nil {
 		t.Error("want error for empty BaseURL")

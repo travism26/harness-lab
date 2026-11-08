@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -85,6 +86,44 @@ type Server struct {
 type Request struct {
 	Header http.Header
 	Body   map[string]any
+	// Auth is which auth style the request used: AuthAnthropic, AuthBearer or
+	// AuthNone. The stand-in serves all three.
+	Auth string
+}
+
+// The auth styles a request can use.
+const (
+	// AuthAnthropic is x-api-key plus anthropic-version.
+	AuthAnthropic = "x-api-key"
+	// AuthBearer is Authorization: Bearer.
+	AuthBearer = "bearer"
+	// AuthNone is neither.
+	AuthNone = "none"
+)
+
+func authOf(h http.Header) string {
+	switch {
+	case h.Get("x-api-key") != "" && h.Get("anthropic-version") != "":
+		return AuthAnthropic
+	case strings.HasPrefix(h.Get("Authorization"), "Bearer "):
+		return AuthBearer
+	}
+	return AuthNone
+}
+
+// WithCost returns the reply with usage.cost set, as OpenRouter reports it.
+func WithCost(r Reply, cost float64) Reply {
+	usage := map[string]any{}
+	for k, v := range r.body["usage"].(map[string]any) {
+		usage[k] = v
+	}
+	usage["cost"] = cost
+	body := map[string]any{}
+	for k, v := range r.body {
+		body[k] = v
+	}
+	body["usage"] = usage
+	return Reply{status: r.status, body: body}
 }
 
 // New starts a stand-in serving the replies in order. Call Close when done.
@@ -140,7 +179,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
 	_ = json.Unmarshal(raw, &body)
 	s.mu.Lock()
-	s.requests = append(s.requests, Request{Header: r.Header.Clone(), Body: body})
+	s.requests = append(s.requests, Request{Header: r.Header.Clone(), Body: body, Auth: authOf(r.Header)})
 	var rep Reply
 	if s.table != nil {
 		rep = tableReply(body)

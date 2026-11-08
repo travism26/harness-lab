@@ -134,7 +134,15 @@ func runWith(args []string, stdout, stderr io.Writer, d deps) int {
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 	// Every choice that can fail is made here, before the first request.
 	if opts.Live && slices.ContainsFunc(chosen, func(s scenario) bool { return s.usesModel }) {
-		choice, err := provider.Select(opts.Provider, d.getenv)
+		getenv := d.getenv
+		if d.envFile != "" {
+			var err error
+			if getenv, err = provider.WithDotEnv(d.envFile, d.getenv); err != nil {
+				fmt.Fprintf(stderr, "demo: --live: %v\n", err)
+				return 2
+			}
+		}
+		choice, err := provider.Select(opts.Provider, getenv)
 		if err != nil {
 			fmt.Fprintf(stderr, "demo: --live: %v\n", err)
 			return 2

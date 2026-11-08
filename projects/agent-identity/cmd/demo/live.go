@@ -13,6 +13,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 )
 
@@ -21,6 +22,9 @@ import (
 type deps struct {
 	// getenv reads provider keys. Nil means os.Getenv: the process environment only.
 	getenv func(string) string
+	// envFile is a .env file whose keys getenv overrides. Empty means none; the
+	// real run (nil getenv) uses provider.DotEnvPath.
+	envFile string
 	// modelBaseURL, if set, replaces the chosen provider's API root, so a test
 	// can point a live run at the stand-in Model. Empty means the provider's own.
 	modelBaseURL string
@@ -32,6 +36,7 @@ type deps struct {
 func (d deps) withDefaults() deps {
 	if d.getenv == nil {
 		d.getenv = os.Getenv
+		d.envFile = provider.DotEnvPath
 	}
 	if d.openJWT == nil {
 		d.openJWT = openWorkloadAPI
