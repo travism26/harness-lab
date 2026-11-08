@@ -1,6 +1,12 @@
 // Command trustlint runs the trust-boundary analyzers R1–R4 over the packages
-// it is given. Until they land it is a stub that accepts any arguments and
-// passes, so projects/agent-identity/check already runs its step.
+// it is given. The analyzers are configured in
+// projects/agent-identity/internal/trustlint/config.go.
 package main
 
-func main() {}
+import (
+	"golang.org/x/tools/go/analysis/multichecker"
+
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/trustlint"
+)
+
+func main() { multichecker.Main(trustlint.Analyzers()...) }
