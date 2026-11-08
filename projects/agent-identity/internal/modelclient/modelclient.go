@@ -138,7 +138,10 @@ var (
 const system = "You turn one question about who holds a permission into one call of the " +
 	"lookup_permission tool. target is the name of the person or agent from the question, or " +
 	"\"self\" when the question is about the asker. permission is resource:action in lowercase " +
-	"letters, such as invoice:approve. Call the tool exactly once. If the question cannot be " +
+	"letters, such as invoice:approve. The resource is singular: invoices becomes invoice, " +
+	"permissions becomes permission. Two actions are known: read, which also covers view, see " +
+	"and look up, and approve, which also covers sign off. Write any other permission as asked, " +
+	"without mapping it onto these. Call the tool exactly once. If the question cannot be " +
 	"turned into one lookup, do not call it."
 
 var toolDef = map[string]any{
@@ -156,12 +159,35 @@ var toolDef = map[string]any{
 	},
 }
 
+// block is one content block of a reply. It keeps its bytes as received, so a
+// repair retry echoes it unchanged: the API rejects a thinking block that comes
+// back without its thinking and signature fields.
 type block struct {
 	Type  string          `json:"type"`
 	ID    string          `json:"id,omitempty"`
 	Name  string          `json:"name,omitempty"`
 	Text  string          `json:"text,omitempty"`
 	Input json.RawMessage `json:"input,omitempty"`
+	raw   json.RawMessage
+}
+
+func (b *block) UnmarshalJSON(data []byte) error {
+	type fields block
+	var f fields
+	if err := json.Unmarshal(data, &f); err != nil {
+		return err
+	}
+	*b = block(f)
+	b.raw = append(json.RawMessage(nil), data...)
+	return nil
+}
+
+func (b block) MarshalJSON() ([]byte, error) {
+	if b.raw != nil {
+		return b.raw, nil
+	}
+	type fields block
+	return json.Marshal(fields(b))
 }
 
 type response struct {
