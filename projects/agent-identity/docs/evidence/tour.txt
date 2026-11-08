@@ -1,0 +1,21 @@
+$ go run ./cmd/demo tour
+# stdout
+== tokens
+POST /lookup  agent=spiffe://example.com/permission-agent  aud=spiffe://example.com/warden  -> 200  outcome=answer_yes
+POST /lookup  agent=spiffe://example.com/permission-agent  aud=spiffe://example.com/not-the-warden  -> 401  outcome=unauthenticated  reason=jwt_svid_audience
+POST /lookup  agent=spiffe://example.com/unlisted-agent  aud=spiffe://example.com/warden  -> 403  outcome=agent_not_allowed
+== scripted
+POST /lookup  caller=acme/alice  target=acme/tom  permission=invoice:approve  -> 200  outcome=answer_yes  holds=true  role=Finance Approver
+POST /lookup  caller=acme/bob  target=acme/tom  permission=invoice:approve  -> 403  outcome=denial  failed_check=lookup_check
+POST /lookup  caller=acme/alice  target=globex/sam  permission=permission:read  -> 403  outcome=denial  failed_check=lookup_check
+== ask
+Yes. tom holds `invoice:approve` in acme through the Finance Approver role.
+[model: stand-in · id <correlation-id>]
+# stderr
+time=<ts> level=INFO msg="warden listening" url=http://127.0.0.1:<port>
+time=<ts> level=INFO msg="warden listening" url=http://127.0.0.1:<port>
+time=<ts> level=INFO msg="warden listening" url=http://127.0.0.1:<port>
+time=<ts> level=INFO msg=proposal target=tom permission=invoice:approve model_calls=1 correlation_id=<correlation-id>
+time=<ts> level=INFO msg=warden status=200 outcome=answer_yes
+time=<ts> level=INFO msg=reply id=yes correlation_id=<correlation-id>
+time=<ts> level=INFO msg="audit logs written" dir=<run-dir>

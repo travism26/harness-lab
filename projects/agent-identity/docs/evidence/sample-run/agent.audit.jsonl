@@ -1,0 +1,7 @@
+{"ts":"2026-11-08T18:30:57.03352Z","correlation_id":"329093244e07519d9348a982e95216e5","caller_unverified":"acme/alice","warden_status":200}
+{"ts":"2026-11-08T18:30:57.034523Z","correlation_id":"05499f4ea95abda7703e384a9f1abde5","caller_unverified":"acme/alice","warden_status":401}
+{"ts":"2026-11-08T18:30:57.035017Z","correlation_id":"2fae98b550fd2e2b5e4b38bb57a03432","caller_unverified":"acme/alice","warden_status":403}
+{"ts":"2026-11-08T18:30:57.035972Z","correlation_id":"c839f36c3821b42a36c13e818e01d446","caller_unverified":"acme/alice","warden_status":200}
+{"ts":"2026-11-08T18:30:57.03653Z","correlation_id":"7170d5fe4bf2d537312aea2db712f677","caller_unverified":"acme/bob","warden_status":403}
+{"ts":"2026-11-08T18:30:57.037131Z","correlation_id":"283ab246a7b5fa8afa4de9d371611d60","caller_unverified":"acme/alice","warden_status":403}
+{"ts":"2026-11-08T18:30:58.232733Z","correlation_id":"74941bb83fc346d284ec2f939ce9d919","caller_unverified":"acme/alice","question":"Can Tom approve invoices?","backend":"live","model":"claude-haiku-5-5","attempts":1,"proposal":{"target":"tom","permission":"invoice:approve"},"warden_status":200,"reply":"yes","model_calls":[{"request_id":"req_011CgqwLWjkrR6tYVgdjAk4k","provider":"anthropic","cost":0.00009380000000000002}]}
