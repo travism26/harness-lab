@@ -257,14 +257,14 @@ func TestTargetIsCallersTenantPlusModelName(t *testing.T) {
 		w.Write([]byte(`{"holds":false}`))
 	}))
 	defer srv.Close()
-	m := model.New(model.ToolUse("sam", "permission:read"))
+	m := model.New(model.ToolUse("tom", "invoice:approve"))
 	defer m.Close()
 	r := ask(t, e.agent(t, m, srv.URL, 0), e.assertion(t, "globex/sam"), "q")
-	if body(r) != "No. sam does not hold `permission:read` in globex." {
+	if body(r) != "No. tom does not hold `invoice:approve` in globex." {
 		t.Errorf("got %q", body(r))
 	}
-	if target != "globex/sam" {
-		t.Errorf("Warden saw target %q; want globex/sam", target)
+	if target != "globex/tom" {
+		t.Errorf("Warden saw target %q; want globex/tom", target)
 	}
 	if corrID != r.CorrelationID {
 		t.Errorf("Correlation-Id header %q; want %q", corrID, r.CorrelationID)
