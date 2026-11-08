@@ -89,6 +89,18 @@ jobs:
           path: work
           persist-credentials: false
 
+      - name: Read the Ticket's Project
+        id: project
+        run: echo "name=$(jq -r .project run-out/context.json)" >> "$GITHUB_OUTPUT"
+
+      # The same conditional step .github/workflows/ci.yml has: Go for a Project with a go.mod,
+      # at the version its `go` line names.
+      - uses: actions/setup-go@v7.0.0
+        if: hashFiles(format('work/projects/{0}/go.mod', steps.project.outputs.name)) != ''
+        with:
+          go-version-file: work/projects/${{ steps.project.outputs.name }}/go.mod
+          cache-dependency-path: work/projects/${{ steps.project.outputs.name }}/go.sum
+
       - name: Install Claude Code
         run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
