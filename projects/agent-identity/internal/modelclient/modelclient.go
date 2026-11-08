@@ -148,7 +148,7 @@ var toolDef = map[string]any{
 	"input_schema": map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"target":     map[string]any{"type": "string", "description": "a name from the question, or self"},
+			"target":     map[string]any{"type": "string", "description": "a name from the question in lowercase (Tom becomes tom), or self"},
 			"permission": map[string]any{"type": "string", "description": "resource:action, lowercase"},
 		},
 		"required":             []string{"target", "permission"},
