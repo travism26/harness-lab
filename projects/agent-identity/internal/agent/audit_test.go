@@ -3,6 +3,9 @@ package agent_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -68,19 +71,29 @@ type auditEnv struct {
 	fetched     *capturing
 	assertions  []wire.CallerAssertion
 	modelAPIKey string
+	// The test's own signing keys, for the canary.
+	loginKey, sourceKey *ecdsa.PrivateKey
 }
 
 func newAuditEnv(t *testing.T) *auditEnv {
 	t.Helper()
-	source, err := workload.New(trustDomain)
+	sourceKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lg, err := login.New(nil)
+	loginKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &auditEnv{source: source, login: lg, modelAPIKey: "CANARY-API-KEY-7c1e"}
+	source, err := workload.NewWithKey(trustDomain, sourceKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lg, err := login.NewWithKey(nil, loginKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &auditEnv{source: source, login: lg, modelAPIKey: "CANARY-API-KEY-7c1e", loginKey: loginKey, sourceKey: sourceKey}
 	w, err := warden.New(warden.Config{
 		Audience: wardenAudience, Bundles: source,
 		Allowlist: []spiffeid.ID{listedID}, LoginKey: lg.PublicKey(), Audit: &e.wardenLog,
@@ -277,7 +290,11 @@ func TestEveryOutcomeHasOneRecordPerServiceAndNoCanaryInEitherLog(t *testing.T) 
 	canaries := []string{e.modelAPIKey, "TAILBEYOND500"}
 	// The Login's and the Workload stand-in's signing keys, in the encodings a
 	// log could carry: base64url (JWK), base64, hex and decimal.
-	for _, d := range [][]byte{e.login.SigningKeyD(), e.source.SigningKeyD()} {
+	for _, k := range []*ecdsa.PrivateKey{e.loginKey, e.sourceKey} {
+		d, err := k.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
 		canaries = append(canaries,
 			base64.RawURLEncoding.EncodeToString(d), base64.StdEncoding.EncodeToString(d),
 			hex.EncodeToString(d), new(big.Int).SetBytes(d).String())

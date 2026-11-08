@@ -36,15 +36,20 @@ type Source struct {
 	key    *ecdsa.PrivateKey
 }
 
-// SigningKeyD is the private scalar D of the signing key, 32 big-endian bytes.
-// It exists so a test can assert the key never reaches a log.
-func (s *Source) SigningKeyD() []byte { b, _ := s.key.Bytes(); return b }
-
 // New makes a Source for the trust domain with a fresh ES256 key.
 func New(td spiffeid.TrustDomain) (*Source, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("workload stand-in: generate key: %w", err)
+	}
+	return NewWithKey(td, key)
+}
+
+// NewWithKey makes a Source for the trust domain that signs with key, which
+// must be a P-256 key.
+func NewWithKey(td spiffeid.TrustDomain, key *ecdsa.PrivateKey) (*Source, error) {
+	if key == nil || key.Curve != elliptic.P256() {
+		return nil, errors.New("workload stand-in: key must be a non-nil P-256 key")
 	}
 	keyID := rand.Text()
 	signer, err := jose.NewSigner(

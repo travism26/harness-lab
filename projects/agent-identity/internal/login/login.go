@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"time"
 
@@ -33,15 +34,20 @@ func New(now func() time.Time) (*Login, error) {
 	if err != nil {
 		return nil, fmt.Errorf("login: generate key: %w", err)
 	}
+	return NewWithKey(now, key)
+}
+
+// NewWithKey makes a Login that signs with key, which must be a P-256 key. A
+// nil now means time.Now.
+func NewWithKey(now func() time.Time, key *ecdsa.PrivateKey) (*Login, error) {
+	if key == nil || key.Curve != elliptic.P256() {
+		return nil, errors.New("login: key must be a non-nil P-256 key")
+	}
 	if now == nil {
 		now = time.Now
 	}
 	return &Login{key: key, now: now}, nil
 }
-
-// SigningKeyD is the private scalar D of the signing key, 32 big-endian bytes.
-// It exists so a test can assert the key never reaches a log.
-func (l *Login) SigningKeyD() []byte { b, _ := l.key.Bytes(); return b }
 
 // PublicKey is the key the Warden trusts to verify assertions.
 func (l *Login) PublicKey() *ecdsa.PublicKey {
