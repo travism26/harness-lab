@@ -288,3 +288,30 @@ func TestConfigRequiresBaseURLAndKey(t *testing.T) {
 		t.Error("want error for empty APIKey")
 	}
 }
+
+// Live, a reply often starts with a thinking block. The repair retry echoes
+// the Model's turn, and the API rejects a thinking block without its thinking
+// and signature fields, so the echo must keep every block as sent.
+func TestRepairRetryEchoesThinkingBlockUnchanged(t *testing.T) {
+	s := model.New(model.WithThinking(model.ToolUse("Tom", "invoice:approve")), model.ToolUse("tom", "invoice:approve"))
+	defer s.Close()
+	res, err := propose(t, newClient(t, s))
+	if err != nil || len(res.Attempts) != 2 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	msgs, _ := s.Requests()[1].Body["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %v", msgs)
+	}
+	echoed, _ := msgs[1].(map[string]any)["content"].([]any)
+	if len(echoed) == 0 {
+		t.Fatalf("assistant echo = %v", msgs[1])
+	}
+	th, _ := echoed[0].(map[string]any)
+	if th["type"] != "thinking" || th["signature"] != "sig-standin" {
+		t.Errorf("first echoed block = %v", th)
+	}
+	if v, ok := th["thinking"]; !ok || v != "" {
+		t.Errorf("echoed thinking block lacks its thinking field: %v", th)
+	}
+}

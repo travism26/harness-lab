@@ -201,3 +201,17 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(rep.status)
 	_ = json.NewEncoder(w).Encode(rep.body)
 }
+
+// WithThinking returns the reply with a thinking block in front of its content,
+// as the live API sends one: empty thinking text plus a signature. A request
+// that echoes the turn must send the block back unchanged.
+func WithThinking(r Reply) Reply {
+	content := []map[string]any{{"type": "thinking", "thinking": "", "signature": "sig-standin"}}
+	content = append(content, r.body["content"].([]map[string]any)...)
+	body := map[string]any{}
+	for k, v := range r.body {
+		body[k] = v
+	}
+	body["content"] = content
+	return Reply{status: r.status, body: body}
+}
