@@ -695,7 +695,9 @@ func TestDecisionCarriesTargetPermissionAndRoleOnYes(t *testing.T) {
 
 // go-spiffe verifies the JWT-SVID against the real clock with its own 60 second
 // leeway; the Warden can't inject a clock there. So the boundary is tested with
-// tokens backdated or future-dated, 30 s inside and 30 s beyond the leeway.
+// tokens 30 s inside and 30 s beyond the leeway: backdated past exp, and
+// future-dated (go-jose also refuses an iat in the future beyond the leeway,
+// so a new Warden reason code would be needed to tell that apart from Other).
 func TestJWTSVIDExpiryLeeway(t *testing.T) {
 	f := newFixture(t)
 	now := time.Now().Truncate(time.Second)
@@ -709,7 +711,8 @@ func TestJWTSVIDExpiryLeeway(t *testing.T) {
 	}{
 		{"exp 30s ago", now.Add(-30*time.Second - 5*time.Minute), now.Add(-30 * time.Second), 200, ""},
 		{"exp 90s ago", now.Add(-90*time.Second - 5*time.Minute), now.Add(-90 * time.Second), 401, warden.ReasonJWTSVIDExpired},
-		{"issued 4m ago, still valid", now.Add(-4 * time.Minute), now.Add(time.Minute), 200, ""},
+		{"issued 30s in the future", now.Add(30 * time.Second), now.Add(30*time.Second + 4*time.Minute), 200, ""},
+		{"issued 90s in the future", now.Add(90 * time.Second), now.Add(90*time.Second + 4*time.Minute), 401, warden.ReasonJWTSVIDOther},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
