@@ -347,3 +347,87 @@ func TestScriptedLookupWritesAnAgentRecordToo(t *testing.T) {
 		t.Errorf("agent %+v; warden %+v", recs, w)
 	}
 }
+
+func TestUnknownPermissionReplyAgreesWithTheWardensAuditRecord(t *testing.T) {
+	e := newAuditEnv(t)
+	m := model.New(model.ToolUse("tom", "invoices:approve"))
+	defer m.Close()
+	r, err := e.agent(t, listedID, e.url, m, 0).Ask(context.Background(), e.assertion(t, "acme/alice", listedID), "Does Tom hold invoices:approve?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "The Warden doesn't know the permission `invoices:approve`, so it couldn't answer whether `tom` holds it in `acme`."
+	if r.ID != agent.ReplyUnknownPermission || r.Status != 422 || strings.SplitN(r.Text, "\n", 2)[0] != want {
+		t.Errorf("got %s %d %q", r.ID, r.Status, r.Text)
+	}
+	g, w := e.agentRecords(t), e.wardenRecords(t)
+	if len(g) != 1 || len(w) != 1 || g[0].CorrelationID != r.CorrelationID || w[0].CorrelationID != r.CorrelationID {
+		t.Fatalf("agent %+v; warden %+v; Reply ID %s", g, w, r.CorrelationID)
+	}
+	if g[0].WardenStatus != 422 || g[0].Reply != agent.ReplyUnknownPermission ||
+		w[0].Status != 422 || w[0].Outcome != warden.OutcomeUnknownPermission || w[0].Target != "acme/tom" || w[0].Permission != "invoices:approve" {
+		t.Errorf("agent %+v; warden %+v", g[0], w[0])
+	}
+}
+
+// "No lookup was made" means no accepted Lookup: the no-Proposal and
+// Model-unreachable paths send no request, and a 401 records warden_status 401.
+func TestNoLookupWasMadeRepliesMatchTheAgentAuditRecord(t *testing.T) {
+	cases := []struct {
+		name    string
+		caller  string
+		script  model.Reply
+		reply   agent.ReplyID
+		status  int
+		fetches int
+	}{
+		{"no proposal", "acme/alice", model.Text("hi"), agent.ReplyNoProposal, 0, 0},
+		{"model unreachable", "acme/alice", model.Error(500), agent.ReplyModelUnreachable, 0, 0},
+		{"unauthenticated", "acme/nobody", model.ToolUse("tom", "invoice:approve"), agent.ReplyUnauthenticated, 401, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newAuditEnv(t)
+			m := model.New(tc.script)
+			defer m.Close()
+			a := e.agent(t, listedID, e.url, m, 0)
+			r, err := a.Ask(context.Background(), e.assertion(t, tc.caller, listedID), "q")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(strings.SplitN(r.Text, "\n", 2)[0], "so no lookup was made.") {
+				t.Errorf("Reply %q", r.Text)
+			}
+			g := e.agentRecords(t)
+			if len(g) != 1 || g[0].Reply != tc.reply || g[0].WardenStatus != tc.status {
+				t.Errorf("agent record %+v; want %s status %d", g, tc.reply, tc.status)
+			}
+			if tc.status == 0 && len(e.wardenRecords(t)) != 0 {
+				t.Error("the Warden saw a request on a path that sends none")
+			}
+			e.fetched.mu.Lock()
+			n := len(e.fetched.svids)
+			e.fetched.mu.Unlock()
+			if n != tc.fetches {
+				t.Errorf("fetched %d JWT-SVIDs; want %d", n, tc.fetches)
+			}
+		})
+	}
+}
+
+func TestBareTargetGetsTheCallersTenantAgainstTheRealWarden(t *testing.T) {
+	e := newAuditEnv(t)
+	m := model.New(model.ToolUse("tom", "invoice:approve"))
+	defer m.Close()
+	r, err := e.agent(t, listedID, e.url, m, 0).Ask(context.Background(), e.assertion(t, "globex/sam", listedID), "Can Tom approve invoices?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Yes. tom holds `invoice:approve` in globex through the Finance Approver role."
+	if got := strings.SplitN(r.Text, "\n", 2)[0]; r.ID != agent.ReplyYes || got != want {
+		t.Errorf("got %s %q", r.ID, got)
+	}
+	if w := e.wardenRecords(t); len(w) != 1 || w[0].Target != "globex/tom" || w[0].Caller != "globex/sam" {
+		t.Errorf("warden records %+v", w)
+	}
+}
