@@ -4,13 +4,27 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"strings"
 
 	"example.com/m/wire"
 )
 
-func ok(tok wire.JWTSVID, name string) string {
+type plain struct {
+	name string
+	n    int
+}
+
+type list struct {
+	next *list
+	val  string
+}
+
+func ok(tok wire.JWTSVID, name string, p plain, l *list) string {
 	slog.Info("x", "len", len(tok), "name", name)
 	log.Printf("%s", name)
 	fmt.Println(name)
-	return fmt.Sprintf("%s", tok)
+	fmt.Println(p, l)
+	slog.Info("x", []any{"name", name}...)
+	_ = strings.Repeat(string(tok), 2)
+	return fmt.Sprintf("%s", name)
 }

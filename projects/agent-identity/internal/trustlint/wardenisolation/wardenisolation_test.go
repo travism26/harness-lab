@@ -14,6 +14,8 @@ func TestWardenIsolation(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), New(cfg),
 		"example.com/m/internal/warden",
 		"example.com/m/internal/warden/sub",
+		"example.com/m/internal/warden/indirect",
+		"example.com/m/internal/nonwarden",
 		"example.com/m/internal/other",
 	)
 }
