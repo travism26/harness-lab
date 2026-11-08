@@ -208,6 +208,15 @@ func TestComputedAnthropicCost(t *testing.T) {
 	}
 }
 
+func TestAttemptKeepsTheRawReply(t *testing.T) {
+	s := model.New(model.Text("I cannot do that"))
+	defer s.Close()
+	res, _ := propose(t, newClient(t, s))
+	if len(res.Attempts) != 1 || !strings.Contains(res.Attempts[0].Raw, "I cannot do that") {
+		t.Fatalf("attempts = %+v", res.Attempts)
+	}
+}
+
 func TestConfigRequiresBaseURLAndKey(t *testing.T) {
 	if _, err := modelclient.New(modelclient.Config{APIKey: "k"}); err == nil {
 		t.Error("want error for empty BaseURL")

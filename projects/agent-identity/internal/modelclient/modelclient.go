@@ -94,6 +94,9 @@ type Attempt struct {
 	// Cost is in USD: reported by OpenRouter, computed from usage for
 	// Anthropic, 0 for the stand-in.
 	Cost float64
+	// Raw is the reply body as received, for the Eval report. Empty when no
+	// reply was read.
+	Raw string
 }
 
 // Result is what Propose returns, with or without a Proposal.
@@ -241,6 +244,7 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 	defer hr.Body.Close()
 	attempt.RequestID = hr.Header.Get("Request-Id")
 	raw, err := io.ReadAll(io.LimitReader(hr.Body, maxBody))
+	attempt.Raw = string(raw)
 	if err != nil || hr.StatusCode != http.StatusOK {
 		return response{}, attempt, providerError(fmt.Sprintf("status %d", hr.StatusCode))
 	}
