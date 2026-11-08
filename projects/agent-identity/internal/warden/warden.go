@@ -3,6 +3,7 @@
 package warden
 
 import (
+	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
@@ -35,16 +38,20 @@ type FailedCheck string
 const (
 	CheckJWTSVID   FailedCheck = "jwt_svid"
 	CheckAllowlist FailedCheck = "allowlist"
+
+	CheckCallerAssertion FailedCheck = "caller_assertion"
 )
 
 // Decision is what the Warden decided for one request. Agent is set only once
-// the JWT-SVID has verified. It never holds a token or a raw error.
+// the JWT-SVID has verified, and Caller only once the Caller assertion has too.
+// It never holds a token or a raw error.
 type Decision struct {
 	Status      int
 	Outcome     Outcome
 	FailedCheck FailedCheck
 	Reason      Reason
 	Agent       string
+	Caller      string
 }
 
 // Config is what the Warden is given at startup.
@@ -55,6 +62,10 @@ type Config struct {
 	Bundles jwtbundle.Source
 	// Allowlist is the Agent allowlist: the SPIFFE IDs that may make Lookups.
 	Allowlist []spiffeid.ID
+	// LoginKey is the one Login public key that verifies Caller assertions.
+	LoginKey *ecdsa.PublicKey
+	// Now is the clock for the Caller assertion only. Nil means time.Now.
+	Now func() time.Time
 	// OnDecision, if set, is called with each Decision before the response is
 	// written.
 	OnDecision func(Decision)
@@ -72,6 +83,8 @@ type Warden struct {
 	audience   string
 	bundles    jwtbundle.Source
 	allowlist  map[spiffeid.ID]bool
+	loginKey   *ecdsa.PublicKey
+	now        func() time.Time
 	onDecision func(Decision)
 	log        *slog.Logger
 	mux        *http.ServeMux
@@ -86,13 +99,21 @@ func New(cfg Config) (*Warden, error) {
 	if cfg.Bundles == nil {
 		return nil, errors.New("warden: a JWT bundle source is required")
 	}
+	if cfg.LoginKey == nil {
+		return nil, errors.New("warden: a Login public key is required")
+	}
 	w := &Warden{
 		audience:   cfg.Audience,
 		bundles:    cfg.Bundles,
 		allowlist:  make(map[spiffeid.ID]bool, len(cfg.Allowlist)),
+		loginKey:   cfg.LoginKey,
+		now:        cfg.Now,
 		onDecision: cfg.OnDecision,
 		log:        cfg.Logger,
 		mux:        http.NewServeMux(),
+	}
+	if w.now == nil {
+		w.now = time.Now
 	}
 	if w.log == nil {
 		w.log = slog.Default()
@@ -130,7 +151,59 @@ func (w *Warden) lookup(rw http.ResponseWriter, r *http.Request) {
 		}, wire.ErrorBody{Error: wire.ErrAgentNotAllowed})
 		return
 	}
-	w.respond(rw, Decision{Status: http.StatusOK, Outcome: OutcomeAllowed, Agent: agent}, struct{}{})
+	caller, reason := w.verifyCallerAssertion(wire.CallerAssertion(r.Header.Get(wire.HeaderCallerAssertion)), agent)
+	if caller == "" {
+		w.respond(rw, Decision{
+			Status:      http.StatusUnauthorized,
+			Outcome:     OutcomeUnauthenticated,
+			FailedCheck: CheckCallerAssertion,
+			Reason:      reason,
+			Agent:       agent,
+		}, wire.ErrorBody{Error: wire.ErrUnauthenticated})
+		return
+	}
+	w.respond(rw, Decision{Status: http.StatusOK, Outcome: OutcomeAllowed, Agent: agent, Caller: caller}, struct{}{})
+}
+
+// verifyCallerAssertion checks the Caller-Assertion header: ES256 signature
+// against the Login key, the maximum lifetime (whatever the clock says),
+// audience and expiry, that
+// may_act names the Agent, and that the Caller is a known User. On failure it
+// returns an empty Caller and the reason code.
+func (w *Warden) verifyCallerAssertion(raw wire.CallerAssertion, agent string) (string, Reason) {
+	if strings.TrimSpace(string(raw)) == "" {
+		return "", ReasonAssertionMissing
+	}
+	tok, err := jwt.ParseSigned(string(raw), []jose.SignatureAlgorithm{jose.ES256})
+	if err != nil {
+		w.log.Debug("caller assertion rejected", "err", err)
+		return "", ReasonAssertionMalformed
+	}
+	var std jwt.Claims
+	var extra struct {
+		MayAct *struct {
+			Sub string `json:"sub"`
+		} `json:"may_act"`
+	}
+	if err := tok.Claims(w.loginKey, &std, &extra); err != nil {
+		w.log.Debug("caller assertion rejected", "err", err)
+		return "", ReasonAssertionSignature
+	}
+	if std.IssuedAt == nil || std.Expiry == nil || std.Expiry.Time().Sub(std.IssuedAt.Time()) > MaxLifetime {
+		return "", ReasonAssertionLifetime
+	}
+	expected := jwt.Expected{AnyAudience: jwt.Audience{w.audience}, Time: w.now()}
+	if err := std.ValidateWithLeeway(expected, jwt.DefaultLeeway); err != nil {
+		w.log.Debug("caller assertion rejected", "err", err)
+		return "", AssertionReason(err)
+	}
+	if extra.MayAct == nil || extra.MayAct.Sub != agent {
+		return "", ReasonAssertionMayActMismatch
+	}
+	if _, ok := seedUsers[std.Subject]; !ok {
+		return "", ReasonAssertionUnknownCaller
+	}
+	return std.Subject, ""
 }
 
 // verifyJWTSVID checks the Authorization header's JWT-SVID: signature against
