@@ -77,6 +77,7 @@ type Server struct {
 	srv      *httptest.Server
 	mu       sync.Mutex
 	script   []Reply
+	table    map[string]Reply
 	requests []Request
 }
 
@@ -92,6 +93,36 @@ func New(replies ...Reply) *Server {
 	s.srv = httptest.NewServer(http.HandlerFunc(s.handle))
 	s.URL = s.srv.URL
 	return s
+}
+
+// demoTable is the demo stand-in Model: replies keyed by exact question text.
+var demoTable = map[string]Reply{
+	"Can Tom approve invoices?":       ToolUse("tom", "invoice:approve"),
+	"Can I read invoices?":            ToolUse("self", "invoice:read"),
+	"Does Tom hold invoices:approve?": ToolUse("tom", "invoices:approve"),
+}
+
+// NewDemo starts the demo stand-in: a reply per exact question text from a fixed
+// table, and a text-only reply for any other question. Call Close when done.
+func NewDemo() *Server {
+	s := &Server{table: demoTable}
+	s.srv = httptest.NewServer(http.HandlerFunc(s.handle))
+	s.URL = s.srv.URL
+	return s
+}
+
+// tableReply finds the reply for the first user message of a request body.
+func tableReply(body map[string]any) Reply {
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) > 0 {
+		first, _ := msgs[0].(map[string]any)
+		if q, ok := first["content"].(string); ok {
+			if rep, found := demoTable[q]; found {
+				return rep
+			}
+		}
+	}
+	return Text("I can only answer a few demo questions.")
 }
 
 // Close shuts the server down.
@@ -110,13 +141,17 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(raw, &body)
 	s.mu.Lock()
 	s.requests = append(s.requests, Request{Header: r.Header.Clone(), Body: body})
-	if len(s.script) == 0 {
+	var rep Reply
+	if s.table != nil {
+		rep = tableReply(body)
+	} else if len(s.script) == 0 {
 		s.mu.Unlock()
 		http.Error(w, "stand-in script exhausted", http.StatusInternalServerError)
 		return
+	} else {
+		rep = s.script[0]
+		s.script = s.script[1:]
 	}
-	rep := s.script[0]
-	s.script = s.script[1:]
 	n := len(s.requests)
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")

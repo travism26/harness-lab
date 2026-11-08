@@ -17,6 +17,7 @@ import (
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/login"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
@@ -30,7 +31,11 @@ func main() {
 type options struct {
 	// As is the Caller the scripted scenario signs for, as tenant/name.
 	As string
+	// Question is what ask asks; tour asks defaultQuestion.
+	Question string
 }
+
+const defaultQuestion = "Can Tom approve invoices?"
 
 // scenario is one named demo.
 type scenario struct {
@@ -42,9 +47,10 @@ type scenario struct {
 var scenarios = []scenario{
 	{"tokens", runTokens},
 	{"scripted", runScripted},
+	{"ask", runAsk},
 }
 
-const usage = "usage: demo <tokens|scripted|tour> [--as tenant/name]\n"
+const usage = "usage: demo <tokens|scripted|tour> [--as tenant/name]\n       demo ask \"<question>\" [--as tenant/name]\n"
 
 // run executes the subcommand and returns the exit code: 0 when the scenario
 // ran (a 401 or 403 is a normal result), 1 when setup failed, 2 on bad usage.
@@ -57,9 +63,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	var opts options
 	fs.StringVar(&opts.As, "as", "acme/alice", "the Caller to sign for, as tenant/name (scripted only)")
-	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
+	if err := fs.Parse(args[1:]); err != nil {
 		io.WriteString(stderr, usage)
 		return 2
+	}
+	if args[0] == "ask" && fs.NArg() > 0 {
+		// The question may come before the flags, so parse the rest again.
+		opts.Question = fs.Arg(0)
+		if err := fs.Parse(fs.Args()[1:]); err != nil {
+			io.WriteString(stderr, usage)
+			return 2
+		}
+	}
+	if fs.NArg() != 0 || (args[0] == "ask" && opts.Question == "") {
+		io.WriteString(stderr, usage)
+		return 2
+	}
+	if args[0] == "tour" {
+		opts.Question = defaultQuestion
 	}
 	var chosen []scenario
 	if args[0] == "tour" {
@@ -77,7 +98,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 	for _, s := range chosen {
-		fmt.Fprintf(stdout, "== %s\n", s.name)
+		if s.name != "ask" || len(chosen) > 1 {
+			// A lone ask prints only the Reply and its footer.
+			fmt.Fprintf(stdout, "== %s\n", s.name)
+		}
 		if err := s.run(context.Background(), stdout, log, opts); err != nil {
 			log.Error("demo could not run", "scenario", s.name, "err", err)
 			return 1
@@ -159,6 +183,47 @@ func (e *env) agentFor(id spiffeid.ID, aud string) (*agent.Agent, error) {
 		return nil, err
 	}
 	return agent.New(agent.Config{WardenURL: e.url, Audience: aud, Source: wl})
+}
+
+// runAsk asks the question through the permission-agent with the demo stand-in
+// Model and prints the Reply. The step trace goes to the log.
+func runAsk(ctx context.Context, stdout io.Writer, log *slog.Logger, opts options) error {
+	e, stop, err := setup(log)
+	if err != nil {
+		return err
+	}
+	defer stop()
+	m := model.NewDemo()
+	defer m.Close()
+	wl, err := e.source.Workload(permissionAgent)
+	if err != nil {
+		return err
+	}
+	a, err := agent.New(agent.Config{
+		WardenURL: e.url, Audience: wardenAud, Source: wl,
+		Model: &agent.ModelConfig{BaseURL: m.URL, APIKey: "stand-in", Provider: "stand-in"},
+	})
+	if err != nil {
+		return err
+	}
+	assertion, err := e.login.Sign(opts.As, wardenAud, permissionAgent.String())
+	if err != nil {
+		return err
+	}
+	reply, err := a.Ask(ctx, assertion, opts.Question)
+	if err != nil {
+		return err
+	}
+	if p := reply.Proposal; p != nil {
+		log.Info("proposal", "target", p.Target, "permission", p.Permission, "model_calls", reply.ModelAttempts)
+		d := e.lastDecision()
+		log.Info("warden", "status", reply.Status, "outcome", d.Outcome, "reason", d.Reason)
+	} else {
+		log.Info("no proposal", "model_calls", reply.ModelAttempts)
+	}
+	log.Info("reply", "id", reply.ID, "correlation_id", reply.CorrelationID)
+	fmt.Fprintln(stdout, reply.Text)
+	return nil
 }
 
 // runTokens makes three Lookups: allowed, wrong audience, not on the allowlist.
