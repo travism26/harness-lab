@@ -102,7 +102,7 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 		r.CorrelationID = corr
 		rec.Attempts, rec.WardenStatus, rec.Reply = r.ModelAttempts, r.Status, id
 		a.writeAudit(rec)
-		r.Text = fmt.Sprintf("%s\n[model: %s · id %s]", text, mc.Provider, corr)
+		r.Text = fmt.Sprintf("%s\n[model: %s · id %s]", text, rec.Backend, corr)
 		return r, nil
 	}
 
