@@ -4,10 +4,13 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
@@ -23,23 +26,38 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
+// options are the flags a scenario may read.
+type options struct {
+	// As is the Caller the scripted scenario signs for, as tenant/name.
+	As string
+}
+
 // scenario is one named demo.
 type scenario struct {
 	name string
-	run  func(ctx context.Context, stdout io.Writer, log *slog.Logger) error
+	run  func(ctx context.Context, stdout io.Writer, log *slog.Logger, opts options) error
 }
 
 // scenarios lists every scenario in tour order.
 var scenarios = []scenario{
 	{"tokens", runTokens},
+	{"scripted", runScripted},
 }
 
-const usage = "usage: demo <tokens|tour>\n"
+const usage = "usage: demo <tokens|scripted|tour> [--as tenant/name]\n"
 
 // run executes the subcommand and returns the exit code: 0 when the scenario
 // ran (a 401 or 403 is a normal result), 1 when setup failed, 2 on bad usage.
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) != 1 {
+	if len(args) < 1 {
+		io.WriteString(stderr, usage)
+		return 2
+	}
+	fs := flag.NewFlagSet("demo", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var opts options
+	fs.StringVar(&opts.As, "as", "acme/alice", "the Caller to sign for, as tenant/name (scripted only)")
+	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		io.WriteString(stderr, usage)
 		return 2
 	}
@@ -60,7 +78,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 	for _, s := range chosen {
 		fmt.Fprintf(stdout, "== %s\n", s.name)
-		if err := s.run(context.Background(), stdout, log); err != nil {
+		if err := s.run(context.Background(), stdout, log, opts); err != nil {
 			log.Error("demo could not run", "scenario", s.name, "err", err)
 			return 1
 		}
@@ -68,51 +86,89 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runTokens makes three Lookups: allowed, wrong audience, not on the allowlist.
-func runTokens(ctx context.Context, stdout io.Writer, log *slog.Logger) error {
-	const (
-		wardenAud = "spiffe://example.com/warden"
-		wrongAud  = "spiffe://example.com/not-the-warden"
-	)
+const (
+	wardenAud = "spiffe://example.com/warden"
+	wrongAud  = "spiffe://example.com/not-the-warden"
+)
+
+var (
+	permissionAgent = spiffeid.RequireFromString("spiffe://example.com/permission-agent")
+	unlistedAgent   = spiffeid.RequireFromString("spiffe://example.com/unlisted-agent")
+)
+
+// env is a running Warden with the pieces both scenarios share.
+type env struct {
+	source *workload.Source
+	login  *login.Login
+	url    string
+
+	mu   sync.Mutex
+	last warden.Decision
+}
+
+// lastDecision is the Decision the Warden made for the latest request.
+func (e *env) lastDecision() warden.Decision {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.last
+}
+
+// setup starts a Warden on loopback that allowlists only the permission-agent.
+// The returned func stops it.
+func setup(log *slog.Logger) (*env, func(), error) {
 	td, err := spiffeid.TrustDomainFromString("example.com")
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	permissionAgent := spiffeid.RequireFromString("spiffe://example.com/permission-agent")
-	unlistedAgent := spiffeid.RequireFromString("spiffe://example.com/unlisted-agent")
-
 	source, err := workload.New(td)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	lg, err := login.New(nil)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	var (
-		mu   sync.Mutex
-		last warden.Decision
-	)
+	e := &env{source: source, login: lg}
 	w, err := warden.New(warden.Config{
 		Audience:  wardenAud,
 		Bundles:   source,
 		Allowlist: []spiffeid.ID{permissionAgent},
 		LoginKey:  lg.PublicKey(),
 		OnDecision: func(d warden.Decision) {
-			mu.Lock()
-			defer mu.Unlock()
-			last = d
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			e.last = d
 		},
 	})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	srv, err := w.ListenLoopback()
 	if err != nil {
+		return nil, nil, err
+	}
+	e.url = srv.URL
+	log.Info("warden listening", "url", srv.URL)
+	return e, func() { srv.Close() }, nil
+}
+
+// agentFor builds an Agent for the workload id that asks for audience aud.
+func (e *env) agentFor(id spiffeid.ID, aud string) (*agent.Agent, error) {
+	wl, err := e.source.Workload(id)
+	if err != nil {
+		return nil, err
+	}
+	return agent.New(agent.Config{WardenURL: e.url, Audience: aud, Source: wl})
+}
+
+// runTokens makes three Lookups: allowed, wrong audience, not on the allowlist.
+// It ignores --as.
+func runTokens(ctx context.Context, stdout io.Writer, log *slog.Logger, _ options) error {
+	e, stop, err := setup(log)
+	if err != nil {
 		return err
 	}
-	defer srv.Close()
-	log.Info("warden listening", "url", srv.URL)
+	defer stop()
 
 	req := wire.LookupRequest{Target: "acme/tom", Permission: "invoice:approve"}
 	for _, c := range []struct {
@@ -123,15 +179,11 @@ func runTokens(ctx context.Context, stdout io.Writer, log *slog.Logger) error {
 		{permissionAgent, wrongAud},
 		{unlistedAgent, wardenAud},
 	} {
-		wl, err := source.Workload(c.id)
+		a, err := e.agentFor(c.id, c.aud)
 		if err != nil {
 			return err
 		}
-		a, err := agent.New(agent.Config{WardenURL: srv.URL, Audience: c.aud, Source: wl})
-		if err != nil {
-			return err
-		}
-		assertion, err := lg.Sign("acme/alice", wardenAud, c.id.String())
+		assertion, err := e.login.Sign("acme/alice", wardenAud, c.id.String())
 		if err != nil {
 			return err
 		}
@@ -139,10 +191,62 @@ func runTokens(ctx context.Context, stdout io.Writer, log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		mu.Lock()
-		d := last
-		mu.Unlock()
+		d := e.lastDecision()
 		line := fmt.Sprintf("POST /lookup  agent=%s  aud=%s  -> %d  outcome=%s", c.id, c.aud, res.Status, d.Outcome)
+		if d.Reason != "" {
+			line += fmt.Sprintf("  reason=%s", d.Reason)
+		}
+		fmt.Fprintln(stdout, line)
+	}
+	return nil
+}
+
+// runScripted makes three Lookups through the permission-agent without a Model:
+// the --as Caller asks about Tom, Bob asks about Tom, and the --as Caller
+// reaches across Tenants.
+func runScripted(ctx context.Context, stdout io.Writer, log *slog.Logger, opts options) error {
+	e, stop, err := setup(log)
+	if err != nil {
+		return err
+	}
+	defer stop()
+	a, err := e.agentFor(permissionAgent, wardenAud)
+	if err != nil {
+		return err
+	}
+
+	cross := wire.LookupRequest{Target: "globex/sam", Permission: "permission:read"}
+	if strings.HasPrefix(opts.As, "globex/") {
+		cross.Target = "acme/alice"
+	}
+	for _, c := range []struct {
+		caller string
+		req    wire.LookupRequest
+	}{
+		{opts.As, wire.LookupRequest{Target: "acme/tom", Permission: "invoice:approve"}},
+		{"acme/bob", wire.LookupRequest{Target: "acme/tom", Permission: "invoice:approve"}},
+		{opts.As, cross},
+	} {
+		assertion, err := e.login.Sign(c.caller, wardenAud, permissionAgent.String())
+		if err != nil {
+			return err
+		}
+		res, err := a.Lookup(ctx, assertion, c.req)
+		if err != nil {
+			return err
+		}
+		d := e.lastDecision()
+		line := fmt.Sprintf("POST /lookup  caller=%s  target=%s  permission=%s  -> %d  outcome=%s",
+			c.caller, c.req.Target, c.req.Permission, res.Status, d.Outcome)
+		if res.Status == http.StatusOK {
+			line += fmt.Sprintf("  holds=%t", res.Holds)
+			if res.Role != "" {
+				line += fmt.Sprintf("  role=%s", res.Role)
+			}
+		}
+		if d.FailedCheck != "" {
+			line += fmt.Sprintf("  failed_check=%s", d.FailedCheck)
+		}
 		if d.Reason != "" {
 			line += fmt.Sprintf("  reason=%s", d.Reason)
 		}

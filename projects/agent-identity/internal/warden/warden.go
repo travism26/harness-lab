@@ -1,5 +1,7 @@
 // Package warden is the Warden: it verifies the Agent's JWT-SVID, checks the
-// Agent allowlist and answers Lookups with fixed rules, never a model.
+// Agent allowlist and the Caller assertion, applies the Lookup check against
+// the Seed data and answers whether the Target holds the Permission, with fixed
+// rules and never a model.
 package warden
 
 import (
@@ -25,11 +27,16 @@ import (
 type Outcome string
 
 const (
-	// OutcomeAllowed is M1's placeholder for a request that passed the token
-	// gate and the allowlist. The Lookup check and Answers replace it.
-	OutcomeAllowed         Outcome = "allowed"
 	OutcomeAgentNotAllowed Outcome = "agent_not_allowed"
 	OutcomeUnauthenticated Outcome = "unauthenticated"
+	// OutcomeAnswerYes and OutcomeAnswerNo are the 200 Answers.
+	OutcomeAnswerYes Outcome = "answer_yes"
+	OutcomeAnswerNo  Outcome = "answer_no"
+	// OutcomeDenial is a refused Lookup or a missing Target, one 403 body for both.
+	OutcomeDenial Outcome = "denial"
+	// OutcomeUnknownPermission is a 422 for a Permission outside the catalog,
+	// reached only once the Lookup check and the Target check have passed.
+	OutcomeUnknownPermission Outcome = "unknown_permission"
 )
 
 // FailedCheck names the check that refused a request.
@@ -40,11 +47,14 @@ const (
 	CheckAllowlist FailedCheck = "allowlist"
 
 	CheckCallerAssertion FailedCheck = "caller_assertion"
+	CheckLookup          FailedCheck = "lookup_check"
+	CheckTargetMissing   FailedCheck = "target_missing"
 )
 
 // Decision is what the Warden decided for one request. Agent is set only once
 // the JWT-SVID has verified, and Caller only once the Caller assertion has too.
-// It never holds a token or a raw error.
+// Target and Permission are set once the Lookup body has decoded, and Role only
+// on answer_yes. It never holds a token or a raw error.
 type Decision struct {
 	Status      int
 	Outcome     Outcome
@@ -52,6 +62,9 @@ type Decision struct {
 	Reason      Reason
 	Agent       string
 	Caller      string
+	Target      string
+	Permission  string
+	Role        string
 }
 
 // Config is what the Warden is given at startup.
@@ -162,7 +175,63 @@ func (w *Warden) lookup(rw http.ResponseWriter, r *http.Request) {
 		}, wire.ErrorBody{Error: wire.ErrUnauthenticated})
 		return
 	}
-	w.respond(rw, Decision{Status: http.StatusOK, Outcome: OutcomeAllowed, Agent: agent, Caller: caller}, struct{}{})
+	w.answer(rw, r, agent, caller)
+}
+
+// maxBodyBytes caps the Lookup body.
+const maxBodyBytes = 4 << 10
+
+// answer runs the Lookup check and answers. The Caller's Tenant comes from the
+// Seed data, never from the request, and the check never reads the Target's
+// Seed entry, so a refusal looks the same whether or not the Target exists.
+func (w *Warden) answer(rw http.ResponseWriter, r *http.Request, agent, caller string) {
+	d := Decision{Agent: agent, Caller: caller}
+	denied := func(check FailedCheck) {
+		d.Status, d.Outcome, d.FailedCheck = http.StatusForbidden, OutcomeDenial, check
+		w.respond(rw, d, wire.ErrorBody{Error: wire.ErrDenied})
+	}
+	var req wire.LookupRequest
+	dec := json.NewDecoder(http.MaxBytesReader(rw, r.Body, maxBodyBytes))
+	dec.DisallowUnknownFields()
+	// A body that won't decode, or names anything beyond target and permission
+	// (a Caller, a Tenant), names no Target the Caller may ask about, so it is a
+	// lookup_check Denial; the failed_check set stays the spec's closed one.
+	if err := dec.Decode(&req); err != nil {
+		w.log.Debug("lookup body rejected", "err", err)
+		denied(CheckLookup)
+		return
+	}
+	d.Target, d.Permission = req.Target, req.Permission
+	if req.Target != caller && !w.mayLookUp(caller, req.Target) {
+		denied(CheckLookup)
+		return
+	}
+	target, ok := seedUsers[req.Target]
+	if !ok {
+		denied(CheckTargetMissing)
+		return
+	}
+	if !knownPermission(req.Permission) {
+		d.Status, d.Outcome = http.StatusUnprocessableEntity, OutcomeUnknownPermission
+		w.respond(rw, d, wire.ErrorBody{Error: wire.ErrUnknownPermission})
+		return
+	}
+	d.Status = http.StatusOK
+	if !roleHolds(target.Role, req.Permission) {
+		d.Outcome = OutcomeAnswerNo
+		w.respond(rw, d, wire.Answer{})
+		return
+	}
+	d.Outcome, d.Role = OutcomeAnswerYes, target.Role
+	w.respond(rw, d, wire.Answer{Holds: true, Role: target.Role})
+}
+
+// mayLookUp is the Lookup check for a Target other than the Caller: the Target
+// is in the Caller's Tenant and the Caller's Role holds permission:read.
+func (w *Warden) mayLookUp(caller, target string) bool {
+	tenant, _, hasTenant := strings.Cut(target, "/")
+	c := seedUsers[caller]
+	return hasTenant && tenant == c.Tenant && roleHolds(c.Role, permissionRead)
 }
 
 // verifyCallerAssertion checks the Caller-Assertion header: ES256 signature

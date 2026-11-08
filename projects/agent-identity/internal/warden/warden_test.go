@@ -189,7 +189,19 @@ type response struct {
 // ("" sends none).
 func (f *fixture) post(t *testing.T, authorization wire.Bearer, assertion wire.CallerAssertion) response {
 	t.Helper()
-	body, _ := json.Marshal(wire.LookupRequest{Target: "acme/tom", Permission: "invoice:approve"})
+	return f.postLookup(t, authorization, assertion, wire.LookupRequest{Target: "acme/tom", Permission: "invoice:approve"})
+}
+
+// postLookup sends the given Lookup with the given headers.
+func (f *fixture) postLookup(t *testing.T, authorization wire.Bearer, assertion wire.CallerAssertion, lr wire.LookupRequest) response {
+	t.Helper()
+	body, _ := json.Marshal(lr)
+	return f.postRaw(t, authorization, assertion, body)
+}
+
+// postRaw sends body as the Lookup body, byte for byte.
+func (f *fixture) postRaw(t *testing.T, authorization wire.Bearer, assertion wire.CallerAssertion, body []byte) response {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, f.url+wire.PathLookup, bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -231,8 +243,8 @@ func TestAllowlistedAgentWithValidJWTSVIDGets200(t *testing.T) {
 		t.Fatalf("status = %d, body %s; want 200", got.status, got.body)
 	}
 	d := f.lastDecision(t)
-	if d.Outcome != warden.OutcomeAllowed || d.Agent != agentID.String() {
-		t.Errorf("decision = %+v; want outcome allowed for %s", d, agentID)
+	if d.Outcome != warden.OutcomeAnswerYes || d.Agent != agentID.String() {
+		t.Errorf("decision = %+v; want outcome answer_yes for %s", d, agentID)
 	}
 }
 
@@ -556,7 +568,7 @@ func TestEverySeedUserIsAcceptedAsCaller(t *testing.T) {
 		t.Run(user, func(t *testing.T) {
 			a := f.withClaims(t, func(c *assertionClaims) { c.Sub = user })
 
-			got := f.post(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)), a)
+			got := f.postLookup(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)), a, wire.LookupRequest{Target: user, Permission: "invoice:read"})
 
 			if got.status != http.StatusOK || f.lastDecision(t).Caller != user {
 				t.Errorf("response = %d, decision %+v; want 200 for %s", got.status, f.lastDecision(t), user)
@@ -575,5 +587,99 @@ func TestNewRefusesANilLoginKey(t *testing.T) {
 
 	if err == nil || w != nil {
 		t.Errorf("New = %v, %v; want nil Warden and an error", w, err)
+	}
+}
+
+const deniedBody = `{"error":"denied"}`
+
+// lookupAs makes a Lookup as caller through the allowlisted Agent.
+func (f *fixture) lookupAs(t *testing.T, caller, target, permission string) response {
+	t.Helper()
+	a := f.withClaims(t, func(c *assertionClaims) { c.Sub = caller })
+	return f.postLookup(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)), a, wire.LookupRequest{Target: target, Permission: permission})
+}
+
+func TestLookupCheckAndAnswers(t *testing.T) {
+	cases := []struct {
+		name                       string
+		caller, target, permission string
+		status                     int
+		body                       string
+		outcome                    warden.Outcome
+		failed                     warden.FailedCheck
+	}{
+		{"self yes", "acme/bob", "acme/bob", "invoice:read", 200, `{"holds":true,"role":"Employee"}`, warden.OutcomeAnswerYes, ""},
+		{"self no", "acme/bob", "acme/bob", "invoice:approve", 200, `{"holds":false}`, warden.OutcomeAnswerNo, ""},
+		{"same tenant with permission:read yes", "acme/alice", "acme/tom", "invoice:approve", 200, `{"holds":true,"role":"Finance Approver"}`, warden.OutcomeAnswerYes, ""},
+		{"same tenant with permission:read no", "acme/alice", "acme/bob", "invoice:approve", 200, `{"holds":false}`, warden.OutcomeAnswerNo, ""},
+		{"same tenant without permission:read", "acme/bob", "acme/tom", "invoice:approve", 403, deniedBody, warden.OutcomeDenial, warden.CheckLookup},
+		{"cross tenant auditor", "acme/alice", "globex/sam", "permission:read", 403, deniedBody, warden.OutcomeDenial, warden.CheckLookup},
+		{"cross tenant other way", "globex/sam", "acme/tom", "invoice:approve", 403, deniedBody, warden.OutcomeDenial, warden.CheckLookup},
+		{"missing target", "acme/alice", "acme/nobody", "invoice:read", 403, deniedBody, warden.OutcomeDenial, warden.CheckTargetMissing},
+		{"target without tenant", "acme/alice", "tom", "invoice:read", 403, deniedBody, warden.OutcomeDenial, warden.CheckLookup},
+		{"unknown permission", "acme/alice", "acme/tom", "invoices:approve", 422, `{"error":"unknown permission"}`, warden.OutcomeUnknownPermission, ""},
+		{"422 only after the check: no read", "acme/bob", "acme/tom", "invoices:approve", 403, deniedBody, warden.OutcomeDenial, warden.CheckLookup},
+		{"422 only after the check: cross tenant", "acme/alice", "globex/sam", "bogus:perm", 403, deniedBody, warden.OutcomeDenial, warden.CheckLookup},
+		{"422 only after the check: missing target", "acme/alice", "acme/nobody", "bogus:perm", 403, deniedBody, warden.OutcomeDenial, warden.CheckTargetMissing},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+
+			got := f.lookupAs(t, tc.caller, tc.target, tc.permission)
+
+			if got.status != tc.status || got.body != tc.body {
+				t.Errorf("response = %d %s; want %d %s", got.status, got.body, tc.status, tc.body)
+			}
+			d := f.lastDecision(t)
+			if d.Outcome != tc.outcome || d.FailedCheck != tc.failed || d.Caller != tc.caller {
+				t.Errorf("decision = %+v; want %s/%q for %s", d, tc.outcome, tc.failed, tc.caller)
+			}
+		})
+	}
+}
+
+func TestMissingTargetBodyIsByteIdenticalToARefusedLookup(t *testing.T) {
+	f := newFixture(t)
+
+	refused := f.lookupAs(t, "acme/bob", "acme/tom", "invoice:read")
+	missing := f.lookupAs(t, "acme/alice", "acme/nobody", "invoice:read")
+
+	if refused.status != missing.status || refused.body != missing.body {
+		t.Errorf("refused = %d %s, missing = %d %s; want identical", refused.status, refused.body, missing.status, missing.body)
+	}
+}
+
+func TestBodyNamingTheCallerOrMalformedIsRefused(t *testing.T) {
+	cases := map[string]string{
+		"names a caller": `{"target":"acme/tom","permission":"invoice:approve","caller":"acme/alice"}`,
+		"names a tenant": `{"target":"acme/tom","permission":"invoice:approve","tenant":"acme"}`,
+		"malformed":      `{"target":`,
+		"empty":          ``,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+
+			got := f.postRaw(t, wire.BearerFor(f.fetch(t, agentID, wardenAudience)), f.valid(t), []byte(body))
+
+			if got.status != http.StatusForbidden || got.body != deniedBody {
+				t.Errorf("response = %d %s; want 403 denied", got.status, got.body)
+			}
+			if d := f.lastDecision(t); d.Outcome != warden.OutcomeDenial || d.FailedCheck != warden.CheckLookup {
+				t.Errorf("decision = %+v; want denial/lookup_check", d)
+			}
+		})
+	}
+}
+
+func TestDecisionCarriesTargetPermissionAndRoleOnYes(t *testing.T) {
+	f := newFixture(t)
+
+	f.lookupAs(t, "acme/alice", "acme/tom", "invoice:approve")
+
+	d := f.lastDecision(t)
+	if d.Target != "acme/tom" || d.Permission != "invoice:approve" || d.Role != "Finance Approver" || d.Caller != "acme/alice" {
+		t.Errorf("decision = %+v; want target acme/tom, permission invoice:approve, role Finance Approver, caller acme/alice", d)
 	}
 }
