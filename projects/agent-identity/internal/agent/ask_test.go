@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -246,10 +247,13 @@ func TestA401IsNeverRetried(t *testing.T) {
 }
 
 func TestTargetIsCallersTenantPlusModelName(t *testing.T) {
-	var got string
+	var corrID, target string
 	e := newAskEnv(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.Header.Get(wire.HeaderCorrelationID)
+		corrID = r.Header.Get(wire.HeaderCorrelationID)
+		var req wire.LookupRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		target = req.Target
 		w.Write([]byte(`{"holds":false}`))
 	}))
 	defer srv.Close()
@@ -259,7 +263,10 @@ func TestTargetIsCallersTenantPlusModelName(t *testing.T) {
 	if body(r) != "No. sam does not hold `permission:read` in globex." {
 		t.Errorf("got %q", body(r))
 	}
-	if got != r.CorrelationID {
-		t.Errorf("Correlation-Id header %q; want %q", got, r.CorrelationID)
+	if target != "globex/sam" {
+		t.Errorf("Warden saw target %q; want globex/sam", target)
+	}
+	if corrID != r.CorrelationID {
+		t.Errorf("Correlation-Id header %q; want %q", corrID, r.CorrelationID)
 	}
 }
