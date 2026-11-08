@@ -1,0 +1,3 @@
+package modelclient
+
+func Call() {}
