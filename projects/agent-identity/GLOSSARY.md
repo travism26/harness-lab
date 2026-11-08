@@ -101,3 +101,13 @@ _Avoid_: Benchmark, test suite, test
 **Eval case**:
 One question in an Eval, with the Proposals accepted for it, or the expectation that the Model makes no Proposal.
 _Avoid_: Test case, fixture, sample
+
+### Proving it afterwards
+
+**Audit record**:
+The one fixed-shape entry the Agent or the Warden writes for each question or Lookup, recording who asked, what was decided and why. Each service keeps its own, and the Warden's is the authoritative one.
+_Avoid_: Log line, event, trace
+
+**Correlation ID**:
+The id the Agent mints for each question that joins the Agent's and the Warden's Audit records for it. The Warden treats it as untrusted until it checks its shape.
+_Avoid_: Request id, trace id
