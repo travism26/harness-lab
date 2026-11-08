@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
@@ -34,6 +35,12 @@ type Config struct {
 	Source SVIDSource
 	// HTTPClient makes the request. Nil means http.DefaultClient.
 	HTTPClient *http.Client
+	// WardenTimeout is the deadline on one Ask's Warden call; zero means 5s.
+	WardenTimeout time.Duration
+	// Model configures the Model client Ask uses. Nil means Ask is unavailable.
+	Model *ModelConfig
+	// NewCorrelationID makes a Correlation ID. Nil means 8 random bytes, hex.
+	NewCorrelationID func() string
 }
 
 // Agent makes Lookups against the Warden as one workload.
@@ -76,9 +83,26 @@ type Response struct {
 // 401 or 403 is a normal Response, not an error; the error return is for a
 // failed fetch or a failed transport. Errors never include either token.
 func (a *Agent) Lookup(ctx context.Context, assertion wire.CallerAssertion, req wire.LookupRequest) (Response, error) {
+	return a.lookup(ctx, assertion, req, "", 0)
+}
+
+// fetchError marks a failed JWT-SVID fetch, as opposed to a failed Warden call.
+type fetchError struct{ err error }
+
+func (e fetchError) Error() string { return fmt.Sprintf("agent: fetch JWT-SVID: %v", e.err) }
+func (e fetchError) Unwrap() error { return e.err }
+
+// lookup is Lookup with an optional Correlation-Id header and an optional
+// deadline (zero: none) on the Warden call itself, not on the JWT-SVID fetch.
+func (a *Agent) lookup(ctx context.Context, assertion wire.CallerAssertion, req wire.LookupRequest, correlationID string, timeout time.Duration) (Response, error) {
 	svid, err := a.cfg.Source.FetchJWTSVID(ctx, jwtsvid.Params{Audience: a.cfg.Audience})
 	if err != nil {
-		return Response{}, fmt.Errorf("agent: fetch JWT-SVID: %w", err)
+		return Response{}, fetchError{err}
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -90,6 +114,9 @@ func (a *Agent) Lookup(ctx context.Context, assertion wire.CallerAssertion, req 
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set(wire.HeaderAuthorization, string(wire.BearerFor(wire.JWTSVID(svid.Marshal()))))
+	if correlationID != "" {
+		httpReq.Header.Set(wire.HeaderCorrelationID, correlationID)
+	}
 	if assertion != "" {
 		httpReq.Header.Set(wire.HeaderCallerAssertion, string(assertion))
 	}
