@@ -5,6 +5,11 @@ go 1.27.3
 tool honnef.co/go/tools/cmd/staticcheck
 
 require (
+	github.com/go-jose/go-jose/v4 v4.1.5
+	github.com/spiffe/go-spiffe/v2 v2.9.0
+)
+
+require (
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
 	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect
 	golang.org/x/mod v0.41.0 // indirect
