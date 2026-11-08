@@ -56,6 +56,9 @@ type Config struct {
 	HTTPClient *http.Client
 }
 
+// Model is the model id the Client calls.
+func (c *Client) Model() string { return c.cfg.Model }
+
 // Client calls the Model.
 type Client struct{ cfg Config }
 

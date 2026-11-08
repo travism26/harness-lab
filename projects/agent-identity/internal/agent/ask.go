@@ -89,33 +89,44 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 	if err != nil {
 		return Reply{}, fmt.Errorf("agent: %w", err)
 	}
-	newID := a.cfg.NewCorrelationID
-	if newID == nil {
-		newID = randomID
+	corr := a.newCorrelationID()
+	// The assertion's sub is read unverified, only to build the Target, the Reply
+	// text and the Audit record; the Warden decides everything.
+	tenant, sub := unverifiedSub(assertion)
+	rec := AuditRecord{
+		CorrelationID: corr, CallerUnverified: sub, Question: question,
+		Backend: backendFor(mc.Provider), Model: client.Model(),
 	}
-	corr := newID()
 	finish := func(r Reply, id, text string) (Reply, error) {
 		r.ID = id
 		r.CorrelationID = corr
+		rec.Attempts, rec.WardenStatus, rec.Reply = r.ModelAttempts, r.Status, id
+		a.writeAudit(rec)
 		r.Text = fmt.Sprintf("%s\n[model: %s · id %s]", text, mc.Provider, corr)
 		return r, nil
 	}
 
 	res, err := client.Propose(ctx, question)
 	out := Reply{ModelAttempts: len(res.Attempts)}
+	// Only the audit fields of each attempt are kept, never its Raw reply.
+	rec.ModelCalls = modelCalls(res.Attempts)
 	if err != nil {
 		var f *modelclient.Failure
-		if errors.As(err, &f) && f.Code == "provider_error" {
+		if errors.As(err, &f) {
+			rec.ModelFailure = &ModelFailure{Kind: string(f.Kind), Code: f.Code}
+			if f.Code == "text_only" {
+				rec.ModelText = truncate(f.Text, maxModelText)
+			}
+		}
+		if f != nil && f.Code == "provider_error" {
 			return finish(out, ReplyModelUnreachable, modelUnreachableText)
 		}
 		return finish(out, ReplyNoProposal, noProposalText)
 	}
 	p := res.Proposal
 	out.Proposal = &p
+	rec.Proposal = &Proposal{Target: p.Target, Permission: p.Permission}
 
-	// The assertion's sub is read unverified, only to build the Target and the
-	// Reply text; the Warden decides everything.
-	tenant, sub := unverifiedSub(assertion)
 	target := p.Target
 	if p.Target == "self" {
 		target = sub
@@ -134,6 +145,8 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 	resp, err := a.lookup(ctx, assertion, wire.LookupRequest{Target: target, Permission: p.Permission}, corr, timeout)
 	var fe fetchError
 	if errors.As(err, &fe) {
+		rec.Attempts = out.ModelAttempts
+		a.writeAudit(rec)
 		return Reply{}, err
 	}
 	out.Status = resp.Status
@@ -159,7 +172,7 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 }
 
 func randomID() string {
-	b := make([]byte, 8)
+	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		panic(err) // crypto/rand does not fail on supported platforms
 	}

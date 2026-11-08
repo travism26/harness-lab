@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
@@ -41,11 +43,14 @@ type Config struct {
 	Model *ModelConfig
 	// NewCorrelationID makes a Correlation ID. Nil means 8 random bytes, hex.
 	NewCorrelationID func() string
+	// Audit, if set, takes one JSON-lines Audit record per question or Lookup.
+	Audit io.Writer
 }
 
 // Agent makes Lookups against the Warden as one workload.
 type Agent struct {
-	cfg Config
+	cfg     Config
+	auditMu sync.Mutex
 }
 
 // New builds an Agent. An empty WardenURL or Audience, or a nil Source, is an
@@ -83,7 +88,18 @@ type Response struct {
 // 401 or 403 is a normal Response, not an error; the error return is for a
 // failed fetch or a failed transport. Errors never include either token.
 func (a *Agent) Lookup(ctx context.Context, assertion wire.CallerAssertion, req wire.LookupRequest) (Response, error) {
-	return a.lookup(ctx, assertion, req, "", 0)
+	corr := a.newCorrelationID()
+	res, err := a.lookup(ctx, assertion, req, corr, 0)
+	_, sub := unverifiedSub(assertion)
+	a.writeAudit(AuditRecord{CorrelationID: corr, CallerUnverified: sub, WardenStatus: res.Status})
+	return res, err
+}
+
+func (a *Agent) newCorrelationID() string {
+	if a.cfg.NewCorrelationID != nil {
+		return a.cfg.NewCorrelationID()
+	}
+	return randomID()
 }
 
 // fetchError marks a failed JWT-SVID fetch, as opposed to a failed Warden call.
