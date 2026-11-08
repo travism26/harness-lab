@@ -4,12 +4,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -17,8 +19,8 @@ import (
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/login"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
 )
@@ -36,8 +38,20 @@ type options struct {
 	// Out is the run directory for the Audit logs; empty means a new
 	// timestamped one under runs/.
 	Out string
+	// Live sends the Model call to a live provider; Model and Provider refine it.
+	Live            bool
+	Model, Provider string
+	// SpiffeSocket is the permission-agent's spiffecli socket; empty means the
+	// in-process stand-in. SpiffeSocketWarden defaults beside it. SpiffeSocketOther
+	// is the unlisted-agent's, for the 403 in tokens.
+	SpiffeSocket, SpiffeSocketWarden, SpiffeSocketOther string
+
 	// audit is where this run's Audit records go.
 	audit *auditSink
+	// ids is where this run gets JWT-SVIDs and the Warden's bundle.
+	ids identities
+	// modelCfg is the live Model's config, nil for the stand-in.
+	modelCfg *agent.ModelConfig
 }
 
 const defaultQuestion = "Can Tom approve invoices?"
@@ -45,21 +59,30 @@ const defaultQuestion = "Can Tom approve invoices?"
 // scenario is one named demo.
 type scenario struct {
 	name string
-	run  func(ctx context.Context, stdout io.Writer, log *slog.Logger, opts options) error
+	// usesModel marks a scenario that calls the Model, so --live applies.
+	usesModel bool
+	run       func(ctx context.Context, stdout io.Writer, log *slog.Logger, opts options) error
 }
 
 // scenarios lists every scenario in tour order.
 var scenarios = []scenario{
-	{"tokens", runTokens},
-	{"scripted", runScripted},
-	{"ask", runAsk},
+	{"tokens", false, runTokens},
+	{"scripted", false, runScripted},
+	{"ask", true, runAsk},
 }
 
-const usage = "usage: demo <tokens|scripted|tour> [--as tenant/name] [--out dir]\n       demo ask \"<question>\" [--as tenant/name] [--out dir]\n"
+const usage = "usage: demo <tokens|scripted|tour> [--as tenant/name] [--out dir] [live flags]\n       demo ask \"<question>\" [--as tenant/name] [--out dir] [live flags]\n" +
+	"live flags: [--live [--model id] [--provider anthropic|openrouter]] [--spiffe-socket path [--spiffe-socket-warden path] [--spiffe-socket-other path]]\n"
 
 // run executes the subcommand and returns the exit code: 0 when the scenario
 // ran (a 401 or 403 is a normal result), 1 when setup failed, 2 on bad usage.
 func run(args []string, stdout, stderr io.Writer) int {
+	return runWith(args, stdout, stderr, deps{})
+}
+
+// runWith is run with its outside dependencies given.
+func runWith(args []string, stdout, stderr io.Writer, d deps) int {
+	d = d.withDefaults()
 	if len(args) < 1 {
 		io.WriteString(stderr, usage)
 		return 2
@@ -69,6 +92,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	var opts options
 	fs.StringVar(&opts.As, "as", "acme/alice", "the Caller to sign for, as tenant/name (scripted only)")
 	fs.StringVar(&opts.Out, "out", "", "the directory for the Audit logs (default runs/<UTC timestamp>)")
+	fs.BoolVar(&opts.Live, "live", false, "send the Model call to a live provider (ask)")
+	fs.StringVar(&opts.Model, "model", "", "with --live, the model id (default by provider)")
+	fs.StringVar(&opts.Provider, "provider", "", "with --live, anthropic or openrouter (default: anthropic if its key is set, else openrouter)")
+	fs.StringVar(&opts.SpiffeSocket, "spiffe-socket", "", "use the spiffecli Workload API on this socket (the permission-agent's)")
+	fs.StringVar(&opts.SpiffeSocketWarden, "spiffe-socket-warden", "", "with --spiffe-socket, the Warden's socket (default warden.sock beside it)")
+	fs.StringVar(&opts.SpiffeSocketOther, "spiffe-socket-other", "", "with --spiffe-socket, the unlisted-agent's socket, for the 403 in tokens")
 	if err := fs.Parse(args[1:]); err != nil {
 		io.WriteString(stderr, usage)
 		return 2
@@ -103,6 +132,40 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	log := slog.New(slog.NewTextHandler(stderr, nil))
+	// Every choice that can fail is made here, before the first request.
+	if opts.Live && slices.ContainsFunc(chosen, func(s scenario) bool { return s.usesModel }) {
+		choice, err := provider.Select(opts.Provider, d.getenv)
+		if err != nil {
+			fmt.Fprintf(stderr, "demo: --live: %v\n", err)
+			return 2
+		}
+		mc := &agent.ModelConfig{BaseURL: choice.BaseURL, APIKey: choice.Key, Model: opts.Model, Provider: choice.Name, BearerAuth: choice.Name == "openrouter"}
+		if d.modelBaseURL != "" {
+			mc.BaseURL = d.modelBaseURL
+		}
+		opts.modelCfg = mc
+		used := opts.Model
+		if used == "" {
+			used = agent.DefaultModel(choice.Name)
+		}
+		fmt.Fprintf(stderr, "demo: live Model: provider %s, model %s\n", choice.Name, used)
+	}
+	if opts.SpiffeSocket != "" {
+		ids, err := openSpiffe(context.Background(), d, opts.SpiffeSocket, opts.SpiffeSocketWarden, opts.SpiffeSocketOther)
+		if err != nil {
+			log.Error("demo could not reach the Workload API", "err", err)
+			return 1
+		}
+		opts.ids = ids
+	} else {
+		ids, err := newStandInIdentities()
+		if err != nil {
+			log.Error("demo could not start", "err", err)
+			return 1
+		}
+		opts.ids = ids
+	}
+	defer opts.ids.Close()
 	sink, err := openAudit(opts.Out)
 	if err != nil {
 		log.Error("demo could not open the run directory", "err", err)
@@ -137,9 +200,9 @@ var (
 
 // env is a running Warden with the pieces both scenarios share.
 type env struct {
-	source *workload.Source
-	login  *login.Login
-	url    string
+	ids   identities
+	login *login.Login
+	url   string
 	// audit takes the Agent's Audit records.
 	audit io.Writer
 
@@ -156,23 +219,16 @@ func (e *env) lastDecision() warden.Decision {
 
 // setup starts a Warden on loopback that allowlists only the permission-agent.
 // The returned func stops it.
-func setup(log *slog.Logger, audit *auditSink) (*env, func(), error) {
-	td, err := spiffeid.TrustDomainFromString("example.com")
-	if err != nil {
-		return nil, nil, err
-	}
-	source, err := workload.New(td)
-	if err != nil {
-		return nil, nil, err
-	}
+func setup(log *slog.Logger, opts options) (*env, func(), error) {
+	audit := opts.audit
 	lg, err := login.New(nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	e := &env{source: source, login: lg, audit: audit.agent}
+	e := &env{ids: opts.ids, login: lg, audit: audit.agent}
 	w, err := warden.New(warden.Config{
 		Audience:  wardenAud,
-		Bundles:   source,
+		Bundles:   opts.ids.Bundles(),
 		Allowlist: []spiffeid.ID{permissionAgent},
 		LoginKey:  lg.PublicKey(),
 		Audit:     audit.warden,
@@ -196,7 +252,7 @@ func setup(log *slog.Logger, audit *auditSink) (*env, func(), error) {
 
 // agentFor builds an Agent for the workload id that asks for audience aud.
 func (e *env) agentFor(id spiffeid.ID, aud string) (*agent.Agent, error) {
-	wl, err := e.source.Workload(id)
+	wl, err := e.ids.Workload(id)
 	if err != nil {
 		return nil, err
 	}
@@ -206,20 +262,23 @@ func (e *env) agentFor(id spiffeid.ID, aud string) (*agent.Agent, error) {
 // runAsk asks the question through the permission-agent with the demo stand-in
 // Model and prints the Reply. The step trace goes to the log.
 func runAsk(ctx context.Context, stdout io.Writer, log *slog.Logger, opts options) error {
-	e, stop, err := setup(log, opts.audit)
+	e, stop, err := setup(log, opts)
 	if err != nil {
 		return err
 	}
 	defer stop()
-	m := model.NewDemo()
-	defer m.Close()
-	wl, err := e.source.Workload(permissionAgent)
+	mc := opts.modelCfg
+	if mc == nil {
+		m := model.NewDemo()
+		defer m.Close()
+		mc = &agent.ModelConfig{BaseURL: m.URL, APIKey: "stand-in", Provider: "stand-in"}
+	}
+	wl, err := e.ids.Workload(permissionAgent)
 	if err != nil {
 		return err
 	}
 	a, err := agent.New(agent.Config{
-		WardenURL: e.url, Audience: wardenAud, Source: wl, Audit: e.audit,
-		Model: &agent.ModelConfig{BaseURL: m.URL, APIKey: "stand-in", Provider: "stand-in"},
+		WardenURL: e.url, Audience: wardenAud, Source: wl, Audit: e.audit, Model: mc,
 	})
 	if err != nil {
 		return err
@@ -240,7 +299,7 @@ func runAsk(ctx context.Context, stdout io.Writer, log *slog.Logger, opts option
 // runTokens makes three Lookups: allowed, wrong audience, not on the allowlist.
 // It ignores --as.
 func runTokens(ctx context.Context, stdout io.Writer, log *slog.Logger, opts options) error {
-	e, stop, err := setup(log, opts.audit)
+	e, stop, err := setup(log, opts)
 	if err != nil {
 		return err
 	}
@@ -256,6 +315,10 @@ func runTokens(ctx context.Context, stdout io.Writer, log *slog.Logger, opts opt
 		{unlistedAgent, wardenAud},
 	} {
 		a, err := e.agentFor(c.id, c.aud)
+		if errors.Is(err, errNoSource) {
+			fmt.Fprintf(stdout, "note: skipped the %s line: no --spiffe-socket-other given for that workload\n", c.id)
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -281,7 +344,7 @@ func runTokens(ctx context.Context, stdout io.Writer, log *slog.Logger, opts opt
 // the --as Caller asks about Tom, Bob asks about Tom, and the --as Caller
 // reaches across Tenants.
 func runScripted(ctx context.Context, stdout io.Writer, log *slog.Logger, opts options) error {
-	e, stop, err := setup(log, opts.audit)
+	e, stop, err := setup(log, opts)
 	if err != nil {
 		return err
 	}

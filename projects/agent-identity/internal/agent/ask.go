@@ -24,11 +24,20 @@ type ModelConfig struct {
 	APIKey  string
 	// Model is the model id; empty means the provider's default.
 	Model string
-	// Provider is "anthropic", "openrouter" or "stand-in". It is also the
-	// backend label in every Reply footer.
+	// Provider is "anthropic", "openrouter" or "stand-in". The Reply footer
+	// says "stand-in" for the last and "live" for the others.
 	Provider string
 	// BearerAuth sends Authorization: Bearer (OpenRouter) instead of x-api-key.
 	BearerAuth bool
+}
+
+// DefaultModel is the model id the Model client uses for provider when none is
+// given, so a command can print it without importing the Model client.
+func DefaultModel(provider string) string {
+	if provider == "openrouter" {
+		return modelclient.DefaultOpenRouterModel
+	}
+	return modelclient.DefaultModel
 }
 
 // DefaultWardenTimeout is the deadline on the Warden call when none is given.
