@@ -121,7 +121,7 @@ func TestAskReplies(t *testing.T) {
 		{"denial", "acme/bob", []model.Reply{model.ToolUse("tom", "invoice:approve")}, "denial",
 			"I can't answer that: the Warden didn't allow this lookup."},
 		{"unknown_permission", "acme/alice", []model.Reply{model.ToolUse("tom", "invoices:approve")}, "unknown_permission",
-			"The Warden doesn't know the permission `invoices:approve`, so no lookup was made."},
+			"The Warden doesn't know the permission `invoices:approve`, so it couldn't answer whether `tom` holds it in `acme`."},
 		{"unauthenticated", "acme/nobody", []model.Reply{model.ToolUse("tom", "invoice:approve")}, "unauthenticated",
 			"The Warden didn't accept my identity or yours, so no lookup was made."},
 		{"no_proposal text", "acme/alice", []model.Reply{model.Text("SECRET model words")}, "no_proposal",
@@ -195,7 +195,7 @@ func TestOneProposalForTwoPartQuestionMakesOneLookup(t *testing.T) {
 }
 
 func TestWardenUnreachable(t *testing.T) {
-	want := "The Warden couldn't be reached, so I can't say whether tom holds `invoice:approve`."
+	want := "The Warden couldn't be reached, so I can't say whether `tom` holds `invoice:approve` in `acme`."
 	e := newAskEnv(t)
 
 	dead, err := net.Listen("tcp", "127.0.0.1:0") // accepts, never answers
