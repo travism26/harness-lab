@@ -278,9 +278,19 @@ func TestSpiffeWardenSocketDefaultsBesideTheAgents(t *testing.T) {
 func TestSpiffeSocketUnreachableExitsNonZero(t *testing.T) {
 	f := newFakeSockets(t)
 	f.failOn = "/tmp/x/agent.sock"
-	out, errOut, code := runDeps(deps{openJWT: f.open}, "tokens", "--spiffe-socket", "/tmp/x/agent.sock")
-	if code == 0 || out != "" || !strings.Contains(errOut, "agent.sock") {
+	runs := filepath.Join(t.TempDir(), "runs")
+	out, errOut, code := runDeps(deps{openJWT: f.open}, "tokens", "--spiffe-socket", "/tmp/x/agent.sock", "--out", runs)
+	if code == 0 || out != "" || !strings.Contains(errOut, "/tmp/x/agent.sock") {
 		t.Errorf("exit %d, stdout %q, stderr %s", code, out, errOut)
+	}
+	if hint := "spiffecli run --config spiffecli/workloads.toml"; !strings.Contains(errOut, hint) || !strings.Contains(errOut, "projects/agent-identity") {
+		t.Errorf("stderr lacks the setup hint: %s", errOut)
+	}
+	if strings.Contains(errOut, "stand-in") {
+		t.Errorf("stderr mentions a stand-in fallback: %s", errOut)
+	}
+	if _, err := os.Stat(runs); !os.IsNotExist(err) {
+		t.Errorf("run directory created: %v", err)
 	}
 }
 
