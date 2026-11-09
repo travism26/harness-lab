@@ -1,32 +1,6 @@
 package provider
 
-import (
-	"net/http"
-	"testing"
-)
-
-func TestSetAuthPerProvider(t *testing.T) {
-	a, _ := Lookup("anthropic")
-	h := http.Header{}
-	a.SetAuth(h, "k1")
-	if h.Get("x-api-key") != "k1" || h.Get("anthropic-version") != AnthropicVersion || h.Get("Authorization") != "" {
-		t.Errorf("anthropic headers = %v", h)
-	}
-
-	o, _ := Lookup("openrouter")
-	h = http.Header{}
-	o.SetAuth(h, "k2")
-	if h.Get("Authorization") != "Bearer k2" || h.Get("x-api-key") != "" || h.Get("anthropic-version") != "" {
-		t.Errorf("openrouter headers = %v", h)
-	}
-
-	s, _ := Lookup("stand-in")
-	h = http.Header{}
-	s.SetAuth(h, "k3")
-	if h.Get("x-api-key") != "k3" || h.Get("anthropic-version") != AnthropicVersion {
-		t.Errorf("stand-in headers = %v", h)
-	}
-}
+import "testing"
 
 func TestCostAnthropicFromPriceTable(t *testing.T) {
 	a, _ := Lookup("anthropic")

@@ -9,6 +9,8 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/packages"
+
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 )
 
 // splitQualified splits "pkg/path.Name" at the last dot.
@@ -153,10 +155,45 @@ func funcNames(pkg *types.Package) []string {
 	return names
 }
 
-func TestAnalyzersAreFourDistinctValidAnalyzers(t *testing.T) {
+// R5's references must name real objects, or the rule would guard nothing.
+func TestKeyIsolationNamesRealObjectsAndEveryKeyVariable(t *testing.T) {
+	pkgs := loadPackages(t, []string{Broker, BrokerCommand})
+	for _, p := range []string{Broker, BrokerCommand} {
+		if pkgs[p] == nil || pkgs[p].Types == nil {
+			t.Fatalf("package %q not loaded", p)
+		}
+	}
+	scope := pkgs[Broker].Types.Scope()
+	for _, ref := range append(slices.Clone(KeyRefs), Loaders...) {
+		parts := strings.Split(strings.TrimPrefix(ref, Broker+"."), ".")
+		obj := scope.Lookup(parts[0])
+		if !strings.HasPrefix(ref, Broker+".") || obj == nil {
+			t.Errorf("R5 reference %q names nothing in %s", ref, Broker)
+			continue
+		}
+		if len(parts) == 2 {
+			if f, _, _ := types.LookupFieldOrMethod(obj.Type(), true, obj.Pkg(), parts[1]); f == nil {
+				t.Errorf("R5 reference %q: %s has no field or method %q", ref, parts[0], parts[1])
+			}
+		}
+	}
+	var envs []string
+	for _, p := range provider.Providers {
+		envs = append(envs, p.KeyEnv)
+	}
+	slices.Sort(envs)
+	if got := slices.Sorted(slices.Values(KeyVars)); !slices.Equal(got, envs) {
+		t.Errorf("KeyVars = %v; want every provider's KeyEnv %v", got, envs)
+	}
+	if !slices.Equal(KeyExempt, []string{Broker, BrokerCommand}) {
+		t.Errorf("KeyExempt = %v; want the Broker module and command only", KeyExempt)
+	}
+}
+
+func TestAnalyzersAreFiveDistinctValidAnalyzers(t *testing.T) {
 	as := Analyzers()
-	if len(as) != 4 {
-		t.Fatalf("Analyzers() returned %d analyzers, want 4", len(as))
+	if len(as) != 5 {
+		t.Fatalf("Analyzers() returned %d analyzers, want 5", len(as))
 	}
 	seen := map[string]bool{}
 	for _, a := range as {

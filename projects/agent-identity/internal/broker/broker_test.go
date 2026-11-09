@@ -295,7 +295,7 @@ func TestHappyPathReturnsTheUpstreamBytesAndTheFourHeaders(t *testing.T) {
 		t.Fatalf("upstream saw %d requests; want 1", f.up.count())
 	}
 	req := f.up.hits[0]
-	if req.URL.Path != wire.PathMessages || req.Header.Get("x-api-key") != keyCanary || req.Header.Get("anthropic-version") != provider.AnthropicVersion {
+	if req.URL.Path != wire.PathMessages || req.Header.Get("x-api-key") != keyCanary || req.Header.Get("anthropic-version") != broker.AnthropicVersion {
 		t.Errorf("upstream request %s with headers %v; want the provider's auth", req.URL.Path, req.Header)
 	}
 	if req.Header.Get(wire.HeaderAuthorization) != "" || req.Header.Get(wire.HeaderCorrelationID) != "" {

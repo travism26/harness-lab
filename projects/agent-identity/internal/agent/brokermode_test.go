@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
@@ -21,6 +22,27 @@ const brokerAudience = "spiffe://example.com/model-broker"
 
 func withBroker(url string) func(*agent.Config) {
 	return func(c *agent.Config) { c.Model = &agent.ModelConfig{BaseURL: url, BrokerAudience: brokerAudience} }
+}
+
+// startBroker puts a real Broker in front of upstream (a stand-in Model's URL)
+// and returns its URL. It lists both test Agents and pins each to the Agent's
+// own Pin. prov and key are what the Broker holds: the Agent never does.
+func startBroker(t *testing.T, bundles jwtbundle.Source, upstream string, prov provider.Provider, key string) string {
+	t.Helper()
+	b, err := broker.New(broker.Config{
+		Audience: brokerAudience, Bundles: bundles, Allowlist: []spiffeid.ID{listedID, unlistedID},
+		Provider: prov, Key: key, UpstreamURL: upstream,
+		Pins: map[spiffeid.ID]pin.Pin{listedID: agent.Pin(), unlistedID: agent.Pin()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := b.ListenLoopback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Close() })
+	return srv.URL
 }
 
 // A question asked through a real Broker reaches the same Reply as before; the
@@ -134,19 +156,5 @@ func TestBrokerRefusalOrOutageIsModelUnreachableWithNoLookup(t *testing.T) {
 			}
 			e.noSecrets(t, r, err)
 		})
-	}
-}
-
-func TestBrokerModeNeedsNoKeyAndKeyModeStillWorks(t *testing.T) {
-	e := newAuditEnv(t)
-	m := model.New(model.ToolUse("tom", "invoice:approve"))
-	defer m.Close()
-	// The key mode: a key, no Broker audience, a "live" footer.
-	a := e.agent(t, listedID, e.url, nil, 0, func(c *agent.Config) {
-		c.Model = &agent.ModelConfig{BaseURL: m.URL, APIKey: "k", Provider: "anthropic"}
-	})
-	r, err := a.Ask(context.Background(), e.assertion(t, "acme/alice", listedID), "q")
-	if err != nil || r.ID != agent.ReplyYes || !strings.HasSuffix(r.Text, "\n[model: live · id "+r.CorrelationID+"]") {
-		t.Errorf("reply %s %q err %v", r.ID, r.Text, err)
 	}
 }

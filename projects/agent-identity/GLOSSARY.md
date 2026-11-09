@@ -69,7 +69,7 @@ The language model the Agent consults to turn a Caller's question into a Proposa
 _Avoid_: LLM, AI, assistant
 
 **Model client**:
-The one part of the Agent that talks to the Model: it asks for a Proposal, checks it, and either returns it or reports why it failed. It knows nothing about the Caller.
+The one part of the Agent that talks to the Model: it asks for a Proposal, checks it, and either returns it or reports why it failed. It sends each request to the Broker with a JWT-SVID and holds no provider key. It knows nothing about the Caller.
 _Avoid_: Harness, LLM client, SDK, wrapper
 
 **Proposal**:
@@ -109,7 +109,7 @@ _Avoid_: Caller context, session, delegation, on-behalf-of token
 ### Judging the Model
 
 **Eval**:
-A scored run of hand-written questions through the live Model client, measuring how often the Model's Proposal matches what each question asked. It judges the Model, never the Warden.
+A scored run of hand-written questions through the Model client and the Broker, as its own SPIFFE ID with no key of its own, measuring how often the Model's Proposal matches what each question asked. It judges the Model, never the Warden.
 _Avoid_: Benchmark, test suite, test
 
 **Eval case**:

@@ -17,7 +17,7 @@ The Agent reaches the Model through a Broker, the only workload that holds a pro
 
 ## Consequences
 
-- trustlint R5 (key isolation) fails `check` if any package outside the Broker reads a provider key. The Eval has no exception.
+- trustlint R5 (key isolation) fails `check` if any package outside the Broker module and the Broker command references the chosen provider key, calls the `.env` loader, or passes a provider key variable name to `os.Getenv` or `os.LookupEnv`. The Eval has no exception, and the Model client has no key mode.
 - A live run needs a separate Broker process, started with the key, alongside spiffecli. A live Eval needs the same setup. "The Agent's process holds no key" is claimed only for that separate-process mode. The stand-in tour runs in one process with no real key anywhere.
 - `demo --live --model` goes away: to try another model, change the Pin. `cmd/eval --model` stays, and the Broker checks it against the Eval's Pin.
 - The Broker never passes a provider's error body on. An upstream failure becomes `502 upstream_error`, so a bad provider key can't be mistaken for a bad SVID.

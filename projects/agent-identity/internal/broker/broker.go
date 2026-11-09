@@ -288,7 +288,7 @@ func (b *Broker) forward(ctx context.Context, rw http.ResponseWriter, rec AuditR
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if b.key != "" {
-		b.prov.SetAuth(req.Header, b.key)
+		setAuth(b.prov, req.Header, b.key)
 	}
 	resp, err := b.client.Do(req)
 	if err != nil {

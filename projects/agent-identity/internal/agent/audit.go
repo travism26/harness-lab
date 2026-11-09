@@ -76,14 +76,13 @@ func backendFor(provider string) string {
 const backendStandIn = "stand-in"
 
 // modelCalls keeps only the audit fields of each attempt, never Raw.
-func modelCalls(attempts []modelclient.Attempt, viaBroker bool) []ModelCall {
+func modelCalls(attempts []modelclient.Attempt) []ModelCall {
 	out := make([]ModelCall, 0, len(attempts))
 	for _, a := range attempts {
-		c := ModelCall{RequestID: a.RequestID, Provider: a.Provider, Cost: a.Cost}
-		if viaBroker {
-			c.Model, c.InputTokens, c.OutputTokens, c.BrokerReported = a.Model, a.InputTokens, a.OutputTokens, true
-		}
-		out = append(out, c)
+		out = append(out, ModelCall{
+			RequestID: a.RequestID, Provider: a.Provider, Cost: a.Cost,
+			Model: a.Model, InputTokens: a.InputTokens, OutputTokens: a.OutputTokens, BrokerReported: true,
+		})
 	}
 	return out
 }

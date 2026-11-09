@@ -1,21 +1,5 @@
 package provider
 
-import "net/http"
-
-// AnthropicVersion is the anthropic-version header value sent with x-api-key.
-const AnthropicVersion = "2026-10-21"
-
-// SetAuth sets the provider's authentication headers on h: a bearer token for
-// OpenRouter, x-api-key plus anthropic-version otherwise.
-func (p Provider) SetAuth(h http.Header, key string) {
-	if p.BearerAuth {
-		h.Set("Authorization", "Bearer "+key)
-		return
-	}
-	h.Set("x-api-key", key)
-	h.Set("anthropic-version", AnthropicVersion)
-}
-
 // price is USD per million input and output tokens.
 type price struct{ input, output float64 }
 

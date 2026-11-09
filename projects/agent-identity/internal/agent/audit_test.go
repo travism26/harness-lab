@@ -21,6 +21,7 @@ import (
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/login"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
@@ -49,6 +50,8 @@ type capturing struct {
 	inner agent.SVIDSource
 	mu    sync.Mutex
 	svids []string
+	// wardenFetches counts the JWT-SVIDs fetched for the Warden, not the Broker.
+	wardenFetches int
 }
 
 func (c *capturing) FetchJWTSVID(ctx context.Context, p jwtsvid.Params) (*jwtsvid.SVID, error) {
@@ -56,6 +59,9 @@ func (c *capturing) FetchJWTSVID(ctx context.Context, p jwtsvid.Params) (*jwtsvi
 	if err == nil {
 		c.mu.Lock()
 		c.svids = append(c.svids, s.Marshal())
+		if p.Audience == wardenAudience {
+			c.wardenFetches++
+		}
 		c.mu.Unlock()
 	}
 	return s, err
@@ -121,7 +127,7 @@ func (e *auditEnv) agent(t *testing.T, id spiffeid.ID, url string, m *model.Serv
 	e.fetched = &capturing{inner: wl}
 	cfg := agent.Config{WardenURL: url, Audience: wardenAudience, Source: e.fetched, WardenTimeout: timeout, Audit: &e.agentLog}
 	if m != nil {
-		cfg.Model = &agent.ModelConfig{BaseURL: m.URL, APIKey: e.modelAPIKey, Provider: "stand-in", Model: "stand-in-model"}
+		cfg.Model = &agent.ModelConfig{BaseURL: startBroker(t, e.source, m.URL, provider.StandIn, ""), BrokerAudience: brokerAudience}
 	}
 	for _, o := range opts {
 		o(&cfg)

@@ -59,7 +59,7 @@ type deps struct {
 	// getenv reads provider keys. Nil means os.Getenv, with .env beneath it.
 	getenv func(string) string
 	// envFile is a .env file the keys fall back to. Empty means none; the real
-	// run (nil getenv) uses provider.DotEnvPath.
+	// run (nil getenv) uses broker.DotEnvPath.
 	envFile string
 	// openBundles opens the Workload API socket. Nil means go-spiffe's.
 	openBundles func(ctx context.Context, socket string) (bundleSource, error)
@@ -71,7 +71,7 @@ type deps struct {
 func (d deps) withDefaults() deps {
 	if d.getenv == nil {
 		d.getenv = os.Getenv
-		d.envFile = provider.DotEnvPath
+		d.envFile = broker.DotEnvPath
 	}
 	if d.openBundles == nil {
 		d.openBundles = openWorkloadAPI
@@ -117,13 +117,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) i
 	getenv := d.getenv
 	if d.envFile != "" {
 		var err error
-		if getenv, err = provider.WithDotEnv(d.envFile, d.getenv); err != nil {
+		if getenv, err = broker.WithDotEnv(d.envFile, d.getenv); err != nil {
 			fmt.Fprintf(stderr, "broker: %v\n", err)
 			return 1
 		}
 	}
-	fmt.Fprintf(stderr, "broker: provider %s\n", provider.Choose(*providerName, getenv))
-	choice, err := provider.Select(*providerName, getenv)
+	fmt.Fprintf(stderr, "broker: provider %s\n", broker.Choose(*providerName, getenv))
+	choice, err := broker.Select(*providerName, getenv)
 	if err != nil {
 		fmt.Fprintf(stderr, "broker: not serving: %v\n", err)
 		return 1

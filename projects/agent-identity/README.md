@@ -86,8 +86,9 @@ The smoke tests for these live in [cmd/demo/main_test.go](cmd/demo/main_test.go)
 
 - **R1, Model isolation**: only the Agent and the Eval import the Model client ([modelisolation](internal/trustlint/modelisolation/modelisolation.go)).
 - **R2, Warden and Broker isolation**: the Warden imports none of the Agent, the Model client and the Broker, and the Broker imports neither the Agent nor the Warden ([wardenisolation](internal/trustlint/wardenisolation/wardenisolation.go)).
-- **R3, no secrets in logs**: no token-typed value reaches a log or print call ([nosecretlogs](internal/trustlint/nosecretlogs/nosecretlogs.go)).
+- **R3, no secrets in logs**: no token-typed value reaches a log or print call, and neither the Agent's nor the Broker's Audit record type can hold one ([nosecretlogs](internal/trustlint/nosecretlogs/nosecretlogs.go)).
 - **R4, no insecure parse**: no go-spiffe `ParseInsecure` outside tests ([noinsecureparse](internal/trustlint/noinsecureparse/noinsecureparse.go)).
+- **R5, key isolation**: outside the Broker module and the Broker command, no package references the chosen provider key (`broker.Choice.Key`, `broker.Select`), uses the `.env` loader (`broker.WithDotEnv`, `broker.DotEnvPath`), or passes `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY` to `os.Getenv` or `os.LookupEnv`. There are no exceptions, so the Model client has no key mode and the Eval goes through the Broker ([keyisolation](internal/trustlint/keyisolation/keyisolation.go)).
 
 The tests also hold the evidence in place. `TestTourTranscript` compares a fresh stand-in tour with `tour.txt`, and `TestSampleRunLogs` decodes the sample logs strictly and rejects anything shaped like a JWT. Both are in [cmd/demo/evidence_test.go](cmd/demo/evidence_test.go).
 

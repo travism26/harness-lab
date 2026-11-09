@@ -34,56 +34,40 @@ const (
 type Config struct {
 	// BaseURL is the API root; the client posts to BaseURL + "/v1/messages".
 	BaseURL string
-	// APIKey is the provider key, for the key mode (--live until the Broker runs
-	// as its own process). Exactly one of APIKey and SVID is set.
-	APIKey string
-	// SVID is the Broker mode: it returns a fresh JWT-SVID for the Broker's
-	// audience, called once per request (the repair retry included). BaseURL is
-	// then the Broker's, the request names no model and carries no provider key.
+	// SVID returns a fresh JWT-SVID for the Broker's audience, called once per
+	// request (the repair retry included). It is required: the Broker is the
+	// only way to a Model, so the client holds no provider key and sends no
+	// provider auth header. BaseURL is the Broker's.
 	SVID func(ctx context.Context) (wire.JWTSVID, error)
 	// CorrelationID is sent to the Broker in the Correlation-Id header.
 	CorrelationID string
-	// Model defaults to the Provider's DefaultModel in projects/agent-identity/internal/provider.
+	// Model names the model the request asks for. Empty means the request names
+	// none and the Broker fills it in (the Agent); the Eval names one from its
+	// sweep.
 	Model string
-	// Provider is "anthropic", "openrouter" or "stand-in". It labels each
-	// Attempt and sets the auth style and the default Model (projects/agent-identity/internal/provider).
-	Provider string
 	// HTTPClient makes the request. Nil means http.DefaultClient; every call
 	// also gets a 20s context deadline.
 	HTTPClient *http.Client
 }
 
-// Model is the model id the Client calls.
-func (c *Client) Model() string { return c.cfg.Model }
-
-// Client calls the Model.
+// Client calls the Model through the Broker.
 type Client struct {
-	cfg  Config
-	prov provider.Provider
-	// named is true when the caller gave a Model. In Broker mode only a named
-	// model is sent; otherwise the Broker fills it in.
-	named bool
+	cfg Config
 }
 
-// New builds a Client. An empty BaseURL, or neither an APIKey nor an SVID
-// function, is an error.
+// New builds a Client. An empty BaseURL, or no SVID function, is an error.
 func New(cfg Config) (*Client, error) {
 	switch {
 	case cfg.BaseURL == "":
 		return nil, errors.New("modelclient: a base URL is required")
-	case cfg.APIKey == "" && cfg.SVID == nil:
-		return nil, errors.New("modelclient: an API key or a JWT-SVID source is required")
-	}
-	prov, _ := provider.Lookup(cfg.Provider)
-	named := cfg.Model != ""
-	if cfg.Model == "" {
-		cfg.Model = prov.DefaultModel
+	case cfg.SVID == nil:
+		return nil, errors.New("modelclient: a JWT-SVID source is required")
 	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = http.DefaultClient
 	}
 	cfg.BaseURL = strings.TrimSuffix(cfg.BaseURL, "/")
-	return &Client{cfg: cfg, prov: prov, named: named}, nil
+	return &Client{cfg: cfg}, nil
 }
 
 // Proposal is what the Model proposes: a name from the question or "self", and
@@ -97,13 +81,12 @@ type Proposal struct {
 type Attempt struct {
 	RequestID string
 	Provider  string
-	// Model and the token counts are set only in Broker mode, where Provider,
-	// Model, Cost and RequestID are what the Broker reported.
+	// Provider, Model, the token counts, Cost and RequestID are what the Broker
+	// reported.
 	Model        string
 	InputTokens  int
 	OutputTokens int
-	// Cost is in USD: reported by OpenRouter, computed from usage for
-	// Anthropic, 0 for the stand-in.
+	// Cost is in USD, as the Broker reported it.
 	Cost float64
 	// Raw is the reply body as received, for the Eval report. Empty when no
 	// reply was read.
@@ -221,9 +204,8 @@ type response struct {
 	StopReason string  `json:"stop_reason"`
 	Content    []block `json:"content"`
 	Usage      struct {
-		InputTokens  float64  `json:"input_tokens"`
-		OutputTokens float64  `json:"output_tokens"`
-		Cost         *float64 `json:"cost"`
+		InputTokens  float64 `json:"input_tokens"`
+		OutputTokens float64 `json:"output_tokens"`
 	} `json:"usage"`
 }
 
@@ -342,11 +324,11 @@ func brokerFailure(status int, raw []byte) *Failure {
 }
 
 func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, error) {
-	attempt := Attempt{Provider: c.cfg.Provider}
+	attempt := Attempt{}
 	fields := requestFields(messages)
-	if c.cfg.SVID == nil || c.named {
+	if c.cfg.Model != "" {
 		// The Broker sets the model unless the caller named one (the Eval does,
-		// to pick from its sweep); in key mode the client always does.
+		// to pick from its sweep).
 		fields["model"] = c.cfg.Model
 	}
 	body, err := json.Marshal(fields)
@@ -360,19 +342,15 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 		return response{}, attempt, providerError("could not build the request")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.cfg.SVID != nil {
-		// A fresh token for every request, so none is sent twice or expires
-		// between attempts. The error is dropped: it may name the socket.
-		svid, err := c.cfg.SVID(ctx)
-		if err != nil {
-			return response{}, attempt, providerError("could not fetch a JWT-SVID")
-		}
-		req.Header.Set(wire.HeaderAuthorization, string(wire.BearerFor(svid)))
-		if c.cfg.CorrelationID != "" {
-			req.Header.Set(wire.HeaderCorrelationID, c.cfg.CorrelationID)
-		}
-	} else {
-		c.prov.SetAuth(req.Header, c.cfg.APIKey)
+	// A fresh token for every request, so none is sent twice or expires
+	// between attempts. The error is dropped: it may name the socket.
+	svid, err := c.cfg.SVID(ctx)
+	if err != nil {
+		return response{}, attempt, providerError("could not fetch a JWT-SVID")
+	}
+	req.Header.Set(wire.HeaderAuthorization, string(wire.BearerFor(svid)))
+	if c.cfg.CorrelationID != "" {
+		req.Header.Set(wire.HeaderCorrelationID, c.cfg.CorrelationID)
 	}
 	hr, err := c.cfg.HTTPClient.Do(req)
 	if err != nil {
@@ -384,7 +362,7 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 	raw, err := io.ReadAll(io.LimitReader(hr.Body, maxBody))
 	attempt.Raw = string(raw)
 	if err != nil || hr.StatusCode != http.StatusOK {
-		if c.cfg.SVID != nil && err == nil {
+		if err == nil {
 			return response{}, attempt, brokerFailure(hr.StatusCode, raw)
 		}
 		return response{}, attempt, providerError(fmt.Sprintf("status %d", hr.StatusCode))
@@ -396,23 +374,15 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 	if attempt.RequestID == "" {
 		attempt.RequestID = out.ID
 	}
-	if c.cfg.SVID != nil {
-		// The Broker reports who served the request and what it cost.
-		attempt.Provider = hr.Header.Get(wire.HeaderBrokerProvider)
-		attempt.Model = hr.Header.Get(wire.HeaderBrokerModel)
-		attempt.Cost, _ = strconv.ParseFloat(hr.Header.Get(wire.HeaderBrokerCost), 64)
-		attempt.InputTokens, attempt.OutputTokens = int(out.Usage.InputTokens), int(out.Usage.OutputTokens)
-		if id := hr.Header.Get(wire.HeaderBrokerRequestID); id != "" {
-			attempt.RequestID = id
-		}
-		return out, attempt, nil
+	// The Broker reports who served the request and what it cost.
+	attempt.Provider = hr.Header.Get(wire.HeaderBrokerProvider)
+	attempt.Model = hr.Header.Get(wire.HeaderBrokerModel)
+	attempt.Cost, _ = strconv.ParseFloat(hr.Header.Get(wire.HeaderBrokerCost), 64)
+	attempt.InputTokens, attempt.OutputTokens = int(out.Usage.InputTokens), int(out.Usage.OutputTokens)
+	if id := hr.Header.Get(wire.HeaderBrokerRequestID); id != "" {
+		attempt.RequestID = id
 	}
-	attempt.Cost = c.cost(out)
 	return out, attempt, nil
-}
-
-func (c *Client) cost(r response) float64 {
-	return c.prov.Cost(c.cfg.Model, r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.Cost)
 }
 
 // gate applies the five rules in order.

@@ -43,24 +43,16 @@ func rawRequests(t *testing.T, cfg modelclient.Config) [][]byte {
 // other field and this fails here, not on the Broker in a live run.
 func TestTheDefaultPinMatchesWhatTheModelClientSends(t *testing.T) {
 	p := modelclient.DefaultPin()
-	modes := map[string]modelclient.Config{
-		"broker mode": {SVID: func(context.Context) (wire.JWTSVID, error) { return "svid", nil }},
-		"key mode":    {APIKey: "k", Provider: "stand-in"},
+	bodies := rawRequests(t, modelclient.Config{SVID: func(context.Context) (wire.JWTSVID, error) { return "svid", nil }})
+	if len(bodies) != 1 {
+		t.Fatalf("%d requests; want 1", len(bodies))
 	}
-	for name, cfg := range modes {
-		t.Run(name, func(t *testing.T) {
-			bodies := rawRequests(t, cfg)
-			if len(bodies) != 1 {
-				t.Fatalf("%d requests; want 1", len(bodies))
-			}
-			got, err := pin.Shape(bodies[0])
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != p.Shape {
-				t.Errorf("the client's request shape hash %s differs from the Pin's %s", got, p.Shape)
-			}
-		})
+	got, err := pin.Shape(bodies[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != p.Shape {
+		t.Errorf("the client's request shape hash %s differs from the Pin's %s", got, p.Shape)
 	}
 }
 
@@ -88,7 +80,7 @@ func TestTheDefaultPinListsEachProvidersDefaultModelAndTheClientsMaxTokens(t *te
 	if len(p.Models) != 3 {
 		t.Errorf("Pin has models for %d providers; want 3", len(p.Models))
 	}
-	bodies := rawRequests(t, modelclient.Config{APIKey: "k", Provider: "stand-in"})
+	bodies := rawRequests(t, modelclient.Config{SVID: func(context.Context) (wire.JWTSVID, error) { return "svid", nil }})
 	var sent struct {
 		MaxTokens int `json:"max_tokens"`
 	}

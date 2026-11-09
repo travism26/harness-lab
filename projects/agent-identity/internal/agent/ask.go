@@ -24,19 +24,12 @@ import (
 type ModelConfig struct {
 	// BaseURL is the Messages API root, or the Broker's.
 	BaseURL string
-	// APIKey is the provider key, for the key mode (--live until the Broker runs
-	// as its own process). BrokerAudience selects the Broker mode instead: the
-	// Agent then fetches a JWT-SVID for that audience on every Model request and
-	// holds no key. Exactly one of the two is set.
-	APIKey         string
+	// BrokerAudience is required: the Agent fetches a JWT-SVID for that audience
+	// on every Model request and holds no provider key.
 	BrokerAudience string
-	// Model is the model id; empty means the provider's default.
+	// Model is the model id to ask for; empty means the request names none and
+	// the Broker picks. The Broker says which provider served the request.
 	Model string
-	// Provider is "anthropic", "openrouter" or "stand-in". It sets the auth
-	// style and default model (projects/agent-identity/internal/provider). The Reply footer says
-	// "stand-in" for the last and "live" for the others. Unused in the Broker
-	// mode, where the Broker says which provider served the request.
-	Provider string
 }
 
 // DefaultModel is the model id the Model client uses for provider when none is
@@ -98,18 +91,18 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 		return Reply{}, errors.New("agent: no Model configured")
 	}
 	corr := a.newCorrelationID()
-	cfg := modelclient.Config{
-		BaseURL: mc.BaseURL, APIKey: mc.APIKey, Model: mc.Model, Provider: mc.Provider, CorrelationID: corr,
+	if mc.BrokerAudience == "" {
+		return Reply{}, errors.New("agent: the Model config names no Broker audience")
 	}
-	viaBroker := mc.BrokerAudience != ""
-	if viaBroker {
-		cfg.SVID = func(ctx context.Context) (wire.JWTSVID, error) {
+	cfg := modelclient.Config{
+		BaseURL: mc.BaseURL, Model: mc.Model, CorrelationID: corr,
+		SVID: func(ctx context.Context) (wire.JWTSVID, error) {
 			svid, err := a.cfg.Source.FetchJWTSVID(ctx, jwtsvid.Params{Audience: mc.BrokerAudience})
 			if err != nil {
 				return "", err
 			}
 			return wire.JWTSVID(svid.Marshal()), nil
-		}
+		},
 	}
 	client, err := modelclient.New(cfg)
 	if err != nil {
@@ -119,34 +112,20 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 	// text and the Audit record; the Warden decides everything.
 	tenant, sub := unverifiedSub(assertion)
 	rec := AuditRecord{CorrelationID: corr, CallerUnverified: sub, Question: question}
-	footer := ""
-	if !viaBroker {
-		rec.Backend, rec.Model = backendFor(mc.Provider), client.Model()
-		if rec.Backend == backendStandIn {
-			// A stand-in run never shows a real model id.
-			rec.Model = backendStandIn
-		}
-		footer = rec.Backend
-	}
 	finish := func(r Reply, id ReplyID, text string) (Reply, error) {
 		r.ID = id
 		r.CorrelationID = corr
 		rec.Attempts, rec.WardenStatus, rec.Reply = r.ModelAttempts, r.Status, id
 		a.writeAudit(rec)
-		if viaBroker {
-			footer = brokerFooter(rec.ModelCalls)
-		}
-		r.Text = fmt.Sprintf("%s\n[model: %s · id %s]", text, footer, corr)
+		r.Text = fmt.Sprintf("%s\n[model: %s · id %s]", text, brokerFooter(rec.ModelCalls), corr)
 		return r, nil
 	}
 
 	res, err := client.Propose(ctx, question)
 	out := Reply{ModelAttempts: len(res.Attempts)}
 	// Only the audit fields of each attempt are kept, never its Raw reply.
-	rec.ModelCalls = modelCalls(res.Attempts, viaBroker)
-	if viaBroker {
-		rec.Backend, rec.Model = brokerServed(rec.ModelCalls)
-	}
+	rec.ModelCalls = modelCalls(res.Attempts)
+	rec.Backend, rec.Model = brokerServed(rec.ModelCalls)
 	if err != nil {
 		var f *modelclient.Failure
 		if errors.As(err, &f) {
