@@ -316,6 +316,12 @@ func TestUnauthenticatedCasesAnswer401WithOneBody(t *testing.T) {
 	}{
 		{"no header", "", "jwt_svid_missing"},
 		{"not a jwt", "Bearer not-a-jwt", "jwt_svid_malformed"},
+		{"Basic scheme", "Basic abc", "jwt_svid_malformed"},
+		{"token without Bearer prefix", wire.Bearer(f.fetch(t, agentID, wardenAudience)), "jwt_svid_malformed"},
+		// net/http trims trailing spaces, so the Warden sees "Bearer" with no
+		// prefix and the whitespace-only arm in verifyJWTSVID is unreachable over HTTP.
+		{"Bearer with only spaces", "Bearer   ", "jwt_svid_malformed"},
+		{"foreign trust domain", wire.BearerFor(f.sign(t, spiffeid.RequireFromString("spiffe://other.org/permission-agent"), []string{wardenAudience}, now, now.Add(time.Minute))), "jwt_svid_other"},
 		{"forged payload", wire.BearerFor(forge(t, f.fetch(t, agentID, wardenAudience), "spiffe://example.com/someone-else")), "jwt_svid_signature"},
 		{"unknown signing key", func() wire.Bearer {
 			wl, err := other.Workload(agentID)
