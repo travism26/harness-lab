@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"time"
 
 	"github.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
-	"github.com/spiffe/go-spiffe/v2/workloadapi"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/workloadsrc"
 )
 
 // deps are the outside things a run reaches, so tests can swap them for
@@ -39,34 +38,14 @@ type jwtSource interface {
 	Close() error
 }
 
-// socketTimeout is how long opening a socket may wait for its first update.
-const socketTimeout = 10 * time.Second
-
-// workloadAPISource is a go-spiffe JWTSource and the context that keeps its
-// watcher running.
-type workloadAPISource struct {
-	*workloadapi.JWTSource
-	cancel context.CancelFunc
-}
-
-func (s workloadAPISource) Close() error {
-	err := s.JWTSource.Close()
-	s.cancel()
-	return err
-}
-
 // openWorkloadAPI connects go-spiffe's JWTSource to a spiffecli socket the
-// owner started. An unreachable socket is an error after socketTimeout.
+// owner started. An unreachable socket is an error after workloadsrc.Timeout.
 func openWorkloadAPI(ctx context.Context, socket string) (jwtSource, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	timer := time.AfterFunc(socketTimeout, cancel)
-	defer timer.Stop()
-	src, err := workloadapi.NewJWTSource(ctx, workloadapi.WithClientOptions(workloadapi.WithAddr("unix://"+socket)))
+	src, err := workloadsrc.Open(ctx, socket)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
-	return workloadAPISource{JWTSource: src, cancel: cancel}, nil
+	return src, nil
 }
 
 // errNoSource means no source was given for a workload.

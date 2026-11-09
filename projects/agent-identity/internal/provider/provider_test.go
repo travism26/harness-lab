@@ -26,6 +26,21 @@ func TestLookupCarriesDefaultModelAndAuthStyle(t *testing.T) {
 	}
 }
 
+func TestSweepIsHaikuSonnetOpusAndStartsWithTheDefault(t *testing.T) {
+	for _, tc := range []struct {
+		p    Provider
+		want []string
+	}{
+		{Providers["anthropic"], []string{"claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"}},
+		{Providers["openrouter"], []string{"anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"}},
+		{StandIn, []string{"claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"}},
+	} {
+		if strings.Join(tc.p.Sweep, ",") != strings.Join(tc.want, ",") || tc.p.Sweep[0] != tc.p.DefaultModel {
+			t.Errorf("%s sweep = %v, want %v", tc.p.Name, tc.p.Sweep, tc.want)
+		}
+	}
+}
+
 func TestSelect(t *testing.T) {
 	both := map[string]string{"ANTHROPIC_API_KEY": "a-key", "OPENROUTER_API_KEY": "o-key"}
 	cases := []struct {

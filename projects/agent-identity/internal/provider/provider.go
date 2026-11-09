@@ -14,6 +14,9 @@ type Provider struct {
 	Name, BaseURL, KeyEnv string
 	// DefaultModel is the model id used when none is given.
 	DefaultModel string
+	// Sweep is every model the Eval sweep runs on this provider (Haiku, Sonnet
+	// and Opus), the default first. The Broker's model-eval Pin lists them.
+	Sweep []string
 	// BearerAuth sends Authorization: Bearer (OpenRouter) instead of x-api-key
 	// plus anthropic-version.
 	BearerAuth bool
@@ -27,16 +30,18 @@ var Providers = map[string]Provider{
 	"anthropic": {
 		Name: "anthropic", BaseURL: "https://api.anthropic.com", KeyEnv: "ANTHROPIC_API_KEY",
 		DefaultModel: "claude-haiku-5-5", PricedByTable: true,
+		Sweep: []string{"claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"},
 	},
 	"openrouter": {
 		Name: "openrouter", BaseURL: "https://openrouter.ai/api", KeyEnv: "OPENROUTER_API_KEY",
 		DefaultModel: "anthropic/claude-haiku-5.5", BearerAuth: true,
+		Sweep: []string{"anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"},
 	},
 }
 
 // StandIn is the stand-in Model, which needs no key. It is sent Anthropic's
 // default model id, though no real model answers.
-var StandIn = Provider{Name: "stand-in", DefaultModel: Providers["anthropic"].DefaultModel}
+var StandIn = Provider{Name: "stand-in", DefaultModel: Providers["anthropic"].DefaultModel, Sweep: Providers["anthropic"].Sweep}
 
 // Lookup finds a provider by name, the stand-in included. An unknown name
 // returns the Anthropic provider's settings with ok false.

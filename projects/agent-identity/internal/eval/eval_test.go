@@ -5,14 +5,51 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
+
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/eval"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelclient"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 )
 
-func client(t *testing.T, s *model.Server) *modelclient.Client {
+// startBroker puts the stand-in Model behind a loopback Broker that holds
+// model-eval to eval.Pin(), and returns a Source of model-eval's JWT-SVIDs. No
+// key exists anywhere.
+func startBroker(t *testing.T, s *model.Server) (url string, src eval.SVIDSource) {
 	t.Helper()
-	c, err := modelclient.New(modelclient.Config{BaseURL: s.URL, APIKey: "k", Provider: "stand-in"})
+	ws, err := workload.New(spiffeid.RequireTrustDomainFromString("example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := broker.New(broker.Config{
+		Audience: broker.ID.String(), Bundles: ws, Provider: provider.StandIn, UpstreamURL: s.URL,
+		Pins: map[spiffeid.ID]pin.Pin{eval.ID: eval.Pin()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := b.ListenLoopback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Close() })
+	wl, err := ws.Workload(eval.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv.URL, wl
+}
+
+const sweepModel = "claude-sonnet-5-5"
+
+func client(t *testing.T, s *model.Server, modelID string) eval.Proposer {
+	t.Helper()
+	url, src := startBroker(t, s)
+	c, err := eval.NewClient(eval.ClientConfig{BrokerURL: url, Model: modelID, Source: src})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +60,58 @@ func run(t *testing.T, cases []eval.Case, runs int, replies ...model.Reply) eval
 	t.Helper()
 	s := model.New(replies...)
 	defer s.Close()
-	return eval.Run(context.Background(), client(t, s), "stand-in", cases, runs)
+	return eval.Run(context.Background(), client(t, s, sweepModel), cases, runs)
+}
+
+func TestEvalAsksTheModelThroughTheBrokerAndReportsWhoServedIt(t *testing.T) {
+	s := model.New(model.ToolUse("tom", "invoice:approve"))
+	defer s.Close()
+
+	r := eval.Run(context.Background(), client(t, s, sweepModel), []eval.Case{named}, 1)
+
+	if !r.Cases[0].Runs[0].Pass {
+		t.Fatalf("run = %+v", r.Cases[0].Runs[0])
+	}
+	if r.Provider != "stand-in" || r.Model != sweepModel {
+		t.Errorf("report names %s / %s; want what the Broker reported, stand-in / %s", r.Provider, r.Model, sweepModel)
+	}
+	h := s.Requests()[0].Header
+	if h.Get("X-Api-Key") != "" || h.Get("Authorization") != "" {
+		t.Errorf("a credential reached the Model: %v", h)
+	}
+	var b strings.Builder
+	r.Write(&b, 0.9)
+	if out := b.String(); !strings.Contains(out, "provider: stand-in\nmodel: "+sweepModel+"\n") {
+		t.Errorf("report:\n%s", out)
+	}
+}
+
+func TestEvalHeldToItsPin(t *testing.T) {
+	for name, modelID := range map[string]string{"a model off its list": "claude-opus-9", "no model": ""} {
+		t.Run(name, func(t *testing.T) {
+			s := model.New(model.ToolUse("tom", "invoice:approve"))
+			defer s.Close()
+			r := eval.Run(context.Background(), client(t, s, modelID), []eval.Case{named}, 1)
+			if r.Cases[0].Runs[0].Pass || r.Cases[0].Runs[0].Outcome != "provider_error" || len(s.Requests()) != 0 {
+				t.Errorf("run = %+v, %d Model requests; want a refused request", r.Cases[0].Runs[0], len(s.Requests()))
+			}
+		})
+	}
+}
+
+func TestEvalPinIsTheModelClientsEvalPinAndEveryModelOfTheSweepPasses(t *testing.T) {
+	got, want := eval.Pin(), modelclient.EvalPin()
+	if got.Shape != want.Shape || got.MaxTokens != want.MaxTokens || len(got.Models) != len(want.Models) {
+		t.Errorf("eval.Pin() = %+v", got)
+	}
+	for _, modelID := range provider.Providers["anthropic"].Sweep {
+		s := model.New(model.ToolUse("tom", "invoice:approve"))
+		r := eval.Run(context.Background(), client(t, s, modelID), []eval.Case{named}, 1)
+		s.Close()
+		if !r.Cases[0].Runs[0].Pass || r.Model != modelID {
+			t.Errorf("%s: run = %+v, report model %q", modelID, r.Cases[0].Runs[0], r.Model)
+		}
+	}
 }
 
 func p(target, perm string) modelclient.Proposal {
@@ -162,9 +250,9 @@ func TestWriteShowsTheReport(t *testing.T) {
 		model.ToolUse("tom", "invoice:approve"), model.ToolUse("tom", "invoice:read"),
 		model.Text("sunny"), model.Text("sunny"))
 	var b strings.Builder
-	r.Write(&b, "claude-haiku-5-5", 0.9)
+	r.Write(&b, 0.9)
 	out := b.String()
-	for _, want := range []string{"provider: stand-in", "model: claude-haiku-5-5", "named", "no-proposal", "unstable", "n1", "retries", "cost", "invoice:read", "sunny"} {
+	for _, want := range []string{"provider: stand-in", "model: " + sweepModel, "named", "no-proposal", "unstable", "n1", "retries", "cost", "invoice:read", "sunny"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report lacks %q:\n%s", want, out)
 		}

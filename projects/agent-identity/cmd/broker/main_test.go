@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/eval"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
@@ -223,6 +225,75 @@ func TestServesAskAndWritesItsAuditLogToOut(t *testing.T) {
 	if len(f.opened) != 1 || f.opened[0] != "/tmp/x/model-broker.sock" {
 		t.Errorf("opened %v", f.opened)
 	}
+}
+
+// The Broker command pins model-eval to the Eval's sweep: a sweep model passes,
+// no model is refused (the sweep lists several), and the Agent's own Pin is
+// still its default model only.
+func TestModelEvalIsPinnedToTheSweepAndTheAgentIsNot(t *testing.T) {
+	f := newFakeBundles(t)
+	// One reply for each request that gets through.
+	m := model.New(model.ToolUse("tom", "invoice:approve"), model.ToolUse("tom", "invoice:approve"), model.ToolUse("tom", "invoice:approve"))
+	defer m.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	errOut := &syncBuffer{}
+	done := make(chan int)
+	go func() {
+		done <- run(ctx, []string{"--addr", "127.0.0.1:0", "--out", t.TempDir()}, &bytes.Buffer{}, errOut,
+			deps{getenv: keys(map[string]string{"ANTHROPIC_API_KEY": "k"}), openBundles: f.open, upstreamURL: m.URL})
+	}()
+	url := listenRE.FindStringSubmatch(waitFor(t, errOut, "listening on http://"))[1]
+
+	send := func(id spiffeid.ID, modelID string) int {
+		t.Helper()
+		wl, err := f.src.Workload(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svid, err := wl.FetchJWTSVID(context.Background(), jwtsvidParams("spiffe://example.com/model-broker"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := agent.MessagesRequest("Can Tom approve invoices?")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if modelID != "" {
+			fields["model"], _ = json.Marshal(modelID)
+		}
+		body, _ := json.Marshal(fields)
+		req, _ := http.NewRequest(http.MethodPost, url+wire.PathMessages, bytes.NewReader(body))
+		req.Header.Set(wire.HeaderAuthorization, string(wire.BearerFor(wire.JWTSVID(svid.Marshal()))))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	for _, tc := range []struct {
+		name    string
+		id      spiffeid.ID
+		modelID string
+		want    int
+	}{
+		{"model-eval, Sonnet", eval.ID, "claude-sonnet-5-5", 200},
+		{"model-eval, Opus", eval.ID, "claude-opus-5-5", 200},
+		{"model-eval, off its list", eval.ID, "claude-opus-9", 403},
+		{"model-eval, no model", eval.ID, "", 403},
+		{"permission-agent, Sonnet is not on its Pin", permissionAgent, "claude-sonnet-5-5", 403},
+		{"permission-agent, no model", permissionAgent, "", 200},
+	} {
+		if got := send(tc.id, tc.modelID); got != tc.want {
+			t.Errorf("%s: status %d, want %d", tc.name, got, tc.want)
+		}
+	}
+	cancel()
+	<-done
 }
 
 func TestDefaultsAreTheBrokersSocketAndALoopbackAddress(t *testing.T) {

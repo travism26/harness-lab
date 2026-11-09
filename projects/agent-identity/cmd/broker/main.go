@@ -16,17 +16,17 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
-	"time"
 
 	"github.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
-	"github.com/spiffe/go-spiffe/v2/workloadapi"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/eval"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/rundir"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/workloadsrc"
 )
 
 const (
@@ -36,8 +36,6 @@ const (
 	// defaultAddr is where the Broker listens, so the demo's --broker-url is
 	// the same on every run.
 	defaultAddr = "127.0.0.1:8787"
-	// socketTimeout is how long opening the socket may wait for its first update.
-	socketTimeout = 10 * time.Second
 )
 
 var permissionAgent = spiffeid.RequireFromString("spiffe://example.com/permission-agent")
@@ -81,27 +79,13 @@ func (d deps) withDefaults() deps {
 	return d
 }
 
-type workloadAPISource struct {
-	*workloadapi.JWTSource
-	cancel context.CancelFunc
-}
-
-func (s workloadAPISource) Close() error {
-	err := s.JWTSource.Close()
-	s.cancel()
-	return err
-}
-
+// openWorkloadAPI connects go-spiffe's JWTSource to the Broker's own socket.
 func openWorkloadAPI(ctx context.Context, socket string) (bundleSource, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	timer := time.AfterFunc(socketTimeout, cancel)
-	defer timer.Stop()
-	src, err := workloadapi.NewJWTSource(ctx, workloadapi.WithClientOptions(workloadapi.WithAddr("unix://"+socket)))
+	src, err := workloadsrc.Open(ctx, socket)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
-	return workloadAPISource{JWTSource: src, cancel: cancel}, nil
+	return src, nil
 }
 
 // run starts the Broker and serves until ctx ends. It returns 0 on a clean
@@ -173,8 +157,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) i
 		Key:         choice.Key,
 		UpstreamURL: d.upstreamURL,
 		Audit:       logFile,
-		// The Agent's own Pin is the only one; the Eval's comes with its ticket.
-		Pins: map[spiffeid.ID]pin.Pin{permissionAgent: agent.Pin()},
+		// The Agent may use its default model; the Eval may use any in its sweep.
+		Pins: map[spiffeid.ID]pin.Pin{permissionAgent: agent.Pin(), eval.ID: eval.Pin()},
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "broker: %v\n", err)

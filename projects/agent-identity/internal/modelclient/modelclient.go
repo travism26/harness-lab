@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +60,9 @@ func (c *Client) Model() string { return c.cfg.Model }
 type Client struct {
 	cfg  Config
 	prov provider.Provider
+	// named is true when the caller gave a Model. In Broker mode only a named
+	// model is sent; otherwise the Broker fills it in.
+	named bool
 }
 
 // New builds a Client. An empty BaseURL, or neither an APIKey nor an SVID
@@ -71,6 +75,7 @@ func New(cfg Config) (*Client, error) {
 		return nil, errors.New("modelclient: an API key or a JWT-SVID source is required")
 	}
 	prov, _ := provider.Lookup(cfg.Provider)
+	named := cfg.Model != ""
 	if cfg.Model == "" {
 		cfg.Model = prov.DefaultModel
 	}
@@ -78,7 +83,7 @@ func New(cfg Config) (*Client, error) {
 		cfg.HTTPClient = http.DefaultClient
 	}
 	cfg.BaseURL = strings.TrimSuffix(cfg.BaseURL, "/")
-	return &Client{cfg: cfg, prov: prov}, nil
+	return &Client{cfg: cfg, prov: prov, named: named}, nil
 }
 
 // Proposal is what the Model proposes: a name from the question or "self", and
@@ -247,6 +252,17 @@ func Request(question string) ([]byte, error) {
 // request-shape hash of the Client's own request fields. It is computed from
 // the request constants, never written down.
 func DefaultPin() pin.Pin {
+	return pinFor(func(p provider.Provider) []string { return []string{p.DefaultModel} })
+}
+
+// EvalPin is the Pin for the Eval's model-eval workload: every model in the
+// Eval sweep for each provider, with the same ceiling and request shape as
+// DefaultPin.
+func EvalPin() pin.Pin {
+	return pinFor(func(p provider.Provider) []string { return slices.Clone(p.Sweep) })
+}
+
+func pinFor(list func(provider.Provider) []string) pin.Pin {
 	raw, err := json.Marshal(requestFields(nil))
 	if err != nil {
 		panic(err) // the constants always encode
@@ -257,9 +273,9 @@ func DefaultPin() pin.Pin {
 	}
 	models := map[string][]string{}
 	for name, p := range provider.Providers {
-		models[name] = []string{p.DefaultModel}
+		models[name] = list(p)
 	}
-	models[provider.StandIn.Name] = []string{provider.StandIn.DefaultModel}
+	models[provider.StandIn.Name] = list(provider.StandIn)
 	return pin.Pin{Models: models, MaxTokens: maxTokens, Shape: shape}
 }
 
@@ -328,8 +344,9 @@ func brokerFailure(status int, raw []byte) *Failure {
 func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, error) {
 	attempt := Attempt{Provider: c.cfg.Provider}
 	fields := requestFields(messages)
-	if c.cfg.SVID == nil {
-		// The Broker sets the model; in key mode the client does.
+	if c.cfg.SVID == nil || c.named {
+		// The Broker sets the model unless the caller named one (the Eval does,
+		// to pick from its sweep); in key mode the client always does.
 		fields["model"] = c.cfg.Model
 	}
 	body, err := json.Marshal(fields)

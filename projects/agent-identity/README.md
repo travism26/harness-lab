@@ -133,7 +133,17 @@ The Warden takes its bundle from `/tmp/agent-identity/warden.sock`, beside the A
 
 The "holds no key" claim is made only for this separate-process mode. `./check` never runs it, and the [sample run](docs/evidence/sample-run/) predates it.
 
-**The Eval** (`go run ./cmd/eval`) still reads a key itself for now. See the [baseline report](evals/baseline-2026-11-08.md) for its flags.
+**The Eval** (`go run ./cmd/eval`) reaches the Model through the same Broker, under its own SPIFFE ID `model-eval`, so it holds no key and reads neither `.env` nor any provider key variable. The steps are the same three as the live tour:
+
+1. Start spiffecli, as above (its `model-eval` workload gives the Eval its JWT-SVIDs).
+2. Start the Broker with the key, as above.
+3. Run the Eval against it, naming the model:
+
+   ```
+   go run ./cmd/eval --broker-url http://127.0.0.1:8787 --model claude-sonnet-5-5
+   ```
+
+   `--model` is required. The Broker holds `model-eval` to a Pin that lists Haiku, Sonnet and Opus for each provider (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5` on Anthropic; `anthropic/claude-{haiku,sonnet,opus}-5.5` on OpenRouter) and refuses any other model, or none, with 403 `outside_pin`. `--spiffe-socket` defaults to `/tmp/agent-identity/model-eval.sock`. The report names the provider and model the Broker reported. `--provider` and `--env-file` are gone; the Broker decides the provider. See the [baseline report](evals/baseline-2026-11-08.md) for the sweep (it predates the Broker).
 
 ## 7. Evidence
 

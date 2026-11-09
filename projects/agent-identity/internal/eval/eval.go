@@ -1,4 +1,5 @@
-// Package eval scores the live Model client on hand-written cases: it loads
+// Package eval scores the Model client, reaching the Model through the Broker as
+// model-eval, on hand-written cases: it loads
 // them from JSONL, runs each several times, and aggregates per-category
 // accuracy, retries, unstable cases, cost and the raw replies. It writes no
 // Audit records and never touches the Model client's testdata.
@@ -14,8 +15,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
+
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelclient"
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
 )
 
 // Categories lists the case categories in report order.
@@ -84,31 +90,50 @@ func (c Case) validate() error {
 	return nil
 }
 
-// ClientConfig names a live Model client. Empty Model and BaseURL take the
-// provider's defaults.
-type ClientConfig struct {
-	Provider, Model, BaseURL, APIKey string
+// ID is the Eval's own SPIFFE ID: the Broker allowlist and its Pin name the Eval
+// by it, and the Eval fetches its JWT-SVIDs as it.
+var ID = spiffeid.RequireFromString("spiffe://example.com/model-eval")
+
+// Pin is the Pin the Broker holds the Eval to: every model in the sweep for each
+// provider, with the Agent's max_tokens ceiling and request-shape hash. It lives
+// here because only the Agent and the Eval may import the Model client (R1).
+func Pin() pin.Pin { return modelclient.EvalPin() }
+
+// SVIDSource is the small Workload API interface the Eval fetches its JWT-SVID
+// through: go-spiffe's workloadapi.JWTSource live, the stand-in in tests.
+type SVIDSource interface {
+	FetchJWTSVID(ctx context.Context, params jwtsvid.Params) (*jwtsvid.SVID, error)
 }
 
-// NewClient builds the Model client for cfg and returns it with the model id
-// it will use. projects/agent-identity/cmd/eval cannot import the Model client itself (trustlint R1).
-func NewClient(cfg ClientConfig) (Proposer, string, error) {
-	p, ok := provider.Providers[cfg.Provider]
-	if !ok {
-		return nil, "", fmt.Errorf("eval: unknown provider %q", cfg.Provider)
+// ClientConfig names the Broker the Eval calls. The Eval holds no provider key.
+type ClientConfig struct {
+	// BrokerURL is the Broker's base URL.
+	BrokerURL string
+	// Model is the model id to name in each request; the Broker checks it
+	// against the Eval's Pin. Empty names none, which the Broker refuses.
+	Model string
+	// Source gives the Eval's JWT-SVIDs, fetched for the Broker's audience on
+	// every request.
+	Source SVIDSource
+}
+
+// NewClient builds the Model client for cfg, in Broker mode.
+// projects/agent-identity/cmd/eval cannot import the Model client itself (trustlint R1).
+func NewClient(cfg ClientConfig) (Proposer, error) {
+	if cfg.Source == nil {
+		return nil, errors.New("eval: a JWT-SVID source is required")
 	}
-	mc := modelclient.Config{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Model, Provider: p.Name}
-	if mc.BaseURL == "" {
-		mc.BaseURL = p.BaseURL
-	}
-	if mc.Model == "" {
-		mc.Model = p.DefaultModel
-	}
-	c, err := modelclient.New(mc)
-	if err != nil {
-		return nil, "", err
-	}
-	return c, mc.Model, nil
+	return modelclient.New(modelclient.Config{
+		BaseURL: cfg.BrokerURL,
+		Model:   cfg.Model,
+		SVID: func(ctx context.Context) (wire.JWTSVID, error) {
+			svid, err := cfg.Source.FetchJWTSVID(ctx, jwtsvid.Params{Audience: broker.ID.String()})
+			if err != nil {
+				return "", err
+			}
+			return wire.JWTSVID(svid.Marshal()), nil
+		},
+	})
 }
 
 // Proposer is the Model client's Propose.
@@ -126,6 +151,8 @@ type RunResult struct {
 	Cost    float64
 	// Raw is every raw live reply, in order.
 	Raw []string
+	// Provider and Model are what the Broker reported for the run's last reply.
+	Provider, Model string
 }
 
 // CaseResult is all runs of one case.
@@ -151,9 +178,11 @@ func (t Tally) Accuracy() float64 {
 
 // Report is the result of an Eval run.
 type Report struct {
-	Provider string
-	Runs     int
-	Cases    []CaseResult
+	// Provider and Model are what the Broker reported serving the first reply
+	// that named them; empty if the Broker never served one.
+	Provider, Model string
+	Runs            int
+	Cases           []CaseResult
 	// Categories counts only the cases that are not report-only.
 	Categories map[string]Tally
 	ReportOnly Tally
@@ -161,12 +190,15 @@ type Report struct {
 }
 
 // Run asks every case `runs` times, one request at a time.
-func Run(ctx context.Context, p Proposer, provider string, cases []Case, runs int) Report {
-	rep := Report{Provider: provider, Runs: runs, Categories: map[string]Tally{}}
+func Run(ctx context.Context, p Proposer, cases []Case, runs int) Report {
+	rep := Report{Runs: runs, Categories: map[string]Tally{}}
 	for _, c := range cases {
 		cr := CaseResult{Case: c}
 		for i := 0; i < runs; i++ {
 			rr := runOnce(ctx, p, c)
+			if rep.Provider == "" && rr.Provider != "" {
+				rep.Provider, rep.Model = rr.Provider, rr.Model
+			}
 			cr.Runs = append(cr.Runs, rr)
 			if rr.Outcome != cr.Runs[0].Outcome {
 				cr.Unstable = true
@@ -198,6 +230,9 @@ func runOnce(ctx context.Context, p Proposer, c Case) RunResult {
 	for _, a := range res.Attempts {
 		rr.Cost += a.Cost
 		rr.Raw = append(rr.Raw, a.Raw)
+		if a.Provider != "" {
+			rr.Provider, rr.Model = a.Provider, a.Model
+		}
 	}
 	if err == nil {
 		rr.Outcome = res.Proposal.Target + "/" + res.Proposal.Permission
@@ -238,10 +273,10 @@ func (r Report) ExitCode(minAccuracy float64) int {
 	return 1
 }
 
-// Write prints the report: provider, model, accuracy per category, retries,
+// Write prints the report: the provider and model the Broker reported, accuracy per category, retries,
 // unstable cases, total cost and every raw reply.
-func (r Report) Write(w io.Writer, model string, minAccuracy float64) {
-	fmt.Fprintf(w, "provider: %s\nmodel: %s\nruns per case: %d\nmin accuracy: %.2f\n\n", r.Provider, model, r.Runs, minAccuracy)
+func (r Report) Write(w io.Writer, minAccuracy float64) {
+	fmt.Fprintf(w, "provider: %s\nmodel: %s\nruns per case: %d\nmin accuracy: %.2f\n\n", orNone(r.Provider), orNone(r.Model), r.Runs, minAccuracy)
 	fmt.Fprintln(w, "category      passed/runs  accuracy  retries")
 	for _, k := range Categories {
 		if t, ok := r.Categories[k]; ok {
@@ -259,7 +294,7 @@ func (r Report) Write(w io.Writer, model string, minAccuracy float64) {
 	}
 	sort.Strings(unstable)
 	fmt.Fprintf(w, "\nunstable cases: %s\n", orNone(strings.Join(unstable, ", ")))
-	fmt.Fprintf(w, "total cost: $%.6f (%s)\n", r.Cost, r.Provider)
+	fmt.Fprintf(w, "total cost: $%.6f (%s)\n", r.Cost, orNone(r.Provider))
 	verdict := "PASS"
 	if !r.Passed(minAccuracy) {
 		verdict = "FAIL"

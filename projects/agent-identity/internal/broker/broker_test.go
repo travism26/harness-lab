@@ -692,6 +692,53 @@ func TestAModelIsNotFilledInWhenThePinListsSeveral(t *testing.T) {
 	}
 }
 
+// sweepPin is model-eval's Pin: every model in the Eval sweep for each provider.
+func sweepPin(t *testing.T) pin.Pin {
+	t.Helper()
+	p := testPin(t)
+	for name, prov := range provider.Providers {
+		p.Models[name] = prov.Sweep
+	}
+	p.Models[provider.StandIn.Name] = provider.StandIn.Sweep
+	return p
+}
+
+func TestModelEvalIsHeldToItsSweepPin(t *testing.T) {
+	evalID := spiffeid.RequireFromString("spiffe://example.com/model-eval")
+	for name, tc := range map[string]struct {
+		body       string
+		wantStatus int
+		wantReason string
+		wantModel  string
+	}{
+		"Haiku":                  {withBody(t, "model", `"claude-haiku-5-5"`), 200, "", "claude-haiku-5-5"},
+		"Sonnet":                 {withBody(t, "model", `"claude-sonnet-5-5"`), 200, "", "claude-sonnet-5-5"},
+		"Opus":                   {withBody(t, "model", `"claude-opus-5-5"`), 200, "", "claude-opus-5-5"},
+		"a model off its list":   {withBody(t, "model", `"claude-opus-9"`), 403, "outside_pin", ""},
+		"no model: several Pins": {questionBody, 403, "outside_pin", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, func(c *broker.Config) {
+				c.Allowlist = []spiffeid.ID{agentID, evalID}
+				c.Pins = map[spiffeid.ID]pin.Pin{agentID: testPin(t), evalID: sweepPin(t)}
+			})
+			got := f.postBody(t, wire.BearerFor(f.fetch(t, evalID, brokerAudience)), "", tc.body)
+			if got.status != tc.wantStatus {
+				t.Fatalf("response = %d %s; want %d", got.status, got.body, tc.wantStatus)
+			}
+			if tc.wantReason != "" {
+				if got.body != `{"reason":"`+tc.wantReason+`"}`+"\n" || f.up.count() != 0 {
+					t.Errorf("body %q, %d upstream requests; want %s and none", got.body, f.up.count(), tc.wantReason)
+				}
+				return
+			}
+			if sent := f.sentUpstream(t); sent["model"] != tc.wantModel {
+				t.Errorf("upstream model = %v; want %s", sent["model"], tc.wantModel)
+			}
+		})
+	}
+}
+
 func TestThePinIsHeldPerWorkload(t *testing.T) {
 	other := spiffeid.RequireFromString("spiffe://example.com/model-eval")
 	f := newFixture(t, func(c *broker.Config) {

@@ -2,19 +2,26 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
+
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/eval"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 )
 
 var committedCases string
 
-// TestMain moves into an empty directory, so the default .env path never
-// finds a real one.
+// TestMain moves into an empty directory, so no real .env is ever near.
 func TestMain(m *testing.M) {
 	var err error
 	if committedCases, err = filepath.Abs("../../evals/cases.jsonl"); err != nil {
@@ -32,8 +39,53 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func env(kv map[string]string) func(string) string {
-	return func(k string) string { return kv[k] }
+// brokerFixture is a loopback Broker in front of the stand-in Model, holding
+// model-eval to its Pin, and the Workload API socket stand-in that gives the
+// Eval its JWT-SVIDs. No key exists anywhere.
+type brokerFixture struct {
+	model  *model.Server
+	url    string
+	deps   deps
+	opened []string
+}
+
+func newBrokerFixture(t *testing.T, replies ...model.Reply) *brokerFixture {
+	t.Helper()
+	f := &brokerFixture{model: model.New(replies...)}
+	t.Cleanup(f.model.Close)
+	ws, err := workload.New(spiffeid.RequireTrustDomainFromString("example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := broker.New(broker.Config{
+		Audience: broker.ID.String(), Bundles: ws, Provider: provider.StandIn, UpstreamURL: f.model.URL,
+		Pins: map[spiffeid.ID]pin.Pin{eval.ID: eval.Pin()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := b.ListenLoopback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Close() })
+	f.url = srv.URL
+	f.deps = deps{openJWT: func(_ context.Context, socket string) (svidSource, error) {
+		f.opened = append(f.opened, socket)
+		wl, err := ws.Workload(eval.ID)
+		return standInSource{wl}, err
+	}}
+	return f
+}
+
+type standInSource struct{ *workload.Workload }
+
+func (standInSource) Close() error { return nil }
+
+func (f *brokerFixture) run(args ...string) (stdout, stderr string, code int) {
+	var out, errb bytes.Buffer
+	code = runWith(context.Background(), args, &out, &errb, f.deps)
+	return out.String(), errb.String(), code
 }
 
 func casesFile(t *testing.T, body string) string {
@@ -83,90 +135,89 @@ func TestCommittedCasesCoverTheFourCategories(t *testing.T) {
 	}
 }
 
-func TestMissingKeyExitsBeforeAnyRequest(t *testing.T) {
-	s := model.New(model.ToolUse("tom", "invoice:approve"))
-	defer s.Close()
-	for _, args := range [][]string{
-		{"--cases", casesFile(t, twoCases)},
-		{"--cases", casesFile(t, twoCases), "--provider", "anthropic"},
-		{"--cases", casesFile(t, twoCases), "--provider", "openrouter"},
-	} {
-		var out, errb bytes.Buffer
-		if code := runWith(args, &out, &errb, env(nil), s.URL); code == 0 {
-			t.Errorf("%v: exit 0 without a key", args)
-		}
-		if !strings.Contains(errb.String(), "API_KEY") {
-			t.Errorf("stderr = %q", errb.String())
+func TestEvalRunsAgainstALoopbackBrokerAndStandInModelWithNoKey(t *testing.T) {
+	f := newBrokerFixture(t, model.ToolUse("tom", "invoice:approve"), model.Text("x"))
+	out, errb, code := f.run("--cases", casesFile(t, twoCases), "--runs", "1", "--broker-url", f.url, "--model", "claude-sonnet-5-5")
+	if code != 0 {
+		t.Fatalf("code=%d out=%s err=%s", code, out, errb)
+	}
+	// The report names what the Broker reported.
+	if !strings.Contains(out, "provider: stand-in\nmodel: claude-sonnet-5-5\n") {
+		t.Errorf("report:\n%s", out)
+	}
+	reqs := f.model.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("%d Model requests", len(reqs))
+	}
+	for _, r := range reqs {
+		if r.Header.Get("X-Api-Key") != "" || r.Header.Get("Authorization") != "" {
+			t.Errorf("a credential reached the Model: %v", r.Header)
 		}
 	}
-	if n := len(s.Requests()); n != 0 {
-		t.Fatalf("%d requests were sent", n)
+	if len(f.opened) != 1 || f.opened[0] != "/tmp/agent-identity/model-eval.sock" {
+		t.Errorf("opened %v; want model-eval's default socket", f.opened)
 	}
 }
 
-func TestProviderChoiceFollowsKeys(t *testing.T) {
-	s := model.New(model.ToolUse("tom", "invoice:approve"), model.Text("x"),
-		model.ToolUse("tom", "invoice:approve"), model.Text("x"))
-	defer s.Close()
-	cases := casesFile(t, twoCases)
-	var out, errb bytes.Buffer
-	code := runWith([]string{"--cases", cases, "--runs", "1"}, &out, &errb,
-		env(map[string]string{"OPENROUTER_API_KEY": "or"}), s.URL)
-	if code != 0 || !strings.Contains(out.String(), "provider: openrouter") {
-		t.Fatalf("code=%d out=%s err=%s", code, out.String(), errb.String())
-	}
-	if got := s.Requests()[0].Header.Get("Authorization"); got != "Bearer or" {
-		t.Errorf("Authorization = %q", got)
-	}
-	out.Reset()
-	code = runWith([]string{"--cases", cases, "--runs", "1"}, &out, &errb,
-		env(map[string]string{"OPENROUTER_API_KEY": "or", "ANTHROPIC_API_KEY": "an"}), s.URL)
-	if code != 0 || !strings.Contains(out.String(), "provider: anthropic") {
-		t.Fatalf("code=%d out=%s", code, out.String())
-	}
-	if got := s.Requests()[2].Header.Get("X-Api-Key"); got != "an" {
-		t.Errorf("x-api-key = %q", got)
-	}
-}
-
-func TestKeysComeFromTheEnvFileAndTheProcessOverridesIt(t *testing.T) {
-	envFile := filepath.Join(t.TempDir(), ".env")
-	if err := os.WriteFile(envFile, []byte("ANTHROPIC_API_KEY=file-a\n"), 0o600); err != nil {
+func TestEvalReadsNoKeyAndNoEnvFile(t *testing.T) {
+	// A key in the environment and a .env in the working directory are both ignored.
+	t.Setenv("ANTHROPIC_API_KEY", "sk-must-not-be-read")
+	if err := os.WriteFile(".env", []byte("OPENROUTER_API_KEY=sk-must-not-be-read\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s := model.New(model.ToolUse("tom", "invoice:approve"), model.Text("x"),
-		model.ToolUse("tom", "invoice:approve"), model.Text("x"))
-	defer s.Close()
-	args := []string{"--cases", casesFile(t, twoCases), "--runs", "1", "--env-file", envFile}
-	var out, errb bytes.Buffer
-	if code := runWith(args, &out, &errb, env(nil), s.URL); code != 0 || !strings.Contains(out.String(), "provider: anthropic") {
-		t.Fatalf("code=%d out=%s err=%s", code, out.String(), errb.String())
+	defer os.Remove(".env")
+	f := newBrokerFixture(t, model.ToolUse("tom", "invoice:approve"), model.Text("x"))
+	out, _, code := f.run("--cases", casesFile(t, twoCases), "--runs", "1", "--broker-url", f.url, "--model", "claude-haiku-5-5")
+	if code != 0 || !strings.Contains(out, "provider: stand-in") {
+		t.Fatalf("code=%d out=%s", code, out)
 	}
-	if got := s.Requests()[0].Header.Get("X-Api-Key"); got != "file-a" {
-		t.Errorf("x-api-key = %q, want the file's key", got)
+	for _, r := range f.model.Requests() {
+		if strings.Contains(r.Header.Get("X-Api-Key")+r.Header.Get("Authorization"), "sk-must-not-be-read") {
+			t.Error("the key reached the Model")
+		}
 	}
-	if code := runWith(args, &out, &errb, env(map[string]string{"ANTHROPIC_API_KEY": "proc-a"}), s.URL); code != 0 {
-		t.Fatalf("code=%d err=%s", code, errb.String())
-	}
-	if got := s.Requests()[2].Header.Get("X-Api-Key"); got != "proc-a" {
-		t.Errorf("x-api-key = %q, want the process key", got)
+	for _, args := range [][]string{{"--provider", "anthropic"}, {"--env-file", ".env"}} {
+		if _, _, code := f.run(append([]string{"--broker-url", f.url, "--model", "x"}, args...)...); code != 2 {
+			t.Errorf("%v: code %d; the flag is gone, want 2", args, code)
+		}
 	}
 }
 
-func TestMissingEnvFileIsNotAnError(t *testing.T) {
+func TestAModelOffThePinFailsEveryRunAtTheBroker(t *testing.T) {
+	f := newBrokerFixture(t, model.ToolUse("tom", "invoice:approve"))
+	out, _, code := f.run("--cases", casesFile(t, twoCases), "--runs", "1", "--broker-url", f.url, "--model", "claude-opus-9")
+	if code != 1 || !strings.Contains(out, "provider_error") || len(f.model.Requests()) != 0 {
+		t.Fatalf("code=%d requests=%d out=%s", code, len(f.model.Requests()), out)
+	}
+}
+
+func TestMissingModelOrBrokerURLIsUsageBeforeAnySocketOrRequest(t *testing.T) {
+	f := newBrokerFixture(t)
+	cases := casesFile(t, twoCases)
+	for _, args := range [][]string{
+		{"--cases", cases, "--broker-url", f.url},
+		{"--cases", cases, "--model", "claude-haiku-5-5"},
+		{"--cases", cases, "--model", "claude-haiku-5-5", "--broker-url", "nope"},
+	} {
+		if _, _, code := f.run(args...); code != 2 {
+			t.Errorf("%v: code %d, want 2", args, code)
+		}
+	}
+	if len(f.opened) != 0 || len(f.model.Requests()) != 0 {
+		t.Errorf("opened %v, %d requests", f.opened, len(f.model.Requests()))
+	}
+}
+
+func TestUnreachableSocketIsUsageWithAHint(t *testing.T) {
 	var out, errb bytes.Buffer
-	args := []string{"--cases", casesFile(t, twoCases), "--env-file", filepath.Join(t.TempDir(), "absent")}
-	code := runWith(args, &out, &errb, env(nil), "")
-	if code != 2 || !strings.Contains(errb.String(), "API_KEY") {
+	d := deps{openJWT: func(context.Context, string) (svidSource, error) { return nil, errors.New("dial unix: no such file") }}
+	code := runWith(context.Background(), []string{"--cases", casesFile(t, twoCases), "--broker-url", "http://127.0.0.1:1", "--model", "m"}, &out, &errb, d)
+	if code != 2 || !strings.Contains(errb.String(), "spiffecli run --config spiffecli/workloads.toml") {
 		t.Fatalf("code=%d err=%s", code, errb.String())
 	}
 }
 
 func TestExitCodeFollowsMinAccuracy(t *testing.T) {
-	keys := env(map[string]string{"ANTHROPIC_API_KEY": "an"})
-	wrong := func() *model.Server {
-		return model.New(model.ToolUse("tom", "invoice:read"), model.Text("x"))
-	}
 	for _, tc := range []struct {
 		args []string
 		want int
@@ -174,27 +225,24 @@ func TestExitCodeFollowsMinAccuracy(t *testing.T) {
 		{nil, 1},
 		{[]string{"--min-accuracy", "0"}, 0},
 	} {
-		s := wrong()
-		args := append([]string{"--cases", casesFile(t, twoCases), "--runs", "1"}, tc.args...)
-		var out, errb bytes.Buffer
-		if code := runWith(args, &out, &errb, keys, s.URL); code != tc.want {
-			t.Errorf("%v: code %d, want %d\n%s", tc.args, code, tc.want, out.String())
+		f := newBrokerFixture(t, model.ToolUse("tom", "invoice:read"), model.Text("x"))
+		args := append([]string{"--cases", casesFile(t, twoCases), "--runs", "1", "--broker-url", f.url, "--model", "claude-haiku-5-5"}, tc.args...)
+		if out, _, code := f.run(args...); code != tc.want {
+			t.Errorf("%v: code %d, want %d\n%s", tc.args, code, tc.want, out)
 		}
-		s.Close()
 	}
 }
 
 func TestBadUsage(t *testing.T) {
-	keys := env(map[string]string{"ANTHROPIC_API_KEY": "an"})
+	f := newBrokerFixture(t)
 	for _, args := range [][]string{
 		{"--runs", "0"},
-		{"--provider", "nope"},
 		{"--cases", "/no/such/file"},
 		{"--min-accuracy", "2"},
 		{"extra"},
 	} {
-		var out, errb bytes.Buffer
-		if code := runWith(args, &out, &errb, keys, ""); code != 2 {
+		args = append([]string{"--broker-url", f.url, "--model", "claude-haiku-5-5"}, args...)
+		if _, _, code := f.run(args...); code != 2 {
 			t.Errorf("%v: code %d, want 2", args, code)
 		}
 	}
