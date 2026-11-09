@@ -1,16 +1,19 @@
 // Package keyisolation implements trustlint rule R5: outside the exempt
 // packages (the Broker module and the Broker command), no package may
 // reference the chosen provider key, use the .env loader, or pass a provider
-// key variable name to os.Getenv or os.LookupEnv. There are no per-package
+// key variable name to os.Getenv, os.LookupEnv or syscall.Getenv. There are no per-package
 // exceptions beyond Config.Exempt. Its real configuration lives in
 // projects/agent-identity/internal/trustlint/config.go.
 //
 // References are matched by object, not by text: a use of a configured
 // "importpath.Name" (a function, variable, constant or type) or
 // "importpath.Type.Field" or "importpath.Type.Method". A key variable name is
-// matched by the constant value of the first argument of os.Getenv or
-// os.LookupEnv, so a named constant or a concatenation is caught; a name
-// computed at run time is not.
+// matched by the constant value of the first argument of those readers, so a
+// named constant or a concatenation is caught; a name computed at run time is
+// not. A table that holds the variable name in a field (a provider's KeyEnv)
+// is closed the other way: list the field in KeyRefs and no package outside
+// Exempt can read the name at all. The real provider table has no such field;
+// the Broker keeps the names to itself.
 package keyisolation
 
 import (
@@ -25,6 +28,9 @@ import (
 	"golang.org/x/tools/go/ast/inspector"
 	"golang.org/x/tools/go/types/typeutil"
 )
+
+// envReaders are the functions that read an environment variable by name.
+var envReaders = map[string]bool{"os.Getenv": true, "os.LookupEnv": true, "syscall.Getenv": true}
 
 // Config names the exempt packages and what may not be referenced elsewhere.
 type Config struct {
@@ -73,8 +79,7 @@ func run(pass *analysis.Pass, cfg Config) error {
 	insp.Preorder([]ast.Node{(*ast.CallExpr)(nil)}, func(n ast.Node) {
 		call := n.(*ast.CallExpr)
 		fn, ok := typeutil.Callee(pass.TypesInfo, call).(*types.Func)
-		if !ok || fn.Pkg() == nil || fn.Pkg().Path() != "os" || len(call.Args) == 0 ||
-			(fn.Name() != "Getenv" && fn.Name() != "LookupEnv") {
+		if !ok || fn.Pkg() == nil || len(call.Args) == 0 || !envReaders[fn.Pkg().Path()+"."+fn.Name()] {
 			return
 		}
 		tv := pass.TypesInfo.Types[call.Args[0]]
@@ -82,7 +87,7 @@ func run(pass *analysis.Pass, cfg Config) error {
 			return
 		}
 		if v := constant.StringVal(tv.Value); slices.Contains(cfg.KeyVars, v) {
-			pass.Reportf(call.Args[0].Pos(), "R5: %s passes the provider key variable %s to os.%s; only the Broker may", self, v, fn.Name())
+			pass.Reportf(call.Args[0].Pos(), "R5: %s passes the provider key variable %s to %s.%s; only the Broker may", self, v, fn.Pkg().Name(), fn.Name())
 		}
 	})
 	return nil

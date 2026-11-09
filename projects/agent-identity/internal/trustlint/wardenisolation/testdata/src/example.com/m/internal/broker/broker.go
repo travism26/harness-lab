@@ -1,4 +1,4 @@
-package broker // want package:"reaches example.com/m/internal/agent via example.com/m/internal/agent, example.com/m/internal/warden via example.com/m/internal/warden"
+package broker // want package:"reaches example.com/m/internal/agent via example.com/m/internal/agent, example.com/m/internal/modelclient via example.com/m/internal/warden -> example.com/m/internal/modelclient, example.com/m/internal/warden via example.com/m/internal/warden"
 
 import (
 	"example.com/m/internal/agent"  // want `R2: example.com/m/internal/broker may not import example.com/m/internal/agent; the Broker must not depend on it`

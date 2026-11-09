@@ -20,17 +20,21 @@ const (
 	Agent       = prefix + "/internal/agent"
 	Warden      = prefix + "/internal/warden"
 	Broker      = prefix + "/internal/broker"
+	Eval        = prefix + "/internal/eval"
+	// BrokerCommand is the Broker's own command: it is the Broker process, so R2 holds
+	// it to the same isolation and R5 exempts it with the Broker module.
+	BrokerCommand = prefix + "/cmd/broker"
 )
 
 // ModelClientImporters may import ModelClient (R1).
-var ModelClientImporters = []string{Agent, prefix + "/internal/eval"}
+var ModelClientImporters = []string{Agent, Eval}
 
 // WorkloadRules are R2's isolation rules: the Warden imports none of the Agent,
-// the Model client and the Broker, and the Broker imports neither the Agent nor
-// the Warden.
+// the Model client and the Broker, and the Broker process (its module and its
+// command) imports none of the Agent, the Warden, the Model client and the Eval.
 var WorkloadRules = []wardenisolation.Rule{
 	{Name: "the Warden", Isolated: []string{Warden}, Forbidden: []string{Agent, ModelClient, Broker}},
-	{Name: "the Broker", Isolated: []string{Broker}, Forbidden: []string{Agent, Warden}},
+	{Name: "the Broker", Isolated: []string{Broker, BrokerCommand}, Forbidden: []string{Agent, Warden, ModelClient, Eval}},
 }
 
 // TokenTypes must never reach a logging or printing sink (R3).
@@ -47,10 +51,6 @@ var InsecureFuncs = []string{
 	"(*github.com/go-jose/go-jose/v4/jwt.JSONWebToken).UnsafeClaimsWithoutVerification",
 	"(github.com/go-jose/go-jose/v4.JSONWebSignature).UnsafePayloadWithoutVerification",
 }
-
-// BrokerCommand is the Broker's own command, the only other package that may
-// hold a provider key.
-const BrokerCommand = prefix + "/cmd/broker"
 
 // KeyExempt are the only packages R5 does not apply to: the Broker module and
 // the Broker command. There are no other exceptions; the Eval goes through

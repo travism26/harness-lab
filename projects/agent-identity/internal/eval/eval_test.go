@@ -17,7 +17,7 @@ import (
 )
 
 // startBroker puts the stand-in Model behind a loopback Broker that holds
-// model-eval to eval.Pin(), and returns a Source of model-eval's JWT-SVIDs. No
+// model-eval to pin.ModelEval(), and returns a Source of model-eval's JWT-SVIDs. No
 // key exists anywhere.
 func startBroker(t *testing.T, s *model.Server) (url string, src eval.SVIDSource) {
 	t.Helper()
@@ -27,7 +27,7 @@ func startBroker(t *testing.T, s *model.Server) (url string, src eval.SVIDSource
 	}
 	b, err := broker.New(broker.Config{
 		Audience: broker.ID.String(), Bundles: ws, Provider: provider.StandIn, UpstreamURL: s.URL,
-		Pins: map[spiffeid.ID]pin.Pin{eval.ID: eval.Pin()},
+		Pins: map[spiffeid.ID]pin.Pin{broker.ModelEval: pin.ModelEval()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func startBroker(t *testing.T, s *model.Server) (url string, src eval.SVIDSource
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { srv.Close() })
-	wl, err := ws.Workload(eval.ID)
+	wl, err := ws.Workload(broker.ModelEval)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,11 +99,9 @@ func TestEvalHeldToItsPin(t *testing.T) {
 	}
 }
 
-func TestEvalPinIsTheModelClientsEvalPinAndEveryModelOfTheSweepPasses(t *testing.T) {
-	got, want := eval.Pin(), modelclient.EvalPin()
-	if got.Shape != want.Shape || got.MaxTokens != want.MaxTokens || len(got.Models) != len(want.Models) {
-		t.Errorf("eval.Pin() = %+v", got)
-	}
+// A real Client naming each model of the sweep passes a Broker that holds the
+// model-eval workload to pin.ModelEval().
+func TestEveryModelOfTheSweepPassesTheModelEvalPin(t *testing.T) {
 	for _, modelID := range provider.Providers["anthropic"].Sweep {
 		s := model.New(model.ToolUse("tom", "invoice:approve"))
 		r := eval.Run(context.Background(), client(t, s, modelID), []eval.Case{named}, 1)

@@ -18,8 +18,8 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/eval"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelrequest"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
@@ -185,7 +185,7 @@ func TestServesAskAndWritesItsAuditLogToOut(t *testing.T) {
 		t.Fatalf("no URL in %s", errOut)
 	}
 
-	wl, err := f.src.Workload(spiffeid.RequireFromString("spiffe://example.com/permission-agent"))
+	wl, err := f.src.Workload(broker.PermissionAgent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestServesAskAndWritesItsAuditLogToOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := agent.MessagesRequest("Can Tom approve invoices?")
+	body, err := modelrequest.Body("Can Tom approve invoices?")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestModelEvalIsPinnedToTheSweepAndTheAgentIsNot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		raw, err := agent.MessagesRequest("Can Tom approve invoices?")
+		raw, err := modelrequest.Body("Can Tom approve invoices?")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,12 +281,12 @@ func TestModelEvalIsPinnedToTheSweepAndTheAgentIsNot(t *testing.T) {
 		modelID string
 		want    int
 	}{
-		{"model-eval, Sonnet", eval.ID, "claude-sonnet-5-5", 200},
-		{"model-eval, Opus", eval.ID, "claude-opus-5-5", 200},
-		{"model-eval, off its list", eval.ID, "claude-opus-9", 403},
-		{"model-eval, no model", eval.ID, "", 403},
-		{"permission-agent, Sonnet is not on its Pin", permissionAgent, "claude-sonnet-5-5", 403},
-		{"permission-agent, no model", permissionAgent, "", 200},
+		{"model-eval, Sonnet", broker.ModelEval, "claude-sonnet-5-5", 200},
+		{"model-eval, Opus", broker.ModelEval, "claude-opus-5-5", 200},
+		{"model-eval, off its list", broker.ModelEval, "claude-opus-9", 403},
+		{"model-eval, no model", broker.ModelEval, "", 403},
+		{"permission-agent, Sonnet is not on its Pin", broker.PermissionAgent, "claude-sonnet-5-5", 403},
+		{"permission-agent, no model", broker.PermissionAgent, "", 200},
 	} {
 		if got := send(tc.id, tc.modelID); got != tc.want {
 			t.Errorf("%s: status %d, want %d", tc.name, got, tc.want)

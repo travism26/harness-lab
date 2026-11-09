@@ -20,9 +20,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/eval"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/rundir"
@@ -31,14 +29,12 @@ import (
 
 const (
 	usage = "usage: broker [--provider anthropic|openrouter] [--out dir] [--spiffe-socket path] [--addr 127.0.0.1:8787]\n"
-	// defaultSocket is the Broker's own socket in spiffecli/workloads.toml.
+	// defaultSocket is the Broker's own socket in projects/agent-identity/spiffecli/workloads.toml.
 	defaultSocket = "/tmp/agent-identity/model-broker.sock"
 	// defaultAddr is where the Broker listens, so the demo's --broker-url is
 	// the same on every run.
 	defaultAddr = "127.0.0.1:8787"
 )
-
-var permissionAgent = spiffeid.RequireFromString("spiffe://example.com/permission-agent")
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -52,6 +48,8 @@ type bundleSource interface {
 	jwtbundle.Source
 	Close() error
 }
+
+var _ bundleSource = workloadsrc.Source{}
 
 // deps are the outside things the command reaches, so tests can swap them. The
 // zero value means the real ones.
@@ -74,18 +72,9 @@ func (d deps) withDefaults() deps {
 		d.envFile = broker.DotEnvPath
 	}
 	if d.openBundles == nil {
-		d.openBundles = openWorkloadAPI
+		d.openBundles = workloadsrc.OpenAs[bundleSource]
 	}
 	return d
-}
-
-// openWorkloadAPI connects go-spiffe's JWTSource to the Broker's own socket.
-func openWorkloadAPI(ctx context.Context, socket string) (bundleSource, error) {
-	src, err := workloadsrc.Open(ctx, socket)
-	if err != nil {
-		return nil, err
-	}
-	return src, nil
 }
 
 // run starts the Broker and serves until ctx ends. It returns 0 on a clean
@@ -132,7 +121,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) i
 	bundles, err := d.openBundles(ctx, *socket)
 	if err != nil {
 		fmt.Fprintf(stderr, "broker: could not reach the Workload API socket %s: %v\n", *socket, err)
-		fmt.Fprintln(stderr, "broker: start spiffecli with `spiffecli run --config spiffecli/workloads.toml` from projects/agent-identity")
+		fmt.Fprintln(stderr, "broker: "+workloadsrc.StartHint)
 		return 1
 	}
 	defer bundles.Close()
@@ -158,7 +147,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) i
 		UpstreamURL: d.upstreamURL,
 		Audit:       logFile,
 		// The Agent may use its default model; the Eval may use any in its sweep.
-		Pins: map[spiffeid.ID]pin.Pin{permissionAgent: agent.Pin(), eval.ID: eval.Pin()},
+		Pins: map[spiffeid.ID]pin.Pin{broker.PermissionAgent: pin.Agent(), broker.ModelEval: pin.ModelEval()},
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "broker: %v\n", err)

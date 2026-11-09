@@ -13,6 +13,23 @@ import (
 // Timeout is how long opening a socket may wait for its first update.
 const Timeout = 10 * time.Second
 
+// StartHint tells the owner how to start the sockets, for a command that could
+// not reach one.
+const StartHint = "start spiffecli with `spiffecli run --config spiffecli/workloads.toml` from projects/agent-identity"
+
+// OpenAs is Open for a command that holds the source behind its own small
+// interface T, which Source must satisfy. It exists so a nil error never wraps a
+// nil Source in a non-nil interface; a command checks its T with a
+// compile-time assertion such as `var _ T = workloadsrc.Source{}`.
+func OpenAs[T any](ctx context.Context, socket string) (T, error) {
+	var none T
+	src, err := Open(ctx, socket)
+	if err != nil {
+		return none, err
+	}
+	return any(src).(T), nil
+}
+
 // Source is a go-spiffe JWTSource and the context that keeps its watcher
 // running. It fetches JWT-SVIDs and serves the trust bundles.
 type Source struct {

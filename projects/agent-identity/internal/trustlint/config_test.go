@@ -9,8 +9,6 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/packages"
-
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 )
 
 // splitQualified splits "pkg/path.Name" at the last dot.
@@ -33,7 +31,7 @@ func parseFuncName(s string) (pkg, recv string) {
 
 func moduleRoot(t *testing.T) string {
 	t.Helper()
-	return filepath.Join("..", "..") // tests run in internal/trustlint
+	return filepath.Join("..", "..") // tests run in projects/agent-identity/internal/trustlint
 }
 
 func loadPackages(t *testing.T, paths []string) map[string]*packages.Package {
@@ -177,14 +175,8 @@ func TestKeyIsolationNamesRealObjectsAndEveryKeyVariable(t *testing.T) {
 			}
 		}
 	}
-	var envs []string
-	for _, p := range provider.Providers {
-		envs = append(envs, p.KeyEnv)
-	}
-	slices.Sort(envs)
-	if got := slices.Sorted(slices.Values(KeyVars)); !slices.Equal(got, envs) {
-		t.Errorf("KeyVars = %v; want every provider's KeyEnv %v", got, envs)
-	}
+	// KeyVars is pinned to the Broker's key variable table by a test in the
+	// Broker package, the only package that may know those names.
 	if !slices.Equal(KeyExempt, []string{Broker, BrokerCommand}) {
 		t.Errorf("KeyExempt = %v; want the Broker module and command only", KeyExempt)
 	}

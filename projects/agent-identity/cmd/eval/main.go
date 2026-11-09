@@ -22,7 +22,7 @@ import (
 
 const (
 	usage = "usage: eval --broker-url URL --model ID [--runs N] [--min-accuracy F] [--cases FILE] [--spiffe-socket path]\n"
-	// defaultSocket is model-eval's own socket in spiffecli/workloads.toml.
+	// defaultSocket is model-eval's own socket in projects/agent-identity/spiffecli/workloads.toml.
 	defaultSocket = "/tmp/agent-identity/model-eval.sock"
 )
 
@@ -38,6 +38,8 @@ type svidSource interface {
 	Close() error
 }
 
+var _ svidSource = workloadsrc.Source{}
+
 // deps are the outside things the command reaches, so tests can swap them. The
 // zero value means the real ones.
 type deps struct {
@@ -47,13 +49,7 @@ type deps struct {
 
 func (d deps) withDefaults() deps {
 	if d.openJWT == nil {
-		d.openJWT = func(ctx context.Context, socket string) (svidSource, error) {
-			src, err := workloadsrc.Open(ctx, socket)
-			if err != nil {
-				return nil, err
-			}
-			return src, nil
-		}
+		d.openJWT = workloadsrc.OpenAs[svidSource]
 	}
 	return d
 }
@@ -97,7 +93,7 @@ func runWith(ctx context.Context, args []string, stdout, stderr io.Writer, d dep
 	src, err := d.openJWT(ctx, *socket)
 	if err != nil {
 		fmt.Fprintf(stderr, "eval: could not reach the Workload API socket %s: %v\n", *socket, err)
-		fmt.Fprintln(stderr, "eval: start spiffecli with `spiffecli run --config spiffecli/workloads.toml` from projects/agent-identity")
+		fmt.Fprintln(stderr, "eval: "+workloadsrc.StartHint)
 		return 2
 	}
 	defer src.Close()

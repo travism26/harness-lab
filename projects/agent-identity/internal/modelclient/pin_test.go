@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelclient"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelrequest"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
@@ -42,7 +43,7 @@ func rawRequests(t *testing.T, cfg modelclient.Config) [][]byte {
 // change the client's system prompt, tools, tool_choice, output_config or any
 // other field and this fails here, not on the Broker in a live run.
 func TestTheDefaultPinMatchesWhatTheModelClientSends(t *testing.T) {
-	p := modelclient.DefaultPin()
+	p := pin.Agent()
 	bodies := rawRequests(t, modelclient.Config{SVID: func(context.Context) (wire.JWTSVID, error) { return "svid", nil }})
 	if len(bodies) != 1 {
 		t.Fatalf("%d requests; want 1", len(bodies))
@@ -56,11 +57,11 @@ func TestTheDefaultPinMatchesWhatTheModelClientSends(t *testing.T) {
 	}
 }
 
-// Request is the body the Client sends in Broker mode for a first call, so the
+// modelrequest.Body is the body the Client sends in Broker mode for a first call, so the
 // tour can show a request the Pin allows without writing one by hand.
-func TestRequestIsTheBodyTheClientSendsInBrokerMode(t *testing.T) {
+func TestModelrequestBodyIsTheBodyTheClientSendsInBrokerMode(t *testing.T) {
 	bodies := rawRequests(t, modelclient.Config{SVID: func(context.Context) (wire.JWTSVID, error) { return "svid", nil }})
-	want, err := modelclient.Request("Can Tom approve invoices?")
+	want, err := modelrequest.Body("Can Tom approve invoices?")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,7 @@ func TestRequestIsTheBodyTheClientSendsInBrokerMode(t *testing.T) {
 }
 
 func TestTheDefaultPinListsEachProvidersDefaultModelAndTheClientsMaxTokens(t *testing.T) {
-	p := modelclient.DefaultPin()
+	p := pin.Agent()
 	for _, name := range []string{"anthropic", "openrouter", "stand-in"} {
 		prov, _ := provider.Lookup(name)
 		if got := p.Models[name]; !slices.Equal(got, []string{prov.DefaultModel}) {

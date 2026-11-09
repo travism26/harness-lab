@@ -24,7 +24,8 @@ type deps struct {
 
 func (d deps) withDefaults() deps {
 	if d.openJWT == nil {
-		d.openJWT = openWorkloadAPI
+		// An unreachable socket is an error after workloadsrc.Timeout.
+		d.openJWT = workloadsrc.OpenAs[jwtSource]
 	}
 	return d
 }
@@ -38,15 +39,7 @@ type jwtSource interface {
 	Close() error
 }
 
-// openWorkloadAPI connects go-spiffe's JWTSource to a spiffecli socket the
-// owner started. An unreachable socket is an error after workloadsrc.Timeout.
-func openWorkloadAPI(ctx context.Context, socket string) (jwtSource, error) {
-	src, err := workloadsrc.Open(ctx, socket)
-	if err != nil {
-		return nil, err
-	}
-	return src, nil
-}
+var _ jwtSource = workloadsrc.Source{}
 
 // errNoSource means no source was given for a workload.
 var errNoSource = errors.New("no Workload API socket for that workload")

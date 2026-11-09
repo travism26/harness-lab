@@ -1,7 +1,7 @@
-// Package wire holds what crosses the wire between the Agent and the Warden:
-// the token named types, the header names, the Lookup path and the body shapes.
-// It imports nothing else in the Project, so the Agent and the Warden share it
-// without importing each other.
+// Package wire holds what crosses the wire between the Agent, the Warden and the
+// Broker: the token named types, the header names, the Lookup and Messages paths
+// and the body shapes. It imports nothing else in the Project, so those
+// workloads share it without importing each other.
 package wire
 
 // JWTSVID is a serialized JWT-SVID. It is a named type so the trustlint R3

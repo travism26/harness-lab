@@ -3,9 +3,10 @@
 // leeway included), checks the caller's SPIFFE ID against the Broker allowlist,
 // holds it to its Pin (model, max_tokens and request shape), adds the provider's
 // auth headers and forwards the Messages request, returning
-// the provider's body unchanged plus who served it and what it cost. It never
-// reads the Caller assertion, and imports neither the Agent nor the Warden
-// (trustlint R2). See projects/agent-identity/docs/adr/0004-the-provider-key-lives-only-in-the-broker.md.
+// the provider's body unchanged plus who served it and what it cost. A provider
+// reply over 1 MiB is an upstream error, not passed on. It never reads the
+// Caller assertion, and imports none of the Agent, the Warden, the Model client
+// and the Eval (trustlint R2). See projects/agent-identity/docs/adr/0004-the-provider-key-lives-only-in-the-broker.md.
 package broker
 
 import (
@@ -38,10 +39,16 @@ var ID = spiffeid.RequireFromString("spiffe://example.com/model-broker")
 
 // DefaultAllowlist is the Broker allowlist: the SPIFFE IDs that may ask for a
 // Model reply. It is defined here once, for the Broker command and the tour.
-var DefaultAllowlist = []spiffeid.ID{
-	spiffeid.RequireFromString("spiffe://example.com/permission-agent"),
-	spiffeid.RequireFromString("spiffe://example.com/model-eval"),
-}
+var DefaultAllowlist = []spiffeid.ID{PermissionAgent, ModelEval}
+
+// The two workloads the Broker serves. Each is named once, here, for the
+// allowlist, the Pins and the commands that fetch a JWT-SVID as it.
+var (
+	// PermissionAgent is the Agent's SPIFFE ID.
+	PermissionAgent = spiffeid.RequireFromString("spiffe://example.com/permission-agent")
+	// ModelEval is the Eval's SPIFFE ID.
+	ModelEval = spiffeid.RequireFromString("spiffe://example.com/model-eval")
+)
 
 // Outcome is how the Broker settled one request.
 type Outcome string
@@ -221,8 +228,8 @@ var errOutsidePin = errors.New("outside the pin")
 
 // requestBody reads the Messages request and holds it to p: the model is filled
 // in when absent and the Pin lists exactly one for this provider, else it must
-// be listed; max_tokens is filled in with the ceiling when absent and may not
-// exceed it; and every field but messages, model and max_tokens must hash to
+// be listed; max_tokens is filled in with the ceiling when absent and otherwise
+// must be a positive integer no greater than it; and every field but messages, model and max_tokens must hash to
 // the Pin's request shape. Messages is passed on as received.
 func (b *Broker) requestBody(r io.Reader, p pin.Pin) (request, error) {
 	raw, err := io.ReadAll(r)
@@ -252,12 +259,18 @@ func (b *Broker) requestBody(r io.Reader, p pin.Pin) (request, error) {
 		return request{}, fmt.Errorf("%w: the pin has no ceiling or no request shape", errOutsidePin)
 	}
 	if given, ok := fields["max_tokens"]; ok {
-		var n float64
-		if err := json.Unmarshal(given, &n); err != nil {
-			return request{}, errors.New("max_tokens is not a number")
+		// Only a positive integer up to the ceiling passes: null, zero, a
+		// negative, a fraction (1e3 and 1.0 included) and a non-number do not.
+		dec := json.NewDecoder(bytes.NewReader(given))
+		dec.UseNumber()
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			return request{}, fmt.Errorf("%w: max_tokens is not a number", errOutsidePin)
 		}
-		if n > float64(p.MaxTokens) {
-			return request{}, fmt.Errorf("%w: max_tokens above the ceiling", errOutsidePin)
+		num, isNum := v.(json.Number)
+		n, err := strconv.ParseInt(string(num), 10, 64)
+		if !isNum || err != nil || n < 1 || n > int64(p.MaxTokens) {
+			return request{}, fmt.Errorf("%w: max_tokens is not a positive integer within the ceiling", errOutsidePin)
 		}
 	} else {
 		fields["max_tokens"], _ = json.Marshal(p.MaxTokens)
@@ -298,8 +311,9 @@ func (b *Broker) forward(ctx context.Context, rw http.ResponseWriter, rec AuditR
 		return
 	}
 	defer resp.Body.Close()
-	reply, err := io.ReadAll(io.LimitReader(resp.Body, maxReplyBytes))
-	if err != nil || resp.StatusCode < 200 || resp.StatusCode > 299 {
+	// Read one byte past the cap: a reply that long is refused, not cut short.
+	reply, err := io.ReadAll(io.LimitReader(resp.Body, maxReplyBytes+1))
+	if err != nil || len(reply) > maxReplyBytes || resp.StatusCode < 200 || resp.StatusCode > 299 {
 		fail(resp.StatusCode)
 		return
 	}

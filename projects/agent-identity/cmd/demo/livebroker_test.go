@@ -9,7 +9,6 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
@@ -43,7 +42,7 @@ func startLiveBroker(t *testing.T, f *fakeSockets) liveBroker {
 	b, err := broker.New(broker.Config{
 		Audience: brokerAud, Bundles: f.src, Provider: provider.Providers["anthropic"], Key: providerKey,
 		UpstreamURL: m.URL, Audit: logFile,
-		Pins: map[spiffeid.ID]pin.Pin{permissionAgent: agent.Pin()},
+		Pins: map[spiffeid.ID]pin.Pin{permissionAgent: pin.Agent()},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -12,8 +12,8 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelrequest"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
@@ -41,7 +41,7 @@ func TestCrossAudienceTokensFailAtTheOtherHop(t *testing.T) {
 	defer stop()
 	m := model.New(model.ToolUse("tom", "invoice:approve"))
 	defer m.Close()
-	b, err := broker.New(broker.Config{Audience: brokerAud, Bundles: ids.Bundles(), Provider: provider.StandIn, UpstreamURL: m.URL, Audit: sink.broker, Pins: map[spiffeid.ID]pin.Pin{permissionAgent: agent.Pin()}})
+	b, err := broker.New(broker.Config{Audience: brokerAud, Bundles: ids.Bundles(), Provider: provider.StandIn, UpstreamURL: m.URL, Audit: sink.broker, Pins: map[spiffeid.ID]pin.Pin{permissionAgent: pin.Agent()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestCrossAudienceTokensFailAtTheOtherHop(t *testing.T) {
 	post := func(url, path string, auth wire.Bearer, assertion wire.CallerAssertion) (int, string) {
 		body := `{"target":"acme/tom","permission":"invoice:approve"}`
 		if path == wire.PathMessages {
-			raw, err := agent.MessagesRequest(question)
+			raw, err := modelrequest.Body(question)
 			if err != nil {
 				t.Fatal(err)
 			}

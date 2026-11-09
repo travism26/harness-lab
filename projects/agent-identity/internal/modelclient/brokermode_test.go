@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 
@@ -103,26 +102,6 @@ func TestBrokerModeNamesTheModelOnlyWhenOneIsGiven(t *testing.T) {
 	}
 	if got := b.bodies[0]["model"]; got != "claude-sonnet-5-5" {
 		t.Errorf("model in the request = %v; want the one given", got)
-	}
-}
-
-func TestEvalPinListsTheSweepAndSharesTheAgentsCeilingAndShape(t *testing.T) {
-	agentPin, evalPin := modelclient.DefaultPin(), modelclient.EvalPin()
-	if evalPin.MaxTokens != agentPin.MaxTokens || evalPin.Shape != agentPin.Shape {
-		t.Errorf("eval pin = %d %s; the agent's = %d %s", evalPin.MaxTokens, evalPin.Shape, agentPin.MaxTokens, agentPin.Shape)
-	}
-	want := map[string][]string{
-		"anthropic":  {"claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"},
-		"openrouter": {"anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"},
-		"stand-in":   {"claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"},
-	}
-	if len(evalPin.Models) != len(want) {
-		t.Errorf("models = %v", evalPin.Models)
-	}
-	for name, models := range want {
-		if strings.Join(evalPin.Models[name], ",") != strings.Join(models, ",") {
-			t.Errorf("%s models = %v; want %v", name, evalPin.Models[name], models)
-		}
 	}
 }
 

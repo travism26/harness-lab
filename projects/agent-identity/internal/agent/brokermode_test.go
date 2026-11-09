@@ -32,7 +32,7 @@ func startBroker(t *testing.T, bundles jwtbundle.Source, upstream string, prov p
 	b, err := broker.New(broker.Config{
 		Audience: brokerAudience, Bundles: bundles, Allowlist: []spiffeid.ID{listedID, unlistedID},
 		Provider: prov, Key: key, UpstreamURL: upstream,
-		Pins: map[spiffeid.ID]pin.Pin{listedID: agent.Pin(), unlistedID: agent.Pin()},
+		Pins: map[spiffeid.ID]pin.Pin{listedID: pin.Agent(), unlistedID: pin.Agent()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestAskThroughARealBrokerRepliesAndCopiesWhatTheBrokerReported(t *testing.T
 	b, err := broker.New(broker.Config{
 		Audience: brokerAudience, Bundles: e.source, Allowlist: []spiffeid.ID{listedID},
 		Provider: provider.StandIn, UpstreamURL: m.URL, Audit: &brokerLog,
-		Pins: map[spiffeid.ID]pin.Pin{listedID: agent.Pin()},
+		Pins: map[spiffeid.ID]pin.Pin{listedID: pin.Agent()},
 	})
 	if err != nil {
 		t.Fatal(err)

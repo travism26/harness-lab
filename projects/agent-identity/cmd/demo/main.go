@@ -23,6 +23,7 @@ import (
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/login"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/workloadsrc"
 )
 
 func main() {
@@ -154,7 +155,7 @@ func runWith(args []string, stdout, stderr io.Writer, d deps) int {
 	if opts.SpiffeSocket != "" {
 		ids, err := openSpiffe(context.Background(), d, opts.SpiffeSocket, opts.SpiffeSocketWarden, opts.SpiffeSocketOther)
 		if err != nil {
-			log.Error("demo could not reach the Workload API; start spiffecli with `spiffecli run --config spiffecli/workloads.toml` from projects/agent-identity", "err", err)
+			log.Error("demo could not reach the Workload API; "+workloadsrc.StartHint, "err", err)
 			return 1
 		}
 		opts.ids = ids
@@ -199,7 +200,7 @@ const (
 var (
 	// brokerAud is the Broker's SPIFFE ID, the audience of its JWT-SVIDs.
 	brokerAud       = broker.ID.String()
-	permissionAgent = spiffeid.RequireFromString("spiffe://example.com/permission-agent")
+	permissionAgent = broker.PermissionAgent
 	unlistedAgent   = spiffeid.RequireFromString("spiffe://example.com/unlisted-agent")
 )
 

@@ -59,7 +59,7 @@ func newBrokerFixture(t *testing.T, replies ...model.Reply) *brokerFixture {
 	}
 	b, err := broker.New(broker.Config{
 		Audience: broker.ID.String(), Bundles: ws, Provider: provider.StandIn, UpstreamURL: f.model.URL,
-		Pins: map[spiffeid.ID]pin.Pin{eval.ID: eval.Pin()},
+		Pins: map[spiffeid.ID]pin.Pin{broker.ModelEval: pin.ModelEval()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func newBrokerFixture(t *testing.T, replies ...model.Reply) *brokerFixture {
 	f.url = srv.URL
 	f.deps = deps{openJWT: func(_ context.Context, socket string) (svidSource, error) {
 		f.opened = append(f.opened, socket)
-		wl, err := ws.Workload(eval.ID)
+		wl, err := ws.Workload(broker.ModelEval)
 		return standInSource{wl}, err
 	}}
 	return f

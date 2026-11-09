@@ -16,9 +16,11 @@ func TestWorkloadIsolation(t *testing.T) {
 			},
 		},
 		{
-			Name:      "the Broker",
-			Isolated:  []string{"example.com/m/internal/broker"},
-			Forbidden: []string{"example.com/m/internal/agent", "example.com/m/internal/warden"},
+			Name:     "the Broker",
+			Isolated: []string{"example.com/m/internal/broker", "example.com/m/cmd/broker"},
+			Forbidden: []string{
+				"example.com/m/internal/agent", "example.com/m/internal/warden", "example.com/m/internal/modelclient", "example.com/m/internal/eval",
+			},
 		},
 	}}
 	analysistest.Run(t, analysistest.TestData(), New(cfg),
@@ -36,6 +38,12 @@ func TestWorkloadIsolation(t *testing.T) {
 		"example.com/m/internal/broker",
 		"example.com/m/internal/broker/indirect",
 		"example.com/m/internal/broker/sub",
+		"example.com/m/internal/broker/viaeval",
+		// The Broker command, tests included, may not import the Agent, the
+		// Warden, the Model client or the Eval, directly or through a helper;
+		// a command named like it is not it.
+		"example.com/m/cmd/broker",
+		"example.com/m/cmd/brokerok",
 		// Packages outside both workloads may import any of them.
 		"example.com/m/internal/usesbroker",
 		"example.com/m/internal/useswarden",

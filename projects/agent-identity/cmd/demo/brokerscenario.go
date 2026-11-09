@@ -13,8 +13,8 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelrequest"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
@@ -29,7 +29,7 @@ func startStandInBroker(opts options, log *slog.Logger) (*model.Server, *broker.
 	b, err := broker.New(broker.Config{
 		Audience: brokerAud, Bundles: opts.ids.Bundles(), Provider: provider.StandIn,
 		UpstreamURL: m.URL, Audit: opts.audit.broker,
-		Pins: map[spiffeid.ID]pin.Pin{permissionAgent: agent.Pin()},
+		Pins: map[spiffeid.ID]pin.Pin{permissionAgent: pin.Agent()},
 	})
 	if err != nil {
 		m.Close()
@@ -60,7 +60,7 @@ func runBroker(ctx context.Context, stdout io.Writer, log *slog.Logger, opts opt
 	}
 	defer stop()
 
-	body, err := agent.MessagesRequest(opts.Question)
+	body, err := modelrequest.Body(opts.Question)
 	if err != nil {
 		return err
 	}

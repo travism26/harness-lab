@@ -5,11 +5,11 @@
 // use it.
 package provider
 
-// Provider describes one Model provider: its API root, the environment variable
-// that holds its key, the model id used when none is given, and how it takes
-// the key.
+// Provider describes one Model provider: its API root, the model id used when
+// none is given, and how it takes the key. The name of the variable that holds
+// its key is not here: only the Broker may know it (trustlint R5).
 type Provider struct {
-	Name, BaseURL, KeyEnv string
+	Name, BaseURL string
 	// DefaultModel is the model id used when none is given.
 	DefaultModel string
 	// Sweep is every model the Eval sweep runs on this provider (Haiku, Sonnet
@@ -26,12 +26,12 @@ type Provider struct {
 // Providers are the two live providers.
 var Providers = map[string]Provider{
 	"anthropic": {
-		Name: "anthropic", BaseURL: "https://api.anthropic.com", KeyEnv: "ANTHROPIC_API_KEY",
+		Name: "anthropic", BaseURL: "https://api.anthropic.com",
 		DefaultModel: "claude-haiku-5-5", PricedByTable: true,
 		Sweep: []string{"claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"},
 	},
 	"openrouter": {
-		Name: "openrouter", BaseURL: "https://openrouter.ai/api", KeyEnv: "OPENROUTER_API_KEY",
+		Name: "openrouter", BaseURL: "https://openrouter.ai/api",
 		DefaultModel: "anthropic/claude-haiku-5.5", BearerAuth: true,
 		Sweep: []string{"anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"},
 	},

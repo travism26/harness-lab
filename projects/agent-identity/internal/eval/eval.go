@@ -15,12 +15,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelclient"
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
 )
 
@@ -89,15 +87,6 @@ func (c Case) validate() error {
 	}
 	return nil
 }
-
-// ID is the Eval's own SPIFFE ID: the Broker allowlist and its Pin name the Eval
-// by it, and the Eval fetches its JWT-SVIDs as it.
-var ID = spiffeid.RequireFromString("spiffe://example.com/model-eval")
-
-// Pin is the Pin the Broker holds the Eval to: every model in the sweep for each
-// provider, with the Agent's max_tokens ceiling and request-shape hash. It lives
-// here because only the Agent and the Eval may import the Model client (R1).
-func Pin() pin.Pin { return modelclient.EvalPin() }
 
 // SVIDSource is the small Workload API interface the Eval fetches its JWT-SVID
 // through: go-spiffe's workloadapi.JWTSource live, the stand-in in tests.

@@ -1,6 +1,7 @@
 // Package wardenisolation implements trustlint rule R2: workloads stay
 // separate. The Warden must not import the agent, the model client or the
-// Broker, and the Broker must not import the agent or the Warden, tests
+// Broker, and the Broker (its module and its command) must not import the agent,
+// the Warden, the model client or the Eval, tests
 // included, directly or transitively. Its real configuration lives in
 // projects/agent-identity/internal/trustlint/config.go.
 //
@@ -70,7 +71,7 @@ func (f *reachFact) String() string {
 func New(cfg Config) *analysis.Analyzer {
 	return &analysis.Analyzer{
 		Name:      "wardenisolation",
-		Doc:       "R2: the Warden must not import the agent, the model client or the Broker, and the Broker must not import the agent or the Warden, directly or transitively",
+		Doc:       "R2: the Warden must not import the agent, the model client or the Broker, and the Broker process must not import the agent, the Warden, the model client or the Eval, directly or transitively",
 		FactTypes: []analysis.Fact{(*reachFact)(nil)},
 		Run:       func(pass *analysis.Pass) (any, error) { return nil, run(pass, cfg) },
 	}
@@ -104,7 +105,9 @@ func run(pass *analysis.Pass, cfg Config) error {
 					own[k] = via[k]
 				}
 				for _, r := range rules {
-					if !slices.Contains(r.Forbidden, k) {
+					// Importing a package the rule forbids is one finding, not one
+					// per package that package reaches.
+					if !slices.Contains(r.Forbidden, k) || (k != path && underAny(path, r.Forbidden)) {
 						continue
 					}
 					if k == path {
@@ -132,20 +135,21 @@ func run(pass *analysis.Pass, cfg Config) error {
 // reach returns the forbidden packages that importing path (at spec) reaches,
 // keyed by forbidden path, with the import chain starting at path.
 func reach(pass *analysis.Pass, forbidden []string, spec *ast.ImportSpec, path string) map[string]string {
+	out := map[string]string{}
 	if underAny(path, forbidden) {
-		return map[string]string{path: path}
+		out[path] = path
 	}
-	imported := pass.TypesInfo.PkgNameOf(spec)
-	if imported == nil {
-		return nil
-	}
-	var f reachFact
-	if !pass.ImportPackageFact(imported.Imported(), &f) {
-		return nil
-	}
-	out := make(map[string]string, len(f.Via))
-	for _, e := range f.Via {
-		out[e.Forbidden] = path + " -> " + e.Chain
+	// A forbidden package is followed too: what it reaches is reached by every
+	// importer, though a rule that forbids the package itself says only that.
+	if imported := pass.TypesInfo.PkgNameOf(spec); imported != nil {
+		var f reachFact
+		if pass.ImportPackageFact(imported.Imported(), &f) {
+			for _, e := range f.Via {
+				if _, ok := out[e.Forbidden]; !ok {
+					out[e.Forbidden] = path + " -> " + e.Chain
+				}
+			}
+		}
 	}
 	return out
 }

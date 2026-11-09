@@ -1,6 +1,8 @@
 // Package pin holds the Pin: what the Broker lets one workload send. It is
-// shared by the Broker, which enforces it, and by the code that builds it from
-// the Model client's own request, so neither imports the other
+// shared by the Broker, which enforces it, and by the Model client's tests and
+// the commands, which use the Pins built here from the request constants in
+// projects/agent-identity/internal/modelrequest. The Broker process therefore
+// links neither the Model client, the Agent nor the Eval
 // (projects/agent-identity/docs/adr/0004-the-provider-key-lives-only-in-the-broker.md).
 package pin
 

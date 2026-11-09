@@ -13,19 +13,15 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelrequest"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
 )
 
 const (
-	toolName    = "lookup_permission"
-	maxTokens   = 1024
 	callTimeout = 20 * time.Second
 	maxBody     = 1 << 20
 )
@@ -144,30 +140,6 @@ var (
 	permissionRe = regexp.MustCompile(`^[a-z]+:[a-z]+$`)
 )
 
-const system = "You turn one question about who holds a permission into one call of the " +
-	"lookup_permission tool. target is the name of the person or agent from the question, or " +
-	"\"self\" when the question is about the asker. permission is resource:action in lowercase " +
-	"letters, such as invoice:approve. The resource is singular: invoices becomes invoice, " +
-	"permissions becomes permission. Two actions are known: read, which also covers view, see " +
-	"and look up, and approve, which also covers sign off. Write any other permission as asked, " +
-	"without mapping it onto these. Call the tool exactly once. If the question cannot be " +
-	"turned into one lookup, do not call it."
-
-var toolDef = map[string]any{
-	"name":        toolName,
-	"description": "Look up whether one target holds one permission.",
-	"strict":      true,
-	"input_schema": map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"target":     map[string]any{"type": "string", "description": "a name from the question in lowercase (Tom becomes tom), or self"},
-			"permission": map[string]any{"type": "string", "description": "resource:action, lowercase"},
-		},
-		"required":             []string{"target", "permission"},
-		"additionalProperties": false,
-	},
-}
-
 // block is one content block of a reply. It keeps its bytes as received, so a
 // repair retry echoes it unchanged: the API rejects a thinking block that comes
 // back without its thinking and signature fields.
@@ -207,58 +179,6 @@ type response struct {
 		InputTokens  float64 `json:"input_tokens"`
 		OutputTokens float64 `json:"output_tokens"`
 	} `json:"usage"`
-}
-
-// requestFields is every field of the Messages request but the model, which
-// the Client or the Broker adds. The Pin's request-shape hash is computed from
-// these same constants (DefaultPin), so a change here moves the hash with it.
-func requestFields(messages []any) map[string]any {
-	return map[string]any{
-		"max_tokens":    maxTokens,
-		"system":        system,
-		"messages":      messages,
-		"tools":         []any{toolDef},
-		"tool_choice":   map[string]any{"type": "auto", "disable_parallel_tool_use": true},
-		"output_config": map[string]any{"effort": "low"},
-	}
-}
-
-// Request is the Messages request body the Client sends in Broker mode for a
-// question's first call: no model, no key.
-func Request(question string) ([]byte, error) {
-	return json.Marshal(requestFields([]any{map[string]any{"role": "user", "content": question}}))
-}
-
-// DefaultPin is the Pin for a workload that asks through this Client: each
-// provider's default model, the Client's max_tokens as the ceiling, and the
-// request-shape hash of the Client's own request fields. It is computed from
-// the request constants, never written down.
-func DefaultPin() pin.Pin {
-	return pinFor(func(p provider.Provider) []string { return []string{p.DefaultModel} })
-}
-
-// EvalPin is the Pin for the Eval's model-eval workload: every model in the
-// Eval sweep for each provider, with the same ceiling and request shape as
-// DefaultPin.
-func EvalPin() pin.Pin {
-	return pinFor(func(p provider.Provider) []string { return slices.Clone(p.Sweep) })
-}
-
-func pinFor(list func(provider.Provider) []string) pin.Pin {
-	raw, err := json.Marshal(requestFields(nil))
-	if err != nil {
-		panic(err) // the constants always encode
-	}
-	shape, err := pin.Shape(raw)
-	if err != nil {
-		panic(err)
-	}
-	models := map[string][]string{}
-	for name, p := range provider.Providers {
-		models[name] = list(p)
-	}
-	models[provider.StandIn.Name] = list(provider.StandIn)
-	return pin.Pin{Models: models, MaxTokens: maxTokens, Shape: shape}
 }
 
 // Propose asks the Model about one question: at most two calls, the second a
@@ -325,7 +245,7 @@ func brokerFailure(status int, raw []byte) *Failure {
 
 func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, error) {
 	attempt := Attempt{}
-	fields := requestFields(messages)
+	fields := modelrequest.Fields(messages)
 	if c.cfg.Model != "" {
 		// The Broker sets the model unless the caller named one (the Eval does,
 		// to pick from its sweep).
@@ -409,10 +329,10 @@ func gate(r response) (Proposal, *Failure) {
 		}
 	}
 	if len(uses) != 1 {
-		return Proposal{}, &Failure{Kind: Retryable, Code: CodeToolUseCount, msg: fmt.Sprintf("call %s exactly once, not %d times", toolName, len(uses))}
+		return Proposal{}, &Failure{Kind: Retryable, Code: CodeToolUseCount, msg: fmt.Sprintf("call %s exactly once, not %d times", modelrequest.ToolName, len(uses))}
 	}
-	if uses[0].Name != toolName {
-		return Proposal{}, &Failure{Kind: Retryable, Code: CodeToolName, msg: "the only tool is " + toolName}
+	if uses[0].Name != modelrequest.ToolName {
+		return Proposal{}, &Failure{Kind: Retryable, Code: CodeToolName, msg: "the only tool is " + modelrequest.ToolName}
 	}
 	var p Proposal
 	dec := json.NewDecoder(bytes.NewReader(uses[0].Input))
