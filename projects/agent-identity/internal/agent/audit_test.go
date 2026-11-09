@@ -111,7 +111,8 @@ func newAuditEnv(t *testing.T) *auditEnv {
 }
 
 // agent builds an Agent for id against url, with the model stand-in m (or none).
-func (e *auditEnv) agent(t *testing.T, id spiffeid.ID, url string, m *model.Server, timeout time.Duration) *agent.Agent {
+// opts adjust the Config last, to swap the Model config or the JWT-SVID source.
+func (e *auditEnv) agent(t *testing.T, id spiffeid.ID, url string, m *model.Server, timeout time.Duration, opts ...func(*agent.Config)) *agent.Agent {
 	t.Helper()
 	wl, err := e.source.Workload(id)
 	if err != nil {
@@ -122,11 +123,52 @@ func (e *auditEnv) agent(t *testing.T, id spiffeid.ID, url string, m *model.Serv
 	if m != nil {
 		cfg.Model = &agent.ModelConfig{BaseURL: m.URL, APIKey: e.modelAPIKey, Provider: "stand-in", Model: "stand-in-model"}
 	}
+	for _, o := range opts {
+		o(&cfg)
+	}
 	a, err := agent.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return a
+}
+
+// tokenCanaries are every Caller assertion the test signed and every JWT-SVID
+// the Agent fetched, whole and by signature.
+func (e *auditEnv) tokenCanaries() []string {
+	var canaries []string
+	for _, as := range e.assertions {
+		canaries = append(canaries, string(as), strings.Split(string(as), ".")[2])
+	}
+	e.fetched.mu.Lock()
+	defer e.fetched.mu.Unlock()
+	for _, s := range e.fetched.svids {
+		canaries = append(canaries, s, strings.Split(s, ".")[2])
+	}
+	return canaries
+}
+
+// closedURL is a loopback URL nothing listens on; deadURL accepts connections
+// and never answers.
+func closedURL(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := "http://" + l.Addr().String()
+	l.Close()
+	return u
+}
+
+func deadURL(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	return "http://" + l.Addr().String()
 }
 
 func (e *auditEnv) assertion(t *testing.T, caller string, id spiffeid.ID) wire.CallerAssertion {
@@ -197,12 +239,7 @@ func TestAskWritesOneAgentRecordWithTheProposalAndTheWardensRecordShareItsID(t *
 
 func TestEveryOutcomeHasOneRecordPerServiceAndNoCanaryInEitherLog(t *testing.T) {
 	e := newAuditEnv(t)
-	dead, err := net.Listen("tcp", "127.0.0.1:0") // accepts, never answers
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer dead.Close()
-	unreachableURL := "http://" + dead.Addr().String()
+	unreachableURL := deadURL(t)
 
 	long := strings.Repeat("a", 500) + "TAILBEYOND500" + strings.Repeat("z", 100)
 	cases := []struct {
@@ -299,14 +336,7 @@ func TestEveryOutcomeHasOneRecordPerServiceAndNoCanaryInEitherLog(t *testing.T) 
 			base64.RawURLEncoding.EncodeToString(d), base64.StdEncoding.EncodeToString(d),
 			hex.EncodeToString(d), new(big.Int).SetBytes(d).String())
 	}
-	for _, as := range e.assertions {
-		canaries = append(canaries, string(as), strings.Split(string(as), ".")[2])
-	}
-	e.fetched.mu.Lock()
-	for _, s := range e.fetched.svids {
-		canaries = append(canaries, s, strings.Split(s, ".")[2])
-	}
-	e.fetched.mu.Unlock()
+	canaries = append(canaries, e.tokenCanaries()...)
 	for name, log := range map[string]string{"agent": e.agentLog.String(), "warden": e.wardenLog.String()} {
 		for _, c := range canaries {
 			if strings.Contains(log, c) {

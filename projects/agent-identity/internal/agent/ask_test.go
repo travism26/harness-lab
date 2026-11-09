@@ -3,7 +3,6 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -199,14 +198,7 @@ func TestWardenUnreachable(t *testing.T) {
 	want := "The Warden couldn't be reached, so I can't say whether `tom` holds `invoice:approve` in `acme`."
 	e := newAskEnv(t)
 
-	dead, err := net.Listen("tcp", "127.0.0.1:0") // accepts, never answers
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer dead.Close()
-	closed, _ := net.Listen("tcp", "127.0.0.1:0")
-	closedURL := "http://" + closed.Addr().String()
-	closed.Close()
+	deadListener, closedPort := deadURL(t), closedURL(t)
 	fiveXX := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(502) }))
 	defer fiveXX.Close()
 
@@ -214,8 +206,8 @@ func TestWardenUnreachable(t *testing.T) {
 		url     string
 		timeout time.Duration
 	}{
-		"dead listener": {"http://" + dead.Addr().String(), 50 * time.Millisecond},
-		"closed port":   {closedURL, 0},
+		"dead listener": {deadListener, 50 * time.Millisecond},
+		"closed port":   {closedPort, 0},
 		"5xx":           {fiveXX.URL, 0},
 	} {
 		t.Run(name, func(t *testing.T) {
