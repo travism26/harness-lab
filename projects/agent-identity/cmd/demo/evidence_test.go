@@ -67,8 +67,9 @@ func TestTourTranscript(t *testing.T) {
 
 // TestSampleRunLogs holds the committed live Audit logs to the record structs:
 // every line decodes strictly, the two files share their Correlation IDs, and
-// no token or key appears. The third log, the Broker's, comes from a fresh
-// stand-in tour until a live run through the Broker is committed.
+// no token or key appears. sample-run predates the Broker, so the Broker's log
+// is checked here from a fresh stand-in tour, and from a live run in
+// TestLiveBrokerRunLogs.
 func TestSampleRunLogs(t *testing.T) {
 	sample := filepath.Join(evidenceDir, "sample-run")
 	agentRecs := decodeFile[agent.AuditRecord](t, filepath.Join(sample, "agent.audit.jsonl"))
@@ -116,6 +117,56 @@ func TestSampleRunLogs(t *testing.T) {
 	if b.CorrelationID != asked.CorrelationID || b.Outcome != broker.OutcomeAllowed || b.SPIFFEID != permissionAgent.String() ||
 		b.Provider != "stand-in" || b.RequestID == "" || b.InputTokens == 0 || b.OutputTokens == 0 {
 		t.Errorf("Broker record %+v does not match the Agent's %s", b, asked.CorrelationID)
+	}
+	for _, name := range []string{"agent.audit.jsonl", "warden.audit.jsonl", "broker.audit.jsonl"} {
+		assertNoTokenOrKey(t, filepath.Join(dir, name))
+	}
+}
+
+// TestLiveBrokerRunLogs holds the three Audit logs of the live run through a
+// separate Broker process (projects/agent-identity/docs/evidence/live-broker-2026-11-09.md)
+// to the record structs. Every line decodes strictly. The Agent's and the
+// Warden's records share their Correlation IDs. The Broker has one record for
+// the tour's question, joined to the other two logs, and one for the Eval as
+// model-eval. Each Broker record carries the provider's request id, tokens and
+// cost, and no file holds a token or key.
+func TestLiveBrokerRunLogs(t *testing.T) {
+	dir := filepath.Join(evidenceDir, "live-broker-2026-11-09")
+	agentRecs := decodeFile[agent.AuditRecord](t, filepath.Join(dir, "agent.audit.jsonl"))
+	wardenRecs := decodeFile[warden.AuditRecord](t, filepath.Join(dir, "warden.audit.jsonl"))
+	brokerRecs := decodeFile[broker.AuditRecord](t, filepath.Join(dir, "broker.audit.jsonl"))
+	if len(agentRecs) == 0 || len(agentRecs) != len(wardenRecs) {
+		t.Fatalf("got %d agent and %d warden records, want the same nonzero count", len(agentRecs), len(wardenRecs))
+	}
+	for i := range agentRecs {
+		if a, w := agentRecs[i].CorrelationID, wardenRecs[i].CorrelationID; a != w {
+			t.Errorf("record %d: agent correlation_id %s, warden %s", i, a, w)
+		}
+	}
+	if len(brokerRecs) != 2 {
+		t.Fatalf("got %d Broker records, want 2 (the tour's question and the Eval case)", len(brokerRecs))
+	}
+	var asked agent.AuditRecord
+	for _, r := range agentRecs {
+		if r.Question != "" {
+			asked = r
+		}
+	}
+	for i, want := range []struct {
+		workload string
+		joined   bool
+	}{{permissionAgent.String(), true}, {broker.ModelEval.String(), false}} {
+		b := brokerRecs[i]
+		if b.SPIFFEID != want.workload || b.Outcome != broker.OutcomeAllowed || b.Status != 200 || b.Provider != "anthropic" ||
+			b.RequestID == "" || b.InputTokens == 0 || b.OutputTokens == 0 || b.Cost <= 0 {
+			t.Errorf("Broker record %d = %+v; want an allowed %s call with request id, tokens and cost", i, b, want.workload)
+		}
+		if joined := b.CorrelationID == asked.CorrelationID; joined != want.joined {
+			t.Errorf("Broker record %d joined to the Agent's question = %v, want %v", i, joined, want.joined)
+		}
+	}
+	if len(asked.ModelCalls) != 1 || asked.ModelCalls[0].RequestID != brokerRecs[0].RequestID || !asked.ModelCalls[0].BrokerReported {
+		t.Errorf("Agent's model call %+v does not copy the Broker's request id %s as Broker-reported", asked.ModelCalls, brokerRecs[0].RequestID)
 	}
 	for _, name := range []string{"agent.audit.jsonl", "warden.audit.jsonl", "broker.audit.jsonl"} {
 		assertNoTokenOrKey(t, filepath.Join(dir, name))
