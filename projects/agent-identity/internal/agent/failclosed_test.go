@@ -3,7 +3,6 @@ package agent_test
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,27 +18,8 @@ import (
 const (
 	wardenDownText = "The Warden couldn't be reached, so I can't say whether `tom` holds `invoice:approve` in `acme`."
 	modelDownText  = "The Model couldn't be reached, so no lookup was made."
-	noPropText     = "I couldn't turn that into one permission lookup, so no lookup was made. Ask about one person and one permission."
+	noProposalText = "I couldn't turn that into one permission lookup, so no lookup was made. Ask about one person and one permission."
 )
-
-// newAgent builds an Agent for the listed workload with an explicit Model
-// config. src nil means the capturing source.
-func (e *auditEnv) newAgent(t *testing.T, url string, mc *agent.ModelConfig, src agent.SVIDSource) *agent.Agent {
-	t.Helper()
-	wl, err := e.source.Workload(listedID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.fetched = &capturing{inner: wl}
-	if src == nil {
-		src = e.fetched
-	}
-	a, err := agent.New(agent.Config{WardenURL: url, Audience: wardenAudience, Source: src, Audit: &e.agentLog, Model: mc})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return a
-}
 
 func (e *auditEnv) svidCount() int {
 	e.fetched.mu.Lock()
@@ -47,34 +27,28 @@ func (e *auditEnv) svidCount() int {
 	return len(e.fetched.svids)
 }
 
-// noSecrets fails if text holds any assertion or captured JWT-SVID.
-func (e *auditEnv) noSecrets(t *testing.T, what, text string) {
+// noSecrets fails if the Reply text, the error text (when there is one) or
+// either Audit log holds a signed assertion, a fetched JWT-SVID or the Model API
+// key. On a path where no JWT-SVID was fetched the JWT-SVID part checks nothing;
+// the assertions and the API key are always real.
+func (e *auditEnv) noSecrets(t *testing.T, r agent.Reply, err error) {
 	t.Helper()
-	var canaries []string
-	for _, as := range e.assertions {
-		canaries = append(canaries, string(as), strings.Split(string(as), ".")[2])
+	texts := map[string]string{"Reply text": r.Text, "Agent Audit log": e.agentLog.String(), "Warden Audit log": e.wardenLog.String()}
+	if err != nil {
+		texts["error text"] = err.Error()
 	}
-	e.fetched.mu.Lock()
-	for _, s := range e.fetched.svids {
-		canaries = append(canaries, s, strings.Split(s, ".")[2])
-	}
-	e.fetched.mu.Unlock()
-	for _, c := range canaries {
-		if strings.Contains(text, c) {
-			t.Errorf("%s contains a token: %q", what, c)
+	canaries := append(e.tokenCanaries(), e.modelAPIKey)
+	for what, text := range texts {
+		for _, c := range canaries {
+			if strings.Contains(text, c) {
+				t.Errorf("%s contains a secret: %q", what, c)
+			}
 		}
 	}
 }
 
-func closedURL(t *testing.T) string {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	u := "http://" + l.Addr().String()
-	l.Close()
-	return u
+func withModel(mc *agent.ModelConfig) func(*agent.Config) {
+	return func(c *agent.Config) { c.Model = mc }
 }
 
 // A Warden that answers 200 with nothing readable, or an unexpected status,
@@ -101,7 +75,7 @@ func TestWardenNoAnswerIsUnreachableNeverNo(t *testing.T) {
 			defer srv.Close()
 			m := model.New(model.ToolUse("tom", "invoice:approve"))
 			defer m.Close()
-			a := e.newAgent(t, srv.URL, &agent.ModelConfig{BaseURL: m.URL, APIKey: "k", Provider: "stand-in"}, nil)
+			a := e.agent(t, listedID, srv.URL, m, 0)
 			r, err := a.Ask(context.Background(), e.assertion(t, "acme/alice", listedID), "q")
 			if err != nil {
 				t.Fatal(err)
@@ -110,9 +84,9 @@ func TestWardenNoAnswerIsUnreachableNeverNo(t *testing.T) {
 				t.Errorf("got %s %d %q", r.ID, r.Status, body(r))
 			}
 			if g := e.agentRecords(t); len(g) != 1 || g[0].Reply != agent.ReplyWardenUnreachable || g[0].WardenStatus != tc.status {
-				t.Errorf("agent record %+v", g)
+				t.Errorf("the Agent's Audit record %+v", g)
 			}
-			e.noSecrets(t, "Reply", r.Text)
+			e.noSecrets(t, r, err)
 		})
 	}
 }
@@ -120,45 +94,37 @@ func TestWardenNoAnswerIsUnreachableNeverNo(t *testing.T) {
 // A Model that can't be reached, whatever the reason, means no SVID, no Lookup
 // and a model_unreachable Reply; a live provider never falls back to a stand-in.
 func TestModelFailureIsUnreachableWithNoSVIDAndNoLookup(t *testing.T) {
-	const (
-		viaScript = iota
-		viaClosedPort
-		viaDeadline
-	)
+	// setup returns the Model's base URL and the context Ask runs under.
+	type setup func(t *testing.T, m *model.Server) (string, context.Context)
+	scripted := func(t *testing.T, m *model.Server) (string, context.Context) { return m.URL, context.Background() }
+	closedPort := func(t *testing.T, m *model.Server) (string, context.Context) {
+		return closedURL(t), context.Background()
+	}
+	deadline := func(t *testing.T, m *model.Server) (string, context.Context) {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		t.Cleanup(cancel)
+		return deadURL(t), ctx
+	}
 	cases := []struct {
 		name     string
 		provider string
 		script   model.Reply
-		how      int
+		setup    setup
 	}{
-		{"401 live", "anthropic", model.Error(401), viaScript},
-		{"403 live", "anthropic", model.Error(403), viaScript},
-		{"closed port stand-in", "stand-in", model.Error(500), viaClosedPort},
-		{"closed port live", "anthropic", model.Error(500), viaClosedPort},
-		{"deadline live", "anthropic", model.Error(500), viaDeadline},
+		{"401 live", "anthropic", model.Error(401), scripted},
+		{"403 live", "anthropic", model.Error(403), scripted},
+		{"closed port stand-in", "stand-in", model.Error(500), closedPort},
+		{"closed port live", "anthropic", model.Error(500), closedPort},
+		{"deadline live", "anthropic", model.Error(500), deadline},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newAuditEnv(t)
 			m := model.New(tc.script)
 			defer m.Close()
-			base := m.URL
-			ctx := context.Background()
-			switch tc.how {
-			case viaClosedPort:
-				base = closedURL(t)
-			case viaDeadline:
-				dead, err := net.Listen("tcp", "127.0.0.1:0") // accepts, never answers
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer dead.Close()
-				base = "http://" + dead.Addr().String()
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, 50*time.Millisecond)
-				defer cancel()
-			}
-			a := e.newAgent(t, e.url, &agent.ModelConfig{BaseURL: base, APIKey: "k", Provider: tc.provider}, nil)
+			base, ctx := tc.setup(t, m)
+			mc := &agent.ModelConfig{BaseURL: base, APIKey: e.modelAPIKey, Provider: tc.provider}
+			a := e.agent(t, listedID, e.url, nil, 0, withModel(mc))
 			r, err := a.Ask(ctx, e.assertion(t, "acme/alice", listedID), "q")
 			if err != nil {
 				t.Fatal(err)
@@ -177,14 +143,14 @@ func TestModelFailureIsUnreachableWithNoSVIDAndNoLookup(t *testing.T) {
 				t.Errorf("fetched %d JWT-SVIDs", n)
 			}
 			if w := e.wardenRecords(t); len(w) != 0 {
-				t.Errorf("Warden got %d requests", len(w))
+				t.Errorf("%d Lookups reached the Warden", len(w))
 			}
 			g := e.agentRecords(t)
 			if len(g) != 1 || g[0].Backend != wantBackend || g[0].WardenStatus != 0 || g[0].Reply != agent.ReplyModelUnreachable ||
 				g[0].ModelFailure == nil || g[0].ModelFailure.Code != "provider_error" {
-				t.Errorf("agent record %+v", g)
+				t.Errorf("the Agent's Audit record %+v", g)
 			}
-			e.noSecrets(t, "Reply", r.Text)
+			e.noSecrets(t, r, err)
 		})
 	}
 }
@@ -196,12 +162,12 @@ func (failingSource) FetchJWTSVID(context.Context, jwtsvid.Params) (*jwtsvid.SVI
 }
 
 // If the JWT-SVID can't be fetched after the Model proposed, Ask returns an
-// error with no Reply text and sends nothing to the Warden.
+// error with no Reply text and no Lookup reaches the Warden.
 func TestSVIDFetchFailureIsAnErrorWithNoReplyAndNoLookup(t *testing.T) {
 	e := newAuditEnv(t)
 	m := model.New(model.ToolUse("tom", "invoice:approve"))
 	defer m.Close()
-	a := e.newAgent(t, e.url, &agent.ModelConfig{BaseURL: m.URL, APIKey: "k", Provider: "stand-in"}, failingSource{})
+	a := e.agent(t, listedID, e.url, m, 0, func(c *agent.Config) { c.Source = failingSource{} })
 	r, err := a.Ask(context.Background(), e.assertion(t, "acme/alice", listedID), "q")
 	if err == nil {
 		t.Fatal("no error")
@@ -210,40 +176,45 @@ func TestSVIDFetchFailureIsAnErrorWithNoReplyAndNoLookup(t *testing.T) {
 		t.Errorf("reply %+v", r)
 	}
 	if w := e.wardenRecords(t); len(w) != 0 {
-		t.Errorf("Warden got %d requests", len(w))
+		t.Errorf("%d Lookups reached the Warden", len(w))
 	}
 	g := e.agentRecords(t)
 	if len(g) != 1 || g[0].Proposal == nil || g[0].WardenStatus != 0 || g[0].Reply != "" {
-		t.Errorf("agent record %+v", g)
+		t.Errorf("the Agent's Audit record %+v", g)
 	}
-	e.noSecrets(t, "error", err.Error())
-	e.noSecrets(t, "Reply", r.Text)
+	e.noSecrets(t, r, err)
 }
 
-func TestMissingKeyOrModelStopsBeforeAnyRequest(t *testing.T) {
-	for _, name := range []string{"empty key", "nil Model"} {
-		t.Run(name, func(t *testing.T) {
+func TestMissingKeyOrModelStopsBeforeAnyModelCallOrLookup(t *testing.T) {
+	cases := []struct {
+		name  string
+		model func(m *model.Server) *agent.ModelConfig
+	}{
+		{"empty key", func(m *model.Server) *agent.ModelConfig {
+			return &agent.ModelConfig{BaseURL: m.URL, APIKey: "", Provider: "anthropic"}
+		}},
+		{"nil Model", func(*model.Server) *agent.ModelConfig { return nil }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			e := newAuditEnv(t)
 			m := model.New(model.ToolUse("tom", "invoice:approve"))
 			defer m.Close()
-			mc := &agent.ModelConfig{BaseURL: m.URL, APIKey: "", Provider: "anthropic"}
-			if name == "nil Model" {
-				mc = nil
-			}
-			a := e.newAgent(t, e.url, mc, nil)
+			a := e.agent(t, listedID, e.url, nil, 0, withModel(tc.model(m)))
 			r, err := a.Ask(context.Background(), e.assertion(t, "acme/alice", listedID), "q")
 			if err == nil || r.Text != "" {
 				t.Errorf("err %v, reply %q", err, r.Text)
 			}
 			if n := len(m.Requests()); n != 0 {
-				t.Errorf("Model got %d requests", n)
+				t.Errorf("the Model was asked %d times; want 0", n)
 			}
 			if n := e.svidCount(); n != 0 {
 				t.Errorf("fetched %d JWT-SVIDs", n)
 			}
 			if w := e.wardenRecords(t); len(w) != 0 {
-				t.Errorf("Warden got %d requests", len(w))
+				t.Errorf("%d Lookups reached the Warden", len(w))
 			}
+			e.noSecrets(t, r, err)
 		})
 	}
 }
@@ -266,20 +237,24 @@ func TestGateFailuresTwiceGiveNoProposalAndNoLookup(t *testing.T) {
 			e := newAuditEnv(t)
 			m := model.New(tc.r, tc.r)
 			defer m.Close()
-			a := e.newAgent(t, e.url, &agent.ModelConfig{BaseURL: m.URL, APIKey: "k", Provider: "stand-in"}, nil)
+			a := e.agent(t, listedID, e.url, m, 0)
 			r, err := a.Ask(context.Background(), e.assertion(t, "acme/alice", listedID), "q")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if r.ID != agent.ReplyNoProposal || body(r) != noPropText || r.Proposal != nil {
+			if r.ID != agent.ReplyNoProposal || body(r) != noProposalText || r.Proposal != nil {
 				t.Errorf("got %s %q", r.ID, body(r))
+			}
+			if n := len(m.Requests()); n != 2 {
+				t.Errorf("the Model was asked %d times; want 2", n)
 			}
 			if n := e.svidCount(); n != 0 {
 				t.Errorf("fetched %d JWT-SVIDs", n)
 			}
 			if w := e.wardenRecords(t); len(w) != 0 {
-				t.Errorf("Warden got %d requests", len(w))
+				t.Errorf("%d Lookups reached the Warden", len(w))
 			}
+			e.noSecrets(t, r, err)
 		})
 	}
 }
