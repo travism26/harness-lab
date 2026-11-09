@@ -171,6 +171,7 @@ The "holds no key" claim is made only for this separate-process mode. `./check` 
 - [docs/evidence/coverage-2026-11-08.md](docs/evidence/coverage-2026-11-08.md): statement coverage and the behaviour-to-test map.
 - [docs/evidence/live-2026-11-09.md](docs/evidence/live-2026-11-09.md): a run on the real spiffecli and the live Model. Live observations and deterministic checks are kept apart.
 - [docs/evidence/live-broker-2026-11-09.md](docs/evidence/live-broker-2026-11-09.md): `tour --live` and one Eval case through a separate Broker process. The demo's and the Eval's environments held no provider key. The run's three Audit logs ([live-broker-2026-11-09/](docs/evidence/live-broker-2026-11-09/)) join on Correlation IDs, and `TestLiveBrokerRunLogs` holds them.
+- [docs/evidence/redteam-2026-11-09.md](docs/evidence/redteam-2026-11-09.md): a red-team run against the live Broker: bad and replayed tokens, Pin bypasses, header and path tricks, and prompt injection through `demo ask`. No attack got past the identity check, the allowlist or the Pin. It lists three low-severity findings with suggested fixes.
 
 ### Following one Correlation ID
 
