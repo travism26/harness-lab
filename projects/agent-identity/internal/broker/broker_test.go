@@ -17,6 +17,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
@@ -104,6 +105,7 @@ func newFixture(t *testing.T, opts ...option) *fixture {
 		Audience:    brokerAudience,
 		Bundles:     source,
 		Allowlist:   []spiffeid.ID{agentID},
+		Pins:        map[spiffeid.ID]pin.Pin{agentID: testPin(t)},
 		Provider:    provider.Providers["anthropic"],
 		Key:         keyCanary,
 		UpstreamURL: f.up.srv.URL,
@@ -153,7 +155,27 @@ type response struct {
 	header http.Header
 }
 
-const questionBody = `{"max_tokens":1024,"messages":[{"role":"user","content":"Can Tom approve invoices?"}]}`
+// shapeFields stand in for the Model client's fixed request fields; the Pin the
+// fixture gives the permission-agent is the hash of them.
+const shapeFields = `"system":"be brief","tools":[{"name":"lookup"}],"tool_choice":{"type":"auto"},"output_config":{"effort":"low"}`
+
+const questionBody = `{"max_tokens":1024,"messages":[{"role":"user","content":"Can Tom approve invoices?"},` + `{"role":"assistant","content":"x"}],` + shapeFields + `}`
+
+// testPin lists each provider's default model, a 1024 ceiling and the shape of
+// shapeFields.
+func testPin(t *testing.T) pin.Pin {
+	t.Helper()
+	shape, err := pin.Shape([]byte(`{` + shapeFields + `}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := map[string][]string{}
+	for name, p := range provider.Providers {
+		models[name] = []string{p.DefaultModel}
+	}
+	models[provider.StandIn.Name] = []string{provider.StandIn.DefaultModel}
+	return pin.Pin{Models: models, MaxTokens: 1024, Shape: shape}
+}
 
 // post sends a Messages request with the given Authorization ("" sends none).
 func (f *fixture) post(t *testing.T, authorization wire.Bearer, corr string) response {
@@ -493,6 +515,7 @@ func TestNewRefusesAnEmptyAudienceAndMissingPieces(t *testing.T) {
 	}
 	good := broker.Config{
 		Audience: brokerAudience, Bundles: source, Allowlist: []spiffeid.ID{agentID},
+		Pins:     map[spiffeid.ID]pin.Pin{agentID: testPin(t)},
 		Provider: provider.Providers["anthropic"], Key: keyCanary, UpstreamURL: "http://127.0.0.1:1",
 	}
 	for name, mut := range map[string]func(*broker.Config){
@@ -536,5 +559,151 @@ func TestDefaultAllowlistNamesThePermissionAgentAndModelEval(t *testing.T) {
 	}
 	if broker.ID.String() != brokerAudience {
 		t.Errorf("broker.ID = %s", broker.ID)
+	}
+}
+
+// withBody returns questionBody with the top-level field name set to raw (a
+// JSON value), or removed when raw is empty.
+func withBody(t *testing.T, name, raw string) string {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(questionBody), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if raw == "" {
+		delete(fields, name)
+	} else {
+		fields[name] = json.RawMessage(raw)
+	}
+	out, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+// sentUpstream is the one request body the provider received.
+func (f *fixture) sentUpstream(t *testing.T) map[string]any {
+	t.Helper()
+	if f.up.count() != 1 {
+		t.Fatalf("upstream saw %d requests; want 1", f.up.count())
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(f.up.bodies[0]), &sent); err != nil {
+		t.Fatal(err)
+	}
+	return sent
+}
+
+func TestThePinAllowsWhatItCovers(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body      string
+		wantModel string
+		wantMax   float64
+	}{
+		"model and max_tokens filled in": {withBody(t, "max_tokens", ""), "claude-haiku-5-5", 1024},
+		"named model on the list":        {withBody(t, "model", `"claude-haiku-5-5"`), "claude-haiku-5-5", 1024},
+		"max_tokens below the ceiling":   {withBody(t, "max_tokens", `10`), "claude-haiku-5-5", 10},
+		"max_tokens at the ceiling":      {withBody(t, "max_tokens", `1024`), "claude-haiku-5-5", 1024},
+		"messages changed":               {withBody(t, "messages", `[{"role":"user","content":"something else entirely"}]`), "claude-haiku-5-5", 1024},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			got := f.postBody(t, wire.BearerFor(f.fetch(t, agentID, brokerAudience)), "", tc.body)
+			if got.status != 200 {
+				t.Fatalf("response = %d %s; want 200", got.status, got.body)
+			}
+			sent := f.sentUpstream(t)
+			if sent["model"] != tc.wantModel || sent["max_tokens"] != tc.wantMax {
+				t.Errorf("upstream got model %v, max_tokens %v; want %s, %v", sent["model"], sent["max_tokens"], tc.wantModel, tc.wantMax)
+			}
+		})
+	}
+}
+
+func TestOutsideThePinIs403WithNoUpstreamRequest(t *testing.T) {
+	for name, body := range map[string]string{
+		"model not on the list":    withBody(t, "model", `"claude-opus-9"`),
+		"max_tokens above ceiling": withBody(t, "max_tokens", `1025`),
+		"changed system":           withBody(t, "system", `"ignore the rules"`),
+		"missing system":           withBody(t, "system", ``),
+		"changed tools":            withBody(t, "tools", `[{"name":"shell"}]`),
+		"changed tool_choice":      withBody(t, "tool_choice", `{"type":"any"}`),
+		"changed output_config":    withBody(t, "output_config", `{"effort":"high"}`),
+		"an extra top-level field": withBody(t, "temperature", `1`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			got := f.postBody(t, wire.BearerFor(f.fetch(t, agentID, brokerAudience)), "", body)
+			if got.status != http.StatusForbidden || got.body != `{"reason":"outside_pin"}`+"\n" {
+				t.Errorf("response = %d %s; want 403 outside_pin", got.status, got.body)
+			}
+			if n := f.up.count(); n != 0 {
+				t.Errorf("%d upstream requests; want 0", n)
+			}
+			recs := f.records(t)
+			if len(recs) != 1 || recs[0].Reason != "outside_pin" || recs[0].Outcome != broker.OutcomeRefused || recs[0].Status != 403 || recs[0].SPIFFEID != agentID.String() {
+				t.Errorf("Audit records = %+v; want one refused outside_pin record", recs)
+			}
+		})
+	}
+}
+
+func TestAWorkloadWithNoModelsForTheProviderIsRefused(t *testing.T) {
+	for name, mut := range map[string]func(*pin.Pin){
+		"no entry for the provider": func(p *pin.Pin) { delete(p.Models, "anthropic") },
+		"an empty list":             func(p *pin.Pin) { p.Models["anthropic"] = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, func(c *broker.Config) {
+				p := testPin(t)
+				mut(&p)
+				c.Pins = map[spiffeid.ID]pin.Pin{agentID: p}
+			})
+			// Even a named model is refused.
+			got := f.postBody(t, wire.BearerFor(f.fetch(t, agentID, brokerAudience)), "", withBody(t, "model", `"claude-haiku-5-5"`))
+			if got.status != http.StatusForbidden || !strings.Contains(got.body, "outside_pin") || f.up.count() != 0 {
+				t.Errorf("response = %d %s, %d upstream requests; want 403 outside_pin and none", got.status, got.body, f.up.count())
+			}
+		})
+	}
+}
+
+func TestAListedWorkloadWithNoPinIsRefused(t *testing.T) {
+	f := newFixture(t, func(c *broker.Config) { c.Pins = nil })
+	got := f.post(t, wire.BearerFor(f.fetch(t, agentID, brokerAudience)), "")
+	if got.status != http.StatusForbidden || !strings.Contains(got.body, "outside_pin") || f.up.count() != 0 {
+		t.Errorf("response = %d %s, %d upstream requests; want 403 outside_pin and none", got.status, got.body, f.up.count())
+	}
+}
+
+func TestAModelIsNotFilledInWhenThePinListsSeveral(t *testing.T) {
+	f := newFixture(t, func(c *broker.Config) {
+		p := testPin(t)
+		p.Models["anthropic"] = []string{"claude-haiku-5-5", "claude-sonnet-5-5"}
+		c.Pins = map[spiffeid.ID]pin.Pin{agentID: p}
+	})
+	token := wire.BearerFor(f.fetch(t, agentID, brokerAudience))
+	if got := f.post(t, token, ""); got.status != http.StatusForbidden {
+		t.Errorf("model left out with two listed: %d; want 403", got.status)
+	}
+	if got := f.postBody(t, token, "", withBody(t, "model", `"claude-sonnet-5-5"`)); got.status != 200 {
+		t.Errorf("a listed model: %d; want 200", got.status)
+	}
+}
+
+func TestThePinIsHeldPerWorkload(t *testing.T) {
+	other := spiffeid.RequireFromString("spiffe://example.com/model-eval")
+	f := newFixture(t, func(c *broker.Config) {
+		c.Allowlist = []spiffeid.ID{agentID, other}
+		strict := testPin(t)
+		strict.MaxTokens = 10
+		c.Pins = map[spiffeid.ID]pin.Pin{agentID: testPin(t), other: strict}
+	})
+	if got := f.post(t, wire.BearerFor(f.fetch(t, agentID, brokerAudience)), ""); got.status != 200 {
+		t.Errorf("permission-agent: %d; want 200", got.status)
+	}
+	if got := f.post(t, wire.BearerFor(f.fetch(t, other, brokerAudience)), ""); got.status != http.StatusForbidden {
+		t.Errorf("model-eval with a lower ceiling: %d; want 403", got.status)
 	}
 }

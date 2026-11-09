@@ -1,7 +1,8 @@
 // Package broker is the Broker: the one workload that holds a Model provider
 // key. It verifies the caller's JWT-SVID (the Warden's check, audience and
 // leeway included), checks the caller's SPIFFE ID against the Broker allowlist,
-// adds the provider's auth headers and forwards the Messages request, returning
+// holds it to its Pin (model, max_tokens and request shape), adds the provider's
+// auth headers and forwards the Messages request, returning
 // the provider's body unchanged plus who served it and what it cost. It never
 // reads the Caller assertion, and imports neither the Agent nor the Warden
 // (trustlint R2). See projects/agent-identity/docs/adr/0004-the-provider-key-lives-only-in-the-broker.md.
@@ -17,6 +18,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +27,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/svidverify"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
@@ -64,9 +67,9 @@ type Config struct {
 	// UpstreamURL is the provider's API root; the Broker posts to it +
 	// "/v1/messages". Empty means Provider.BaseURL.
 	UpstreamURL string
-	// Model is the model id set on a request that names none. Empty means the
-	// provider's default.
-	Model string
+	// Pins holds each allowlisted workload to what it may send. A workload with
+	// no Pin may send nothing.
+	Pins map[spiffeid.ID]pin.Pin
 	// HTTPClient calls the provider. Nil means a client with no redirects.
 	HTTPClient *http.Client
 	// Now stamps the Audit record. Nil means time.Now.
@@ -86,7 +89,7 @@ type Broker struct {
 	prov      provider.Provider
 	key       string
 	upstream  string
-	model     string
+	pins      map[spiffeid.ID]pin.Pin
 	client    *http.Client
 	now       func() time.Time
 	audit     io.Writer
@@ -114,7 +117,7 @@ func New(cfg Config) (*Broker, error) {
 		prov:      cfg.Provider,
 		key:       cfg.Key,
 		upstream:  strings.TrimSuffix(cfg.UpstreamURL, "/"),
-		model:     cfg.Model,
+		pins:      cfg.Pins,
 		client:    cfg.HTTPClient,
 		now:       cfg.Now,
 		audit:     cfg.Audit,
@@ -123,9 +126,6 @@ func New(cfg Config) (*Broker, error) {
 	}
 	if b.upstream == "" {
 		b.upstream = strings.TrimSuffix(cfg.Provider.BaseURL, "/")
-	}
-	if b.model == "" {
-		b.model = cfg.Provider.DefaultModel
 	}
 	if b.client == nil {
 		// A redirect would carry the provider key to wherever it points.
@@ -195,7 +195,12 @@ func (b *Broker) messages(rw http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusForbidden, wire.ReasonNotAllowlisted)
 		return
 	}
-	body, err := b.requestBody(http.MaxBytesReader(rw, r.Body, maxRequestBytes))
+	body, err := b.requestBody(http.MaxBytesReader(rw, r.Body, maxRequestBytes), b.pins[svid.ID])
+	if errors.Is(err, errOutsidePin) {
+		b.log.Debug("request outside the pin", "err", err)
+		refuse(http.StatusForbidden, wire.ReasonOutsidePin)
+		return
+	}
 	if err != nil {
 		b.log.Debug("request body rejected", "err", err)
 		refuse(http.StatusBadRequest, wire.ReasonBadRequest)
@@ -204,15 +209,22 @@ func (b *Broker) messages(rw http.ResponseWriter, r *http.Request) {
 	b.forward(r.Context(), rw, rec, body.bytes, body.model)
 }
 
-// request is a Messages request after the Broker has set its model.
+// request is a Messages request after the Broker has set its model and
+// max_tokens.
 type request struct {
 	bytes []byte
 	model string
 }
 
-// requestBody reads the Messages request and sets its model if it names none.
-// Every other field is passed on as received.
-func (b *Broker) requestBody(r io.Reader) (request, error) {
+// errOutsidePin marks a request the workload's Pin does not allow.
+var errOutsidePin = errors.New("outside the pin")
+
+// requestBody reads the Messages request and holds it to p: the model is filled
+// in when absent and the Pin lists exactly one for this provider, else it must
+// be listed; max_tokens is filled in with the ceiling when absent and may not
+// exceed it; and every field but messages, model and max_tokens must hash to
+// the Pin's request shape. Messages is passed on as received.
+func (b *Broker) requestBody(r io.Reader, p pin.Pin) (request, error) {
 	raw, err := io.ReadAll(r)
 	if err != nil {
 		return request{}, err
@@ -221,13 +233,41 @@ func (b *Broker) requestBody(r io.Reader) (request, error) {
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
 		return request{}, errors.New("not a JSON object")
 	}
-	model := b.model
+	models := p.Models[b.prov.Name]
+	var model string
 	if named, ok := fields["model"]; ok {
 		if err := json.Unmarshal(named, &model); err != nil || model == "" {
 			return request{}, errors.New("model is not a string")
 		}
-	} else {
+	} else if len(models) == 1 {
+		model = models[0]
 		fields["model"], _ = json.Marshal(model)
+	} else {
+		return request{}, fmt.Errorf("%w: no model named and %d listed", errOutsidePin, len(models))
+	}
+	if !slices.Contains(models, model) {
+		return request{}, fmt.Errorf("%w: model not listed", errOutsidePin)
+	}
+	if p.MaxTokens <= 0 || p.Shape == "" {
+		return request{}, fmt.Errorf("%w: the pin has no ceiling or no request shape", errOutsidePin)
+	}
+	if given, ok := fields["max_tokens"]; ok {
+		var n float64
+		if err := json.Unmarshal(given, &n); err != nil {
+			return request{}, errors.New("max_tokens is not a number")
+		}
+		if n > float64(p.MaxTokens) {
+			return request{}, fmt.Errorf("%w: max_tokens above the ceiling", errOutsidePin)
+		}
+	} else {
+		fields["max_tokens"], _ = json.Marshal(p.MaxTokens)
+	}
+	shape, err := pin.ShapeOf(fields)
+	if err != nil {
+		return request{}, err
+	}
+	if shape != p.Shape {
+		return request{}, fmt.Errorf("%w: request shape differs", errOutsidePin)
 	}
 	out, err := json.Marshal(fields)
 	return request{bytes: out, model: model}, err

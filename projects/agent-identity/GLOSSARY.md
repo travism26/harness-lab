@@ -55,7 +55,7 @@ The workload that alone holds a provider key, and admits other workloads to the 
 _Avoid_: Proxy, gateway, key service
 
 **Pin**:
-What the Broker lets one workload do: the model ids it may use with each provider, a `max_tokens` ceiling and the one tool call it may make.
+What the Broker lets one workload do: the model ids it may use with each provider, a `max_tokens` ceiling and a hash of every other request field except `messages` (its request shape), so only the question text can change.
 _Avoid_: Quota, policy, scope
 
 **Broker allowlist**:

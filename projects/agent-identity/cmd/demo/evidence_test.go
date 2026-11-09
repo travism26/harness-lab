@@ -94,8 +94,17 @@ func TestSampleRunLogs(t *testing.T) {
 	}
 	tourAgent := decodeFile[agent.AuditRecord](t, filepath.Join(dir, "agent.audit.jsonl"))
 	tourBroker := decodeFile[broker.AuditRecord](t, filepath.Join(dir, "broker.audit.jsonl"))
-	if len(tourBroker) != 1 {
-		t.Fatalf("got %d Broker records, want 1 (the tour asks one question)", len(tourBroker))
+	// One record for the tour's question, then the broker scenario's four.
+	if len(tourBroker) != 5 {
+		t.Fatalf("got %d Broker records, want 5 (the tour's question and four broker outcomes)", len(tourBroker))
+	}
+	for i, want := range []struct {
+		status int
+		reason string
+	}{{200, ""}, {401, "jwt_svid_audience"}, {403, "not_allowlisted"}, {403, "outside_pin"}} {
+		if r := tourBroker[i+1]; r.Status != want.status || r.Reason != want.reason {
+			t.Errorf("broker scenario record %d = status %d reason %q; want %d %q", i, r.Status, r.Reason, want.status, want.reason)
+		}
 	}
 	b := tourBroker[0]
 	var asked agent.AuditRecord

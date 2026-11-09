@@ -75,6 +75,7 @@ type BrokerError struct {
 // The Broker's own reasons, beside the jwt_svid_* codes it shares with the Warden.
 const (
 	ReasonNotAllowlisted = "not_allowlisted"
+	ReasonOutsidePin     = "outside_pin"
 	ReasonBadRequest     = "bad_request"
 	ReasonUpstreamError  = "upstream_error"
 )

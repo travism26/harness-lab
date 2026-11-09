@@ -21,7 +21,6 @@ import (
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/login"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
 )
@@ -70,9 +69,10 @@ var scenarios = []scenario{
 	{"tokens", false, runTokens},
 	{"scripted", false, runScripted},
 	{"ask", true, runAsk},
+	{"broker", false, runBroker},
 }
 
-const usage = "usage: demo <tokens|scripted|tour> [--as tenant/name] [--out dir] [live flags]\n       demo ask \"<question>\" [--as tenant/name] [--out dir] [live flags]\n" +
+const usage = "usage: demo <tokens|scripted|broker|tour> [--as tenant/name] [--out dir] [live flags]\n       demo ask \"<question>\" [--as tenant/name] [--out dir] [live flags]\n" +
 	"live flags: [--live [--model id] [--provider anthropic|openrouter]] [--spiffe-socket path [--spiffe-socket-warden path] [--spiffe-socket-other path]]\n"
 
 // run executes the subcommand and returns the exit code: 0 when the scenario
@@ -282,21 +282,11 @@ func runAsk(ctx context.Context, stdout io.Writer, log *slog.Logger, opts option
 	defer stop()
 	mc := opts.modelCfg
 	if mc == nil {
-		m := model.NewDemo()
-		defer m.Close()
-		b, err := broker.New(broker.Config{
-			Audience: brokerAud, Bundles: opts.ids.Bundles(), Provider: provider.StandIn,
-			UpstreamURL: m.URL, Audit: opts.audit.broker,
-		})
+		_, srv, stopBroker, err := startStandInBroker(opts, log)
 		if err != nil {
 			return err
 		}
-		srv, err := b.ListenLoopback()
-		if err != nil {
-			return err
-		}
-		defer srv.Close()
-		log.Info("broker listening", "url", srv.URL)
+		defer stopBroker()
 		mc = &agent.ModelConfig{BaseURL: srv.URL, BrokerAudience: brokerAud}
 	}
 	wl, err := e.ids.Workload(permissionAgent)

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
 )
@@ -221,6 +222,47 @@ type response struct {
 	} `json:"usage"`
 }
 
+// requestFields is every field of the Messages request but the model, which
+// the Client or the Broker adds. The Pin's request-shape hash is computed from
+// these same constants (DefaultPin), so a change here moves the hash with it.
+func requestFields(messages []any) map[string]any {
+	return map[string]any{
+		"max_tokens":    maxTokens,
+		"system":        system,
+		"messages":      messages,
+		"tools":         []any{toolDef},
+		"tool_choice":   map[string]any{"type": "auto", "disable_parallel_tool_use": true},
+		"output_config": map[string]any{"effort": "low"},
+	}
+}
+
+// Request is the Messages request body the Client sends in Broker mode for a
+// question's first call: no model, no key.
+func Request(question string) ([]byte, error) {
+	return json.Marshal(requestFields([]any{map[string]any{"role": "user", "content": question}}))
+}
+
+// DefaultPin is the Pin for a workload that asks through this Client: each
+// provider's default model, the Client's max_tokens as the ceiling, and the
+// request-shape hash of the Client's own request fields. It is computed from
+// the request constants, never written down.
+func DefaultPin() pin.Pin {
+	raw, err := json.Marshal(requestFields(nil))
+	if err != nil {
+		panic(err) // the constants always encode
+	}
+	shape, err := pin.Shape(raw)
+	if err != nil {
+		panic(err)
+	}
+	models := map[string][]string{}
+	for name, p := range provider.Providers {
+		models[name] = []string{p.DefaultModel}
+	}
+	models[provider.StandIn.Name] = []string{provider.StandIn.DefaultModel}
+	return pin.Pin{Models: models, MaxTokens: maxTokens, Shape: shape}
+}
+
 // Propose asks the Model about one question: at most two calls, the second a
 // repair retry after a retryable failure. On failure the error is a *Failure
 // and the Result still lists the attempts made.
@@ -285,14 +327,7 @@ func brokerFailure(status int, raw []byte) *Failure {
 
 func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, error) {
 	attempt := Attempt{Provider: c.cfg.Provider}
-	fields := map[string]any{
-		"max_tokens":    maxTokens,
-		"system":        system,
-		"messages":      messages,
-		"tools":         []any{toolDef},
-		"tool_choice":   map[string]any{"type": "auto", "disable_parallel_tool_use": true},
-		"output_config": map[string]any{"effort": "low"},
-	}
+	fields := requestFields(messages)
 	if c.cfg.SVID == nil {
 		// The Broker sets the model; in key mode the client does.
 		fields["model"] = c.cfg.Model

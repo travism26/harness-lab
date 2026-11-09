@@ -12,6 +12,7 @@ import (
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/pin"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
 )
@@ -34,6 +35,7 @@ func TestAskThroughARealBrokerRepliesAndCopiesWhatTheBrokerReported(t *testing.T
 	b, err := broker.New(broker.Config{
 		Audience: brokerAudience, Bundles: e.source, Allowlist: []spiffeid.ID{listedID},
 		Provider: provider.StandIn, UpstreamURL: m.URL, Audit: &brokerLog,
+		Pins: map[spiffeid.ID]pin.Pin{listedID: agent.Pin()},
 	})
 	if err != nil {
 		t.Fatal(err)

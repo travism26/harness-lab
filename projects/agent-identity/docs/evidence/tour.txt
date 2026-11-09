@@ -11,6 +11,11 @@ POST /lookup  caller=acme/alice  target=globex/sam  permission=permission:read  
 == ask
 Yes. tom holds `invoice:approve` in acme through the Finance Approver role.
 [model: stand-in via broker · id <correlation-id>]
+== broker
+POST /v1/messages  agent=spiffe://example.com/permission-agent  aud=spiffe://example.com/model-broker  -> 200  model=claude-haiku-5-5  model_requests=1
+POST /v1/messages  agent=spiffe://example.com/permission-agent  aud=spiffe://example.com/warden  -> 401  reason=jwt_svid_audience  model_requests=0  (the Warden's token)
+POST /v1/messages  agent=spiffe://example.com/unlisted-agent  aud=spiffe://example.com/model-broker  -> 403  reason=not_allowlisted  model_requests=0  (not on the Broker allowlist)
+POST /v1/messages  agent=spiffe://example.com/permission-agent  aud=spiffe://example.com/model-broker  -> 403  reason=outside_pin  model_requests=0  (a swapped system prompt)
 # stderr
 time=<ts> level=INFO msg="warden listening" url=http://127.0.0.1:<port>
 time=<ts> level=INFO msg="warden listening" url=http://127.0.0.1:<port>
@@ -20,4 +25,5 @@ time=<ts> level=INFO msg=proposal target=tom permission=invoice:approve model_ca
 time=<ts> level=INFO msg=broker status=200 outcome=allowed
 time=<ts> level=INFO msg=warden status=200 outcome=answer_yes
 time=<ts> level=INFO msg=reply id=yes correlation_id=<correlation-id>
+time=<ts> level=INFO msg="broker listening" url=http://127.0.0.1:<port>
 time=<ts> level=INFO msg="audit logs written" dir=<run-dir>
