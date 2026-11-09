@@ -18,13 +18,19 @@ const (
 	ModelClient = prefix + "/internal/modelclient"
 	Agent       = prefix + "/internal/agent"
 	Warden      = prefix + "/internal/warden"
+	Broker      = prefix + "/internal/broker"
 )
 
 // ModelClientImporters may import ModelClient (R1).
 var ModelClientImporters = []string{Agent, prefix + "/internal/eval"}
 
-// WardenPackages are the packages R2 keeps free of the agent and model client.
-var WardenPackages = []string{Warden}
+// WorkloadRules are R2's isolation rules: the Warden imports none of the Agent,
+// the Model client and the Broker, and the Broker imports neither the Agent nor
+// the Warden.
+var WorkloadRules = []wardenisolation.Rule{
+	{Name: "the Warden", Isolated: []string{Warden}, Forbidden: []string{Agent, ModelClient, Broker}},
+	{Name: "the Broker", Isolated: []string{Broker}, Forbidden: []string{Agent, Warden}},
+}
 
 // TokenTypes must never reach a logging or printing sink (R3).
 var TokenTypes = []string{
@@ -45,7 +51,7 @@ var InsecureFuncs = []string{
 func Analyzers() []*analysis.Analyzer {
 	return []*analysis.Analyzer{
 		modelisolation.New(modelisolation.Config{ModelClient: ModelClient, Allowed: ModelClientImporters}),
-		wardenisolation.New(wardenisolation.Config{Warden: WardenPackages, Forbidden: []string{Agent, ModelClient}}),
+		wardenisolation.New(wardenisolation.Config{Rules: WorkloadRules}),
 		nosecretlogs.New(nosecretlogs.Config{TokenTypes: TokenTypes}),
 		noinsecureparse.New(noinsecureparse.Config{Funcs: InsecureFuncs}),
 	}

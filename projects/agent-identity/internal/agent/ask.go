@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
+
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelclient"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
@@ -20,14 +22,20 @@ import (
 // ModelConfig is the plain config the Agent builds its Model client from, so
 // callers never import the model client.
 type ModelConfig struct {
-	// BaseURL is the Messages API root.
+	// BaseURL is the Messages API root, or the Broker's.
 	BaseURL string
-	APIKey  string
+	// APIKey is the provider key, for the key mode (--live until the Broker runs
+	// as its own process). BrokerAudience selects the Broker mode instead: the
+	// Agent then fetches a JWT-SVID for that audience on every Model request and
+	// holds no key. Exactly one of the two is set.
+	APIKey         string
+	BrokerAudience string
 	// Model is the model id; empty means the provider's default.
 	Model string
 	// Provider is "anthropic", "openrouter" or "stand-in". It sets the auth
 	// style and default model (projects/agent-identity/internal/provider). The Reply footer says
-	// "stand-in" for the last and "live" for the others.
+	// "stand-in" for the last and "live" for the others. Unused in the Broker
+	// mode, where the Broker says which provider served the request.
 	Provider string
 }
 
@@ -89,41 +97,60 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 	if mc == nil {
 		return Reply{}, errors.New("agent: no Model configured")
 	}
-	client, err := modelclient.New(modelclient.Config{
-		BaseURL: mc.BaseURL, APIKey: mc.APIKey, Model: mc.Model, Provider: mc.Provider,
-	})
+	corr := a.newCorrelationID()
+	cfg := modelclient.Config{
+		BaseURL: mc.BaseURL, APIKey: mc.APIKey, Model: mc.Model, Provider: mc.Provider, CorrelationID: corr,
+	}
+	viaBroker := mc.BrokerAudience != ""
+	if viaBroker {
+		cfg.SVID = func(ctx context.Context) (wire.JWTSVID, error) {
+			svid, err := a.cfg.Source.FetchJWTSVID(ctx, jwtsvid.Params{Audience: mc.BrokerAudience})
+			if err != nil {
+				return "", err
+			}
+			return wire.JWTSVID(svid.Marshal()), nil
+		}
+	}
+	client, err := modelclient.New(cfg)
 	if err != nil {
 		return Reply{}, fmt.Errorf("agent: %w", err)
 	}
-	corr := a.newCorrelationID()
 	// The assertion's sub is read unverified, only to build the Target, the Reply
 	// text and the Audit record; the Warden decides everything.
 	tenant, sub := unverifiedSub(assertion)
-	rec := AuditRecord{
-		CorrelationID: corr, CallerUnverified: sub, Question: question,
-		Backend: backendFor(mc.Provider), Model: client.Model(),
-	}
-	if rec.Backend == backendStandIn {
-		// A stand-in run never shows a real model id.
-		rec.Model = backendStandIn
+	rec := AuditRecord{CorrelationID: corr, CallerUnverified: sub, Question: question}
+	footer := ""
+	if !viaBroker {
+		rec.Backend, rec.Model = backendFor(mc.Provider), client.Model()
+		if rec.Backend == backendStandIn {
+			// A stand-in run never shows a real model id.
+			rec.Model = backendStandIn
+		}
+		footer = rec.Backend
 	}
 	finish := func(r Reply, id ReplyID, text string) (Reply, error) {
 		r.ID = id
 		r.CorrelationID = corr
 		rec.Attempts, rec.WardenStatus, rec.Reply = r.ModelAttempts, r.Status, id
 		a.writeAudit(rec)
-		r.Text = fmt.Sprintf("%s\n[model: %s · id %s]", text, rec.Backend, corr)
+		if viaBroker {
+			footer = brokerFooter(rec.ModelCalls)
+		}
+		r.Text = fmt.Sprintf("%s\n[model: %s · id %s]", text, footer, corr)
 		return r, nil
 	}
 
 	res, err := client.Propose(ctx, question)
 	out := Reply{ModelAttempts: len(res.Attempts)}
 	// Only the audit fields of each attempt are kept, never its Raw reply.
-	rec.ModelCalls = modelCalls(res.Attempts)
+	rec.ModelCalls = modelCalls(res.Attempts, viaBroker)
+	if viaBroker {
+		rec.Backend, rec.Model = brokerServed(rec.ModelCalls)
+	}
 	if err != nil {
 		var f *modelclient.Failure
 		if errors.As(err, &f) {
-			rec.ModelFailure = &ModelFailure{Kind: string(f.Kind), Code: string(f.Code)}
+			rec.ModelFailure = &ModelFailure{Kind: string(f.Kind), Code: string(f.Code), BrokerStatus: f.Status, BrokerReason: f.Reason}
 			if f.Code == modelclient.CodeTextOnly {
 				rec.ModelText = truncate(f.Text, maxModelText)
 			}

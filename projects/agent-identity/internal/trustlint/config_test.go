@@ -66,6 +66,7 @@ func TestConfigNamesRealPackages(t *testing.T) {
 	add(wirePath)
 	add(Agent)
 	add(Warden)
+	add(Broker)
 	for _, tt := range TokenTypes {
 		p, _ := splitQualified(tt)
 		add(p)

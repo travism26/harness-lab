@@ -262,8 +262,8 @@ func TestSpiffeSocketServesTheAgentAndTheWarden(t *testing.T) {
 	if !slices.Contains(f.opened, "/tmp/x/agent.sock") || !slices.Contains(f.opened, "/tmp/x/warden.sock") {
 		t.Errorf("opened %v; want the Agent's and the Warden's sockets", f.opened)
 	}
-	if f.fetches["/tmp/x/agent.sock"] != 1 || f.fetches["/tmp/x/warden.sock"] != 0 {
-		t.Errorf("fetches %v: the Agent fetches once, the Warden never", f.fetches)
+	if f.fetches["/tmp/x/agent.sock"] != 2 || f.fetches["/tmp/x/warden.sock"] != 0 {
+		t.Errorf("fetches %v: the Agent fetches twice (the Broker's audience, then the Warden's), the Warden never", f.fetches)
 	}
 }
 

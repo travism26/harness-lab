@@ -18,6 +18,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/login"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
@@ -202,6 +203,8 @@ const (
 )
 
 var (
+	// brokerAud is the Broker's SPIFFE ID, the audience of its JWT-SVIDs.
+	brokerAud       = broker.ID.String()
 	permissionAgent = spiffeid.RequireFromString("spiffe://example.com/permission-agent")
 	unlistedAgent   = spiffeid.RequireFromString("spiffe://example.com/unlisted-agent")
 )
@@ -267,8 +270,10 @@ func (e *env) agentFor(id spiffeid.ID, aud string) (*agent.Agent, error) {
 	return agent.New(agent.Config{WardenURL: e.url, Audience: aud, Source: wl, Audit: e.audit})
 }
 
-// runAsk asks the question through the permission-agent with the demo stand-in
-// Model and prints the Reply. The step trace goes to the log.
+// runAsk asks the question through the permission-agent and prints the Reply.
+// The stand-in Model sits behind a real Broker on loopback, which the Agent
+// reaches on its JWT-SVID alone; a live run (--live) keeps the Model client's
+// key mode. The step trace goes to the log.
 func runAsk(ctx context.Context, stdout io.Writer, log *slog.Logger, opts options) error {
 	e, stop, err := setup(log, opts)
 	if err != nil {
@@ -279,7 +284,20 @@ func runAsk(ctx context.Context, stdout io.Writer, log *slog.Logger, opts option
 	if mc == nil {
 		m := model.NewDemo()
 		defer m.Close()
-		mc = &agent.ModelConfig{BaseURL: m.URL, APIKey: "stand-in", Provider: "stand-in"}
+		b, err := broker.New(broker.Config{
+			Audience: brokerAud, Bundles: opts.ids.Bundles(), Provider: provider.StandIn,
+			UpstreamURL: m.URL, Audit: opts.audit.broker,
+		})
+		if err != nil {
+			return err
+		}
+		srv, err := b.ListenLoopback()
+		if err != nil {
+			return err
+		}
+		defer srv.Close()
+		log.Info("broker listening", "url", srv.URL)
+		mc = &agent.ModelConfig{BaseURL: srv.URL, BrokerAudience: brokerAud}
 	}
 	wl, err := e.ids.Workload(permissionAgent)
 	if err != nil {

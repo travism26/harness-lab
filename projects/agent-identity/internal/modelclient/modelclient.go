@@ -13,10 +13,12 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
 )
 
 const (
@@ -30,7 +32,15 @@ const (
 type Config struct {
 	// BaseURL is the API root; the client posts to BaseURL + "/v1/messages".
 	BaseURL string
-	APIKey  string
+	// APIKey is the provider key, for the key mode (--live until the Broker runs
+	// as its own process). Exactly one of APIKey and SVID is set.
+	APIKey string
+	// SVID is the Broker mode: it returns a fresh JWT-SVID for the Broker's
+	// audience, called once per request (the repair retry included). BaseURL is
+	// then the Broker's, the request names no model and carries no provider key.
+	SVID func(ctx context.Context) (wire.JWTSVID, error)
+	// CorrelationID is sent to the Broker in the Correlation-Id header.
+	CorrelationID string
 	// Model defaults to the Provider's DefaultModel in projects/agent-identity/internal/provider.
 	Model string
 	// Provider is "anthropic", "openrouter" or "stand-in". It labels each
@@ -50,13 +60,14 @@ type Client struct {
 	prov provider.Provider
 }
 
-// New builds a Client. An empty BaseURL or APIKey is an error.
+// New builds a Client. An empty BaseURL, or neither an APIKey nor an SVID
+// function, is an error.
 func New(cfg Config) (*Client, error) {
 	switch {
 	case cfg.BaseURL == "":
 		return nil, errors.New("modelclient: a base URL is required")
-	case cfg.APIKey == "":
-		return nil, errors.New("modelclient: an API key is required")
+	case cfg.APIKey == "" && cfg.SVID == nil:
+		return nil, errors.New("modelclient: an API key or a JWT-SVID source is required")
 	}
 	prov, _ := provider.Lookup(cfg.Provider)
 	if cfg.Model == "" {
@@ -80,6 +91,11 @@ type Proposal struct {
 type Attempt struct {
 	RequestID string
 	Provider  string
+	// Model and the token counts are set only in Broker mode, where Provider,
+	// Model, Cost and RequestID are what the Broker reported.
+	Model        string
+	InputTokens  int
+	OutputTokens int
 	// Cost is in USD: reported by OpenRouter, computed from usage for
 	// Anthropic, 0 for the stand-in.
 	Cost float64
@@ -124,7 +140,12 @@ type Failure struct {
 	Code FailureCode
 	// Text is the Model's text on a text-only reply, else empty.
 	Text string
-	msg  string
+	// Status is the HTTP status of a non-2xx Broker reply, else 0. Reason is the
+	// Broker's reason code on a refusal, else empty; it is kept only if it looks
+	// like a code, never as free text.
+	Status int
+	Reason string
+	msg    string
 }
 
 func (f *Failure) Error() string { return fmt.Sprintf("modelclient: %s %s: %s", f.Kind, f.Code, f.msg) }
@@ -248,17 +269,35 @@ func providerError(msg string) *Failure {
 	return &Failure{Kind: Fatal, Code: CodeProviderError, msg: msg}
 }
 
+var reasonRe = regexp.MustCompile(`^[a-z0-9_]{1,40}$`)
+
+// brokerFailure is the provider error for a non-2xx Broker reply, keeping its
+// status and its reason code.
+func brokerFailure(status int, raw []byte) *Failure {
+	f := providerError(fmt.Sprintf("status %d", status))
+	f.Status = status
+	var body wire.BrokerError
+	if json.Unmarshal(raw, &body) == nil && reasonRe.MatchString(body.Reason) {
+		f.Reason = body.Reason
+	}
+	return f
+}
+
 func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, error) {
 	attempt := Attempt{Provider: c.cfg.Provider}
-	body, err := json.Marshal(map[string]any{
-		"model":         c.cfg.Model,
+	fields := map[string]any{
 		"max_tokens":    maxTokens,
 		"system":        system,
 		"messages":      messages,
 		"tools":         []any{toolDef},
 		"tool_choice":   map[string]any{"type": "auto", "disable_parallel_tool_use": true},
 		"output_config": map[string]any{"effort": "low"},
-	})
+	}
+	if c.cfg.SVID == nil {
+		// The Broker sets the model; in key mode the client does.
+		fields["model"] = c.cfg.Model
+	}
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return response{}, attempt, providerError("could not encode the request")
 	}
@@ -269,7 +308,20 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 		return response{}, attempt, providerError("could not build the request")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	c.prov.SetAuth(req.Header, c.cfg.APIKey)
+	if c.cfg.SVID != nil {
+		// A fresh token for every request, so none is sent twice or expires
+		// between attempts. The error is dropped: it may name the socket.
+		svid, err := c.cfg.SVID(ctx)
+		if err != nil {
+			return response{}, attempt, providerError("could not fetch a JWT-SVID")
+		}
+		req.Header.Set(wire.HeaderAuthorization, string(wire.BearerFor(svid)))
+		if c.cfg.CorrelationID != "" {
+			req.Header.Set(wire.HeaderCorrelationID, c.cfg.CorrelationID)
+		}
+	} else {
+		c.prov.SetAuth(req.Header, c.cfg.APIKey)
+	}
 	hr, err := c.cfg.HTTPClient.Do(req)
 	if err != nil {
 		// The raw error may carry the URL; keep only that the call failed.
@@ -280,6 +332,9 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 	raw, err := io.ReadAll(io.LimitReader(hr.Body, maxBody))
 	attempt.Raw = string(raw)
 	if err != nil || hr.StatusCode != http.StatusOK {
+		if c.cfg.SVID != nil && err == nil {
+			return response{}, attempt, brokerFailure(hr.StatusCode, raw)
+		}
 		return response{}, attempt, providerError(fmt.Sprintf("status %d", hr.StatusCode))
 	}
 	var out response
@@ -288,6 +343,17 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 	}
 	if attempt.RequestID == "" {
 		attempt.RequestID = out.ID
+	}
+	if c.cfg.SVID != nil {
+		// The Broker reports who served the request and what it cost.
+		attempt.Provider = hr.Header.Get(wire.HeaderBrokerProvider)
+		attempt.Model = hr.Header.Get(wire.HeaderBrokerModel)
+		attempt.Cost, _ = strconv.ParseFloat(hr.Header.Get(wire.HeaderBrokerCost), 64)
+		attempt.InputTokens, attempt.OutputTokens = int(out.Usage.InputTokens), int(out.Usage.OutputTokens)
+		if id := hr.Header.Get(wire.HeaderBrokerRequestID); id != "" {
+			attempt.RequestID = id
+		}
+		return out, attempt, nil
 	}
 	attempt.Cost = c.cost(out)
 	return out, attempt, nil

@@ -1,6 +1,7 @@
-// Package wardenisolation implements trustlint rule R2: the Warden must not
-// import the agent or the model client, tests included, directly or
-// transitively. Its real configuration lives in
+// Package wardenisolation implements trustlint rule R2: workloads stay
+// separate. The Warden must not import the agent, the model client or the
+// Broker, and the Broker must not import the agent or the Warden, tests
+// included, directly or transitively. Its real configuration lives in
 // projects/agent-identity/internal/trustlint/config.go.
 //
 // Transitive reach is computed with analysis facts: every package exports a
@@ -10,6 +11,7 @@ package wardenisolation
 import (
 	"fmt"
 	"go/ast"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,10 +19,31 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
-// Config names the Warden packages and the packages they must not import.
+// Config is a set of isolation rules.
 type Config struct {
-	Warden    []string
+	Rules []Rule
+}
+
+// Rule names the packages of one workload and the packages they must not
+// import. Name says who is isolated, for the message.
+type Rule struct {
+	Name      string
+	Isolated  []string
 	Forbidden []string
+}
+
+// forbidden is every package any rule forbids: the facts track them all, so a
+// package's reach is the same whichever rule reads it.
+func (c Config) forbidden() []string {
+	var out []string
+	for _, r := range c.Rules {
+		for _, f := range r.Forbidden {
+			if !slices.Contains(out, f) {
+				out = append(out, f)
+			}
+		}
+	}
+	return out
 }
 
 // reachFact records the forbidden packages a package imports, directly or
@@ -47,7 +70,7 @@ func (f *reachFact) String() string {
 func New(cfg Config) *analysis.Analyzer {
 	return &analysis.Analyzer{
 		Name:      "wardenisolation",
-		Doc:       "R2: the Warden must not import the agent or the model client, directly or transitively",
+		Doc:       "R2: the Warden must not import the agent, the model client or the Broker, and the Broker must not import the agent or the Warden, directly or transitively",
 		FactTypes: []analysis.Fact{(*reachFact)(nil)},
 		Run:       func(pass *analysis.Pass) (any, error) { return nil, run(pass, cfg) },
 	}
@@ -55,7 +78,13 @@ func New(cfg Config) *analysis.Analyzer {
 
 func run(pass *analysis.Pass, cfg Config) error {
 	self := strings.TrimSuffix(pass.Pkg.Path(), "_test")
-	isWarden := underAny(self, cfg.Warden)
+	all := cfg.forbidden()
+	var rules []Rule
+	for _, r := range cfg.Rules {
+		if underAny(self, r.Isolated) {
+			rules = append(rules, r)
+		}
+	}
 
 	own := map[string]string{}
 	for _, f := range pass.Files {
@@ -64,7 +93,7 @@ func run(pass *analysis.Pass, cfg Config) error {
 			if err != nil {
 				continue
 			}
-			via := reach(pass, cfg, spec, path)
+			via := reach(pass, all, spec, path)
 			keys := make([]string, 0, len(via))
 			for k := range via {
 				keys = append(keys, k)
@@ -74,13 +103,15 @@ func run(pass *analysis.Pass, cfg Config) error {
 				if _, seen := own[k]; !seen {
 					own[k] = via[k]
 				}
-				if !isWarden {
-					continue
-				}
-				if k == path {
-					pass.Reportf(spec.Pos(), "R2: %s may not import %s; the Warden must not depend on the agent or the model client", self, path)
-				} else {
-					pass.Reportf(spec.Pos(), "R2: %s may not import %s, which reaches %s (%s)", self, path, k, via[k])
+				for _, r := range rules {
+					if !slices.Contains(r.Forbidden, k) {
+						continue
+					}
+					if k == path {
+						pass.Reportf(spec.Pos(), "R2: %s may not import %s; %s must not depend on it", self, path, r.Name)
+					} else {
+						pass.Reportf(spec.Pos(), "R2: %s may not import %s, which reaches %s (%s)", self, path, k, via[k])
+					}
 				}
 			}
 		}
@@ -100,8 +131,8 @@ func run(pass *analysis.Pass, cfg Config) error {
 
 // reach returns the forbidden packages that importing path (at spec) reaches,
 // keyed by forbidden path, with the import chain starting at path.
-func reach(pass *analysis.Pass, cfg Config, spec *ast.ImportSpec, path string) map[string]string {
-	if underAny(path, cfg.Forbidden) {
+func reach(pass *analysis.Pass, forbidden []string, spec *ast.ImportSpec, path string) map[string]string {
+	if underAny(path, forbidden) {
 		return map[string]string{path: path}
 	}
 	imported := pass.TypesInfo.PkgNameOf(spec)

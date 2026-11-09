@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
 )
 
@@ -48,15 +49,16 @@ func records[T any](l *recordLog) []T {
 	return out
 }
 
-// auditSink is the run directory and the two Audit logs written into it.
+// auditSink is the run directory and the three Audit logs written into it.
 type auditSink struct {
 	dir    string
 	agent  *recordLog
 	warden *recordLog
+	broker *recordLog
 }
 
 // openAudit makes the run directory (out, or a UTC-timestamped one under
-// runsBase) and opens both logs in it.
+// runsBase) and opens the three logs in it.
 func openAudit(out string) (*auditSink, error) {
 	dir := out
 	if dir == "" {
@@ -87,6 +89,11 @@ func openAudit(out string) (*auditSink, error) {
 		s.agent.file.Close()
 		return nil, err
 	}
+	if s.broker, err = openLog(filepath.Join(dir, "broker.audit.jsonl")); err != nil {
+		s.agent.file.Close()
+		s.warden.file.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -101,6 +108,7 @@ func openLog(path string) (*recordLog, error) {
 func (s *auditSink) close() {
 	s.agent.file.Close()
 	s.warden.file.Close()
+	s.broker.file.Close()
 }
 
 // trace logs the steps of one question, built from the Audit records just
@@ -123,6 +131,15 @@ func (s *auditSink) trace(log *slog.Logger, correlationID string) {
 			attrs = append(attrs, "model_failure", f.Code)
 		}
 		log.Info("no proposal", attrs...)
+	}
+	for _, b := range records[broker.AuditRecord](s.broker) {
+		if b.CorrelationID == correlationID {
+			attrs := []any{"status", b.Status, "outcome", b.Outcome}
+			if b.Reason != "" {
+				attrs = append(attrs, "reason", b.Reason)
+			}
+			log.Info("broker", attrs...)
+		}
 	}
 	for _, w := range records[warden.AuditRecord](s.warden) {
 		if w.CorrelationID == correlationID {

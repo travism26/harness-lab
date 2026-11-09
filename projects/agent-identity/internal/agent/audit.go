@@ -44,6 +44,11 @@ type Proposal struct {
 type ModelFailure struct {
 	Kind string `json:"kind"`
 	Code string `json:"code"`
+	// BrokerStatus and BrokerReason are the Broker's status and reason code
+	// when it refused or failed the request, so this log explains a
+	// Model-unreachable Reply on its own.
+	BrokerStatus int    `json:"broker_status,omitempty"`
+	BrokerReason string `json:"broker_reason,omitempty"`
 }
 
 // ModelCall is the audit data of one Model call.
@@ -51,6 +56,13 @@ type ModelCall struct {
 	RequestID string  `json:"request_id,omitempty"`
 	Provider  string  `json:"provider"`
 	Cost      float64 `json:"cost"`
+	// Model, the token counts and BrokerReported are set only through the
+	// Broker. BrokerReported says provider, model, cost and request id are what
+	// the Broker told the Agent; the Broker's own record is the authoritative one.
+	Model          string `json:"model,omitempty"`
+	InputTokens    int    `json:"input_tokens,omitempty"`
+	OutputTokens   int    `json:"output_tokens,omitempty"`
+	BrokerReported bool   `json:"broker_reported,omitempty"`
 }
 
 // backendFor labels a provider as the stand-in or live.
@@ -64,12 +76,46 @@ func backendFor(provider string) string {
 const backendStandIn = "stand-in"
 
 // modelCalls keeps only the audit fields of each attempt, never Raw.
-func modelCalls(attempts []modelclient.Attempt) []ModelCall {
+func modelCalls(attempts []modelclient.Attempt, viaBroker bool) []ModelCall {
 	out := make([]ModelCall, 0, len(attempts))
 	for _, a := range attempts {
-		out = append(out, ModelCall{RequestID: a.RequestID, Provider: a.Provider, Cost: a.Cost})
+		c := ModelCall{RequestID: a.RequestID, Provider: a.Provider, Cost: a.Cost}
+		if viaBroker {
+			c.Model, c.InputTokens, c.OutputTokens, c.BrokerReported = a.Model, a.InputTokens, a.OutputTokens, true
+		}
+		out = append(out, c)
 	}
 	return out
+}
+
+// brokerServed is the backend and model the Broker reported on the last call
+// that got a reply, both empty if none did. A stand-in never shows a model id.
+func brokerServed(calls []ModelCall) (backend, model string) {
+	for i := len(calls) - 1; i >= 0; i-- {
+		if p := calls[i].Provider; p != "" {
+			if p == backendStandIn {
+				return backendStandIn, backendStandIn
+			}
+			return backendFor(p), calls[i].Model
+		}
+	}
+	return "", ""
+}
+
+// brokerFooter names what served the question and that the Broker did:
+// "stand-in via broker", "anthropic/claude-haiku-5-5 via broker", or "unknown
+// via broker" when the Broker gave no reply to say.
+func brokerFooter(calls []ModelCall) string {
+	for i := len(calls) - 1; i >= 0; i-- {
+		switch p := calls[i].Provider; p {
+		case "":
+		case backendStandIn:
+			return backendStandIn + " via broker"
+		default:
+			return p + "/" + calls[i].Model + " via broker"
+		}
+	}
+	return "unknown via broker"
 }
 
 // truncate cuts s to at most n characters.
