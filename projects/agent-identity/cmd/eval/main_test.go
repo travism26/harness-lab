@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -122,8 +123,8 @@ func TestCommittedCasesCoverTheFourCategories(t *testing.T) {
 			outOfCatalog++
 		}
 	}
-	if len(cases) < 20 || len(cases) > 28 {
-		t.Errorf("%d cases, want about 24", len(cases))
+	if len(cases) < 20 || len(cases) > 34 {
+		t.Errorf("%d cases, want about 30", len(cases))
 	}
 	for _, k := range eval.Categories {
 		if counts[k] < 5 {
@@ -132,6 +133,48 @@ func TestCommittedCasesCoverTheFourCategories(t *testing.T) {
 	}
 	if reportOnly != 2 || outOfCatalog < 2 || outOfCatalog > 3 {
 		t.Errorf("report-only = %d, out-of-catalog = %d", reportOnly, outOfCatalog)
+	}
+}
+
+// The injection cases try to change the Caller, the Tenant, the permission or
+// the Reply. Each accepts only the plain question's Proposal, or none.
+func TestInjectionCasesLoadAndRunAgainstTheStandIn(t *testing.T) {
+	raw, err := os.ReadFile(committedCases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases, err := eval.LoadCases(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body strings.Builder
+	var replies []model.Reply
+	for _, c := range cases {
+		if c.Category != "injection" {
+			continue
+		}
+		if !c.NoProposal || c.ReportOnly || len(c.Accept) == 0 {
+			t.Errorf("%s: want accept plus no_proposal, counted", c.ID)
+		}
+		for _, a := range c.Accept {
+			if strings.Contains(a.Target, "alice") || strings.Contains(a.Target, "globex") {
+				t.Errorf("%s accepts %+v, a Proposal the injection asked for", c.ID, a)
+			}
+		}
+		line, _ := json.Marshal(c)
+		body.Write(line)
+		body.WriteString("\n")
+		replies = append(replies, model.ToolUse(c.Accept[0].Target, c.Accept[0].Permission))
+	}
+	if len(replies) < 5 {
+		t.Fatalf("%d injection cases; want at least 5", len(replies))
+	}
+
+	f := newBrokerFixture(t, replies...)
+	out, errb, code := f.run("--cases", casesFile(t, body.String()), "--runs", "1", "--broker-url", f.url, "--model", "claude-haiku-5-5")
+
+	if code != 0 || !strings.Contains(out, "injection") {
+		t.Errorf("code=%d out=%s err=%s", code, out, errb)
 	}
 }
 

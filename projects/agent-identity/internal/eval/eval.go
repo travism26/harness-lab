@@ -23,7 +23,7 @@ import (
 )
 
 // Categories lists the case categories in report order.
-var Categories = []string{"named", "self", "paraphrase", "no-proposal"}
+var Categories = []string{"named", "self", "paraphrase", "no-proposal", "injection"}
 
 // Case is one hand-written Eval case.
 type Case struct {

@@ -334,6 +334,8 @@ func TestUnauthenticatedCasesGet401WithTheWardensReasonAndNoUpstreamRequest(t *t
 		{"Basic scheme", "Basic abc", "jwt_svid_malformed"},
 		{"forged payload", wire.BearerFor(forge(t, f.fetch(t, agentID, brokerAudience), "spiffe://example.com/someone-else")), "jwt_svid_signature"},
 		{"wrong audience", wire.BearerFor(f.fetch(t, agentID, "spiffe://example.com/not-the-broker")), "jwt_svid_audience"},
+		{"Bearer with no token", "Bearer ", "jwt_svid_missing"},
+		{"both audiences", wire.BearerFor(f.sign(t, agentID, []string{brokerAudience, wardenAudience}, now, now.Add(time.Minute))), "jwt_svid_audience"},
 		{"the Warden's audience", wire.BearerFor(f.fetch(t, agentID, wardenAudience)), "jwt_svid_audience"},
 		{"expired", wire.BearerFor(f.sign(t, agentID, []string{brokerAudience}, now.Add(-10*time.Minute), now.Add(-5*time.Minute))), "jwt_svid_expired"},
 		{"exp 90s ago", wire.BearerFor(f.sign(t, agentID, []string{brokerAudience}, now.Add(-90*time.Second-5*time.Minute), now.Add(-90*time.Second))), "jwt_svid_expired"},
@@ -793,5 +795,30 @@ func TestThePinIsHeldPerWorkload(t *testing.T) {
 	}
 	if got := f.post(t, wire.BearerFor(f.fetch(t, other, brokerAudience)), ""); got.status != http.StatusForbidden {
 		t.Errorf("model-eval with a lower ceiling: %d; want 403", got.status)
+	}
+}
+
+func TestTwoAuthorizationHeadersAreRefusedWithNoUpstreamRequest(t *testing.T) {
+	f := newFixture(t)
+	good := string(wire.BearerFor(f.fetch(t, agentID, brokerAudience)))
+	req, err := http.NewRequest(http.MethodPost, f.url+wire.PathMessages, strings.NewReader(questionBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Add(wire.HeaderAuthorization, good)
+	req.Header.Add(wire.HeaderAuthorization, good)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized || string(raw) != `{"reason":"jwt_svid_malformed"}`+"\n" {
+		t.Errorf("response = %d %s; want 401 jwt_svid_malformed", resp.StatusCode, raw)
+	}
+	if n := f.up.count(); n != 0 {
+		t.Errorf("%d upstream requests; want 0", n)
 	}
 }

@@ -163,7 +163,7 @@ func (w *Warden) lookup(rw http.ResponseWriter, r *http.Request) {
 	id, rejected := correlationID(r.Header.Get(wire.HeaderCorrelationID))
 	rw.Header().Set(wire.HeaderCorrelationID, id)
 	base := Decision{CorrelationID: id, RejectedCorrelationIDLen: rejected}
-	svid, reason := w.verifyJWTSVID(wire.Bearer(r.Header.Get(wire.HeaderAuthorization)))
+	svid, reason := w.verifyJWTSVID(r.Header.Values(wire.HeaderAuthorization))
 	if svid == nil {
 		d := base
 		d.Status, d.Outcome, d.FailedCheck, d.Reason = http.StatusUnauthorized, OutcomeUnauthenticated, CheckJWTSVID, reason
@@ -287,7 +287,7 @@ func (w *Warden) verifyCallerAssertion(raw wire.CallerAssertion, agent string) (
 
 // verifyJWTSVID checks the Authorization header's JWT-SVID (see svidverify). On
 // failure it returns a nil SVID and the reason code.
-func (w *Warden) verifyJWTSVID(authorization wire.Bearer) (*jwtsvid.SVID, Reason) {
+func (w *Warden) verifyJWTSVID(authorization []string) (*jwtsvid.SVID, Reason) {
 	svid, reason, err := svidverify.Verify(authorization, w.bundles, w.audience)
 	if err != nil {
 		w.log.Debug("jwt-svid rejected", "err", err)

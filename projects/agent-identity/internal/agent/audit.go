@@ -81,7 +81,7 @@ func modelCalls(attempts []modelclient.Attempt) []ModelCall {
 	for _, a := range attempts {
 		out = append(out, ModelCall{
 			RequestID: a.RequestID, Provider: a.Provider, Cost: a.Cost,
-			Model: a.Model, InputTokens: a.InputTokens, OutputTokens: a.OutputTokens, BrokerReported: true,
+			Model: a.Model, InputTokens: a.InputTokens, OutputTokens: a.OutputTokens, BrokerReported: a.Reported,
 		})
 	}
 	return out

@@ -189,7 +189,7 @@ func (b *Broker) messages(rw http.ResponseWriter, r *http.Request) {
 		b.respond(rw, rec, settled{status: status, outcome: OutcomeRefused, reason: reason}, wire.BrokerError{Reason: reason})
 	}
 
-	svid, reason, err := svidverify.Verify(wire.Bearer(r.Header.Get(wire.HeaderAuthorization)), b.bundles, b.audience)
+	svid, reason, err := svidverify.Verify(r.Header.Values(wire.HeaderAuthorization), b.bundles, b.audience)
 	if svid == nil {
 		if err != nil {
 			b.log.Debug("jwt-svid rejected", "err", err)
