@@ -4,16 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/rundir"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
 )
 
@@ -26,21 +24,37 @@ type recordLog struct {
 	mu   sync.Mutex
 	file *os.File
 	buf  bytes.Buffer
+	// readPath, for a log another process writes (a live run's Broker), is the
+	// file records reads; the demo never writes or truncates it. file is nil.
+	readPath string
 }
 
 func (l *recordLog) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.file == nil {
+		return 0, errors.New("audit log is read-only here")
+	}
 	l.buf.Write(p)
 	return l.file.Write(p)
+}
+
+func (l *recordLog) close() {
+	if l.file != nil {
+		l.file.Close()
+	}
 }
 
 // records decodes the lines written so far.
 func records[T any](l *recordLog) []T {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	data := l.buf.Bytes()
+	if l.file == nil {
+		data, _ = os.ReadFile(l.readPath)
+	}
 	var out []T
-	for _, line := range bytes.Split(l.buf.Bytes(), []byte("\n")) {
+	for _, line := range bytes.Split(data, []byte("\n")) {
 		var r T
 		if len(line) > 0 && json.Unmarshal(line, &r) == nil {
 			out = append(out, r)
@@ -58,40 +72,29 @@ type auditSink struct {
 }
 
 // openAudit makes the run directory (out, or a UTC-timestamped one under
-// runsBase) and opens the three logs in it.
-func openAudit(out string) (*auditSink, error) {
-	dir := out
-	if dir == "" {
-		stamp := time.Now().UTC().Format("20060102T150405Z")
-		dir = filepath.Join(runsBase, stamp)
-		for n := 2; ; n++ {
-			err := os.MkdirAll(runsBase, 0o755)
-			if err == nil {
-				err = os.Mkdir(dir, 0o755)
-			}
-			if err == nil {
-				break
-			}
-			if !errors.Is(err, fs.ErrExist) {
-				return nil, err
-			}
-			dir = filepath.Join(runsBase, fmt.Sprintf("%s-%d", stamp, n))
-		}
-	} else if err := os.MkdirAll(dir, 0o755); err != nil {
+// runsBase) and opens the three logs in it. With externalBroker the Broker log
+// is another process's: it is only read, never created or truncated.
+func openAudit(out string, externalBroker bool) (*auditSink, error) {
+	dir, err := rundir.Make(out, runsBase)
+	if err != nil {
 		return nil, err
 	}
 	s := &auditSink{dir: dir}
-	var err error
 	if s.agent, err = openLog(filepath.Join(dir, "agent.audit.jsonl")); err != nil {
 		return nil, err
 	}
 	if s.warden, err = openLog(filepath.Join(dir, "warden.audit.jsonl")); err != nil {
-		s.agent.file.Close()
+		s.agent.close()
 		return nil, err
 	}
-	if s.broker, err = openLog(filepath.Join(dir, "broker.audit.jsonl")); err != nil {
-		s.agent.file.Close()
-		s.warden.file.Close()
+	brokerPath := filepath.Join(dir, "broker.audit.jsonl")
+	if externalBroker {
+		s.broker = &recordLog{readPath: brokerPath}
+		return s, nil
+	}
+	if s.broker, err = openLog(brokerPath); err != nil {
+		s.agent.close()
+		s.warden.close()
 		return nil, err
 	}
 	return s, nil
@@ -106,9 +109,9 @@ func openLog(path string) (*recordLog, error) {
 }
 
 func (s *auditSink) close() {
-	s.agent.file.Close()
-	s.warden.file.Close()
-	s.broker.file.Close()
+	s.agent.close()
+	s.warden.close()
+	s.broker.close()
 }
 
 // trace logs the steps of one question, built from the Audit records just

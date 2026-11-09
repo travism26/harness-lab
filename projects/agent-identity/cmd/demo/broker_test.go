@@ -29,7 +29,7 @@ func TestCrossAudienceTokensFailAtTheOtherHop(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ids.Close()
-	sink, err := openAudit(filepath.Join(t.TempDir(), "run"))
+	sink, err := openAudit(filepath.Join(t.TempDir(), "run"), false)
 	if err != nil {
 		t.Fatal(err)
 	}

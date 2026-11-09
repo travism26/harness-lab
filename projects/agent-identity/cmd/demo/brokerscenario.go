@@ -49,6 +49,11 @@ func startStandInBroker(opts options, log *slog.Logger) (*model.Server, *broker.
 // unlisted workload (403) and a swapped system prompt (403 outside_pin). The
 // refusals reach no Model.
 func runBroker(ctx context.Context, stdout io.Writer, log *slog.Logger, opts options) error {
+	if opts.modelCfg != nil {
+		// The real Broker owns broker.audit.jsonl and holds a real key.
+		fmt.Fprintln(stdout, "note: skipped: a live run uses the separate Broker process, not the stand-in one")
+		return nil
+	}
 	m, srv, stop, err := startStandInBroker(opts, log)
 	if err != nil {
 		return err

@@ -70,3 +70,23 @@ func TestSelectedProviderCarriesItsRoot(t *testing.T) {
 		t.Errorf("BaseURL = %q", got.BaseURL)
 	}
 }
+
+// Choose is the ADR 0003 rule on its own: it names the provider and never
+// reports a missing key, so a command can say what it chose before Select
+// fails on the key.
+func TestChooseAppliesTheRuleWithoutNeedingAKey(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"openrouter", map[string]string{"ANTHROPIC_API_KEY": "a"}, "openrouter"},
+		{"", map[string]string{"ANTHROPIC_API_KEY": "a", "OPENROUTER_API_KEY": "o"}, "anthropic"},
+		{"", map[string]string{"OPENROUTER_API_KEY": "o"}, "openrouter"},
+		{"", nil, "openrouter"},
+	} {
+		if got := Choose(tc.name, env(tc.env)); got != tc.want {
+			t.Errorf("Choose(%q, %v) = %q, want %q", tc.name, tc.env, got, tc.want)
+		}
+	}
+}

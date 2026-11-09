@@ -356,7 +356,13 @@ type Server struct {
 
 // ListenLoopback serves the Broker on 127.0.0.1 at a free port.
 func (b *Broker) ListenLoopback() (*Server, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	return b.Listen("127.0.0.1:0")
+}
+
+// Listen serves the Broker on addr, a host:port the caller has already checked
+// is where the Broker should be reachable.
+func (b *Broker) Listen(addr string) (*Server, error) {
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}

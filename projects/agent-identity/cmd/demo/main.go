@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -20,7 +21,6 @@ import (
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/login"
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
 )
@@ -38,9 +38,10 @@ type options struct {
 	// Out is the run directory for the Audit logs; empty means a new
 	// timestamped one under runs/.
 	Out string
-	// Live sends the Model call to a live provider; Model and Provider refine it.
-	Live            bool
-	Model, Provider string
+	// Live sends the Model call through the Broker at BrokerURL, a separate
+	// process that holds the provider key. The demo reads no key.
+	Live      bool
+	BrokerURL string
 	// SpiffeSocket is the permission-agent's spiffecli socket; empty means the
 	// in-process stand-in. SpiffeSocketWarden defaults beside it. SpiffeSocketOther
 	// is the unlisted-agent's, for the 403 in tokens.
@@ -50,7 +51,7 @@ type options struct {
 	audit *auditSink
 	// ids is where this run gets JWT-SVIDs and the Warden's bundle.
 	ids identities
-	// modelCfg is the live Model's config, nil for the stand-in.
+	// modelCfg is the live Model's config (the Broker process), nil for the stand-in.
 	modelCfg *agent.ModelConfig
 }
 
@@ -73,7 +74,9 @@ var scenarios = []scenario{
 }
 
 const usage = "usage: demo <tokens|scripted|broker|tour> [--as tenant/name] [--out dir] [live flags]\n       demo ask \"<question>\" [--as tenant/name] [--out dir] [live flags]\n" +
-	"live flags: [--live [--model id] [--provider anthropic|openrouter]] [--spiffe-socket path [--spiffe-socket-warden path] [--spiffe-socket-other path]]\n"
+	"live flags: [--live --broker-url url --spiffe-socket path [--spiffe-socket-warden path] [--spiffe-socket-other path]]\n" +
+	"            (--live sends the Model call through a running Broker; start it with `go run ./cmd/broker` and give both the same --out)\n" +
+	"            [--spiffe-socket path ...] alone uses spiffecli for the Agent's identity\n"
 
 // run executes the subcommand and returns the exit code: 0 when the scenario
 // ran (a 401 or 403 is a normal result), 1 when setup failed, 2 on bad usage.
@@ -93,9 +96,8 @@ func runWith(args []string, stdout, stderr io.Writer, d deps) int {
 	var opts options
 	fs.StringVar(&opts.As, "as", "acme/alice", "the Caller to sign for, as tenant/name")
 	fs.StringVar(&opts.Out, "out", "", "the directory for the Audit logs (default runs/<UTC timestamp>)")
-	fs.BoolVar(&opts.Live, "live", false, "send the Model call to a live provider (ask)")
-	fs.StringVar(&opts.Model, "model", "", "with --live, the model id (default by provider)")
-	fs.StringVar(&opts.Provider, "provider", "", "with --live, anthropic or openrouter (default: anthropic if its key is set, else openrouter)")
+	fs.BoolVar(&opts.Live, "live", false, "send the Model call through a running Broker (ask)")
+	fs.StringVar(&opts.BrokerURL, "broker-url", "", "with --live, the Broker's URL, as it prints at start-up")
 	fs.StringVar(&opts.SpiffeSocket, "spiffe-socket", "", "use the spiffecli Workload API on this socket (the permission-agent's)")
 	fs.StringVar(&opts.SpiffeSocketWarden, "spiffe-socket-warden", "", "with --spiffe-socket, the Warden's socket (default warden.sock beside it)")
 	fs.StringVar(&opts.SpiffeSocketOther, "spiffe-socket-other", "", "with --spiffe-socket, the unlisted-agent's socket, for the 403 in tokens")
@@ -134,30 +136,20 @@ func runWith(args []string, stdout, stderr io.Writer, d deps) int {
 	}
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 	// Every choice that can fail is made here, before the first request.
+	if opts.BrokerURL != "" && !opts.Live {
+		fmt.Fprintf(stderr, "demo: --broker-url needs --live\n%s", usage)
+		return 2
+	}
 	if opts.Live && slices.ContainsFunc(chosen, func(s scenario) bool { return s.usesModel }) {
-		getenv := d.getenv
-		if d.envFile != "" {
-			var err error
-			if getenv, err = provider.WithDotEnv(d.envFile, d.getenv); err != nil {
-				fmt.Fprintf(stderr, "demo: --live: %v\n", err)
-				return 2
-			}
-		}
-		choice, err := provider.Select(opts.Provider, getenv)
-		if err != nil {
-			fmt.Fprintf(stderr, "demo: --live: %v\n", err)
+		if u, err := url.Parse(opts.BrokerURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			fmt.Fprintf(stderr, "demo: --live needs --broker-url, the http(s) URL the Broker printed at start-up\n%s", usage)
 			return 2
 		}
-		mc := &agent.ModelConfig{BaseURL: choice.BaseURL, APIKey: choice.Key, Model: opts.Model, Provider: choice.Name}
-		if d.modelBaseURL != "" {
-			mc.BaseURL = d.modelBaseURL
+		if opts.SpiffeSocket == "" {
+			fmt.Fprintf(stderr, "demo: --live needs --spiffe-socket: the Broker verifies the Agent's JWT-SVID from spiffecli\n%s", usage)
+			return 2
 		}
-		opts.modelCfg = mc
-		used := opts.Model
-		if used == "" {
-			used = agent.DefaultModel(choice.Name)
-		}
-		fmt.Fprintf(stderr, "demo: live Model: provider %s, model %s\n", choice.Name, used)
+		opts.modelCfg = &agent.ModelConfig{BaseURL: opts.BrokerURL, BrokerAudience: brokerAud}
 	}
 	if opts.SpiffeSocket != "" {
 		ids, err := openSpiffe(context.Background(), d, opts.SpiffeSocket, opts.SpiffeSocketWarden, opts.SpiffeSocketOther)
@@ -175,7 +167,9 @@ func runWith(args []string, stdout, stderr io.Writer, d deps) int {
 		opts.ids = ids
 	}
 	defer opts.ids.Close()
-	sink, err := openAudit(opts.Out)
+	// A live run's Broker is another process and writes its own log into the
+	// same run directory, which the demo only reads.
+	sink, err := openAudit(opts.Out, opts.modelCfg != nil)
 	if err != nil {
 		log.Error("demo could not open the run directory", "err", err)
 		return 1
@@ -272,8 +266,8 @@ func (e *env) agentFor(id spiffeid.ID, aud string) (*agent.Agent, error) {
 
 // runAsk asks the question through the permission-agent and prints the Reply.
 // The stand-in Model sits behind a real Broker on loopback, which the Agent
-// reaches on its JWT-SVID alone; a live run (--live) keeps the Model client's
-// key mode. The step trace goes to the log.
+// reaches on its JWT-SVID alone; a live run (--live) reaches the Broker process
+// at --broker-url the same way and holds no key. The step trace goes to the log.
 func runAsk(ctx context.Context, stdout io.Writer, log *slog.Logger, opts options) error {
 	e, stop, err := setup(log, opts)
 	if err != nil {
