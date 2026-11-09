@@ -2,23 +2,25 @@ package warden
 
 import (
 	"errors"
-	"strings"
 
 	"github.com/go-jose/go-jose/v4/jwt"
+
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/svidverify"
 )
 
 // Reason is a closed-set code for why a token failed. It is safe to record: it
-// never carries the raw error.
-type Reason string
+// never carries the raw error. The jwt_svid_* codes are the Broker's too, so
+// they live in svidverify.
+type Reason = svidverify.Reason
 
 const (
-	ReasonJWTSVIDMissing   Reason = "jwt_svid_missing"
-	ReasonJWTSVIDMalformed Reason = "jwt_svid_malformed"
-	ReasonJWTSVIDSignature Reason = "jwt_svid_signature"
-	ReasonJWTSVIDExpired   Reason = "jwt_svid_expired"
-	ReasonJWTSVIDAudience  Reason = "jwt_svid_audience"
-	ReasonJWTSVIDLifetime  Reason = "jwt_svid_lifetime"
-	ReasonJWTSVIDOther     Reason = "jwt_svid_other"
+	ReasonJWTSVIDMissing   = svidverify.ReasonMissing
+	ReasonJWTSVIDMalformed = svidverify.ReasonMalformed
+	ReasonJWTSVIDSignature = svidverify.ReasonSignature
+	ReasonJWTSVIDExpired   = svidverify.ReasonExpired
+	ReasonJWTSVIDAudience  = svidverify.ReasonAudience
+	ReasonJWTSVIDLifetime  = svidverify.ReasonLifetime
+	ReasonJWTSVIDOther     = svidverify.ReasonOther
 
 	ReasonAssertionMissing        Reason = "assertion_missing"
 	ReasonAssertionMalformed      Reason = "assertion_malformed"
@@ -31,34 +33,9 @@ const (
 	ReasonAssertionUnknownCaller  Reason = "assertion_unknown_caller"
 )
 
-// jwtsvidReasons maps go-spiffe's error text to a Reason, first match wins. It
-// is pinned by reason_test.go.
-var jwtsvidReasons = []struct {
-	prefix string
-	reason Reason
-}{
-	{"jwtsvid: unable to parse JWT token", ReasonJWTSVIDMalformed},
-	{"jwtsvid: token header missing key id", ReasonJWTSVIDMalformed},
-	{"jwtsvid: token header type not equal", ReasonJWTSVIDMalformed},
-	{"jwtsvid: token missing ", ReasonJWTSVIDMalformed},
-	{"jwtsvid: token has an invalid subject claim", ReasonJWTSVIDMalformed},
-	{"jwtsvid: no JWT authority ", ReasonJWTSVIDSignature},
-	{"jwtsvid: unable to get claims from token: go-jose/go-jose: error in cryptographic primitive", ReasonJWTSVIDSignature},
-	{"jwtsvid: token has expired", ReasonJWTSVIDExpired},
-	{"jwtsvid: expected audience in ", ReasonJWTSVIDAudience},
-}
-
 // JWTSVIDReason maps an error from jwtsvid.ParseAndValidate to a Reason. An
 // error it does not know is ReasonJWTSVIDOther.
-func JWTSVIDReason(err error) Reason {
-	msg := err.Error()
-	for _, r := range jwtsvidReasons {
-		if strings.HasPrefix(msg, r.prefix) {
-			return r.reason
-		}
-	}
-	return ReasonJWTSVIDOther
-}
+func JWTSVIDReason(err error) Reason { return svidverify.ReasonFor(err) }
 
 // AssertionReason maps a go-jose claim validation error to a Reason. An error it
 // does not know, including a token issued in the future, is ReasonAssertionOther.

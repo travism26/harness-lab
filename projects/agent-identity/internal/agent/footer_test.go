@@ -6,27 +6,30 @@ import (
 	"testing"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
 )
 
-// The footer names the backend, stand-in or live, never the provider: it says
-// live exactly when the Model call was to a live provider.
-func TestFooterNamesTheBackend(t *testing.T) {
+// The footer names what the Broker says served the question, and that the
+// Broker did: the provider and model for a live provider, "stand-in" for the
+// stand-in. The Agent holds no key in any of the three.
+func TestFooterNamesWhatTheBrokerSaysServedTheQuestion(t *testing.T) {
 	for _, tc := range []struct {
 		provider string
 		want     string
 	}{
-		{"stand-in", "[model: stand-in · id "},
-		{"anthropic", "[model: live · id "},
-		{"openrouter", "[model: live · id "},
+		{"stand-in", "[model: stand-in via broker · id "},
+		{"anthropic", "[model: anthropic/claude-haiku-5-5 via broker · id "},
+		{"openrouter", "[model: openrouter/anthropic/claude-haiku-5.5 via broker · id "},
 	} {
 		t.Run(tc.provider, func(t *testing.T) {
 			e := newAskEnv(t)
 			m := model.New(model.ToolUse("tom", "invoice:approve"))
 			defer m.Close()
+			prov, _ := provider.Lookup(tc.provider)
 			a, err := agent.New(agent.Config{
 				WardenURL: e.url, Audience: wardenAudience, Source: e.source,
-				Model: &agent.ModelConfig{BaseURL: m.URL, APIKey: "k", Provider: tc.provider},
+				Model: &agent.ModelConfig{BaseURL: startBroker(t, e.bundles, m.URL, prov, "provider-key"), BrokerAudience: brokerAudience},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -37,6 +40,9 @@ func TestFooterNamesTheBackend(t *testing.T) {
 			}
 			if !strings.Contains(r.Text, "\n"+tc.want+r.CorrelationID+"]") {
 				t.Errorf("footer wrong: %q; want prefix %q", r.Text, tc.want)
+			}
+			if strings.Contains(r.Text, "provider-key") {
+				t.Error("the provider key reached the Reply")
 			}
 		})
 	}

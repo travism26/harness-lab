@@ -1,4 +1,4 @@
-// Command trustlint runs the trust-boundary analyzers R1–R4 over the packages
+// Command trustlint runs the trust-boundary analyzers R1–R5 over the packages
 // it is given. The analyzers are configured in
 // projects/agent-identity/internal/trustlint/config.go.
 package main

@@ -23,7 +23,7 @@ func TestAskYes(t *testing.T) {
 	if firstLine(out) != want {
 		t.Errorf("stdout first line %q; want %q", firstLine(out), want)
 	}
-	if !strings.Contains(out, "\n[model: stand-in · id ") || strings.Count(out, "\n") != 2 {
+	if !strings.Contains(out, "\n[model: stand-in via broker · id ") || strings.Count(out, "\n") != 2 {
 		t.Errorf("stdout should be the Reply and its footer only: %q", out)
 	}
 	if !strings.Contains(errOut, "proposal") {

@@ -24,12 +24,14 @@ func TestSpiffecliConfig(t *testing.T) {
 	want := []string{
 		`td."example.com".workload.permission-agent`,
 		`td."example.com".workload.warden`,
+		`td."example.com".workload.model-broker`,
+		`td."example.com".workload.model-eval`,
 		`td."example.com".workload.unlisted-agent`,
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("tables %q; want %q (and no [federation])", got, want)
 	}
-	for _, name := range []string{"permission-agent", "warden", "unlisted-agent"} {
+	for _, name := range []string{"permission-agent", "warden", "model-broker", "model-eval", "unlisted-agent"} {
 		sock := regexp.MustCompile(`(?m)^socket_path\s*=\s*"(/tmp/agent-identity/` + name + `\.sock)"`).FindStringSubmatch(cfg)
 		if sock == nil {
 			t.Errorf("no socket under /tmp/agent-identity/ for %s", name)
@@ -37,8 +39,8 @@ func TestSpiffecliConfig(t *testing.T) {
 			t.Errorf("socket path %q is too long for macOS", sock[1])
 		}
 	}
-	if n := len(regexp.MustCompile(`(?m)^jwt_svid_ttl\s*=\s*"5m"`).FindAllString(cfg, -1)); n != 3 {
-		t.Errorf("%d workloads set jwt_svid_ttl = \"5m\"; want 3", n)
+	if n := len(regexp.MustCompile(`(?m)^jwt_svid_ttl\s*=\s*"5m"`).FindAllString(cfg, -1)); n != 5 {
+		t.Errorf("%d workloads set jwt_svid_ttl = \"5m\"; want 5", n)
 	}
 	if strings.Contains(cfg, "federation") && !regexp.MustCompile(`(?m)^#.*federation`).MatchString(cfg) {
 		t.Error("the config must have no [federation] table")

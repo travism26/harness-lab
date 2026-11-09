@@ -15,6 +15,7 @@ import (
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/login"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/model"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/standin/workload"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
@@ -27,14 +28,17 @@ type countingSource struct {
 }
 
 func (c *countingSource) FetchJWTSVID(ctx context.Context, p jwtsvid.Params) (*jwtsvid.SVID, error) {
-	c.n.Add(1)
+	if p.Audience == wardenAudience {
+		c.n.Add(1)
+	}
 	return c.inner.FetchJWTSVID(ctx, p)
 }
 
 type askEnv struct {
-	login  *login.Login
-	source *countingSource
-	url    string
+	login   *login.Login
+	source  *countingSource
+	bundles *workload.Source
+	url     string
 }
 
 func newAskEnv(t *testing.T) *askEnv {
@@ -63,7 +67,7 @@ func newAskEnv(t *testing.T) *askEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &askEnv{login: lg, source: &countingSource{inner: wl}, url: srv.URL}
+	return &askEnv{login: lg, source: &countingSource{inner: wl}, bundles: source, url: srv.URL}
 }
 
 func (e *askEnv) agent(t *testing.T, m *model.Server, wardenURL string, timeout time.Duration) *agent.Agent {
@@ -71,7 +75,7 @@ func (e *askEnv) agent(t *testing.T, m *model.Server, wardenURL string, timeout 
 	a, err := agent.New(agent.Config{
 		WardenURL: wardenURL, Audience: wardenAudience, Source: e.source,
 		WardenTimeout: timeout,
-		Model:         &agent.ModelConfig{BaseURL: m.URL, APIKey: "k", Provider: "stand-in"},
+		Model:         &agent.ModelConfig{BaseURL: startBroker(t, e.bundles, m.URL, provider.StandIn, ""), BrokerAudience: brokerAudience},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +92,7 @@ func (e *askEnv) assertion(t *testing.T, caller string) wire.CallerAssertion {
 	return as
 }
 
-const footerPrefix = "[model: stand-in · id "
+const footerPrefix = "[model: stand-in via broker · id "
 
 func ask(t *testing.T, a *agent.Agent, as wire.CallerAssertion, q string) agent.Reply {
 	t.Helper()
@@ -96,7 +100,12 @@ func ask(t *testing.T, a *agent.Agent, as wire.CallerAssertion, q string) agent.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(r.Text, "]") || !strings.Contains(r.Text, "\n"+footerPrefix+r.CorrelationID+"]") || r.CorrelationID == "" {
+	// A Model the Broker could not reach has no provider to name.
+	prefix := footerPrefix
+	if r.ID == agent.ReplyModelUnreachable {
+		prefix = "[model: unknown via broker · id "
+	}
+	if !strings.HasSuffix(r.Text, "]") || !strings.Contains(r.Text, "\n"+prefix+r.CorrelationID+"]") || r.CorrelationID == "" {
 		t.Errorf("reply lacks the footer with its Correlation ID: %q", r.Text)
 	}
 	return r

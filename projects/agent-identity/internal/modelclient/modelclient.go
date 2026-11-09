@@ -13,61 +13,57 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/travism26/harness-lab/projects/agent-identity/internal/provider"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/modelrequest"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
 )
 
 const (
-	anthropicVersion = "2026-10-21"
-	toolName         = "lookup_permission"
-	maxTokens        = 1024
-	callTimeout      = 20 * time.Second
-	maxBody          = 1 << 20
+	callTimeout = 20 * time.Second
+	maxBody     = 1 << 20
 )
 
 // Config is what a Client is given at startup.
 type Config struct {
 	// BaseURL is the API root; the client posts to BaseURL + "/v1/messages".
 	BaseURL string
-	APIKey  string
-	// Model defaults to the Provider's DefaultModel in projects/agent-identity/internal/provider.
+	// SVID returns a fresh JWT-SVID for the Broker's audience, called once per
+	// request (the repair retry included). It is required: the Broker is the
+	// only way to a Model, so the client holds no provider key and sends no
+	// provider auth header. BaseURL is the Broker's.
+	SVID func(ctx context.Context) (wire.JWTSVID, error)
+	// CorrelationID is sent to the Broker in the Correlation-Id header.
+	CorrelationID string
+	// Model names the model the request asks for. Empty means the request names
+	// none and the Broker fills it in (the Agent); the Eval names one from its
+	// sweep.
 	Model string
-	// Provider is "anthropic", "openrouter" or "stand-in". It labels each
-	// Attempt and sets the auth style and the default Model (projects/agent-identity/internal/provider).
-	Provider string
 	// HTTPClient makes the request. Nil means http.DefaultClient; every call
 	// also gets a 20s context deadline.
 	HTTPClient *http.Client
 }
 
-// Model is the model id the Client calls.
-func (c *Client) Model() string { return c.cfg.Model }
-
-// Client calls the Model.
+// Client calls the Model through the Broker.
 type Client struct {
-	cfg  Config
-	prov provider.Provider
+	cfg Config
 }
 
-// New builds a Client. An empty BaseURL or APIKey is an error.
+// New builds a Client. An empty BaseURL, or no SVID function, is an error.
 func New(cfg Config) (*Client, error) {
 	switch {
 	case cfg.BaseURL == "":
 		return nil, errors.New("modelclient: a base URL is required")
-	case cfg.APIKey == "":
-		return nil, errors.New("modelclient: an API key is required")
-	}
-	prov, _ := provider.Lookup(cfg.Provider)
-	if cfg.Model == "" {
-		cfg.Model = prov.DefaultModel
+	case cfg.SVID == nil:
+		return nil, errors.New("modelclient: a JWT-SVID source is required")
 	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = http.DefaultClient
 	}
 	cfg.BaseURL = strings.TrimSuffix(cfg.BaseURL, "/")
-	return &Client{cfg: cfg, prov: prov}, nil
+	return &Client{cfg: cfg}, nil
 }
 
 // Proposal is what the Model proposes: a name from the question or "self", and
@@ -81,8 +77,12 @@ type Proposal struct {
 type Attempt struct {
 	RequestID string
 	Provider  string
-	// Cost is in USD: reported by OpenRouter, computed from usage for
-	// Anthropic, 0 for the stand-in.
+	// Provider, Model, the token counts, Cost and RequestID are what the Broker
+	// reported.
+	Model        string
+	InputTokens  int
+	OutputTokens int
+	// Cost is in USD, as the Broker reported it.
 	Cost float64
 	// Raw is the reply body as received, for the Eval report. Empty when no
 	// reply was read.
@@ -125,7 +125,12 @@ type Failure struct {
 	Code FailureCode
 	// Text is the Model's text on a text-only reply, else empty.
 	Text string
-	msg  string
+	// Status is the HTTP status of a non-2xx Broker reply, else 0. Reason is the
+	// Broker's reason code on a refusal, else empty; it is kept only if it looks
+	// like a code, never as free text.
+	Status int
+	Reason string
+	msg    string
 }
 
 func (f *Failure) Error() string { return fmt.Sprintf("modelclient: %s %s: %s", f.Kind, f.Code, f.msg) }
@@ -134,30 +139,6 @@ var (
 	targetRe     = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	permissionRe = regexp.MustCompile(`^[a-z]+:[a-z]+$`)
 )
-
-const system = "You turn one question about who holds a permission into one call of the " +
-	"lookup_permission tool. target is the name of the person or agent from the question, or " +
-	"\"self\" when the question is about the asker. permission is resource:action in lowercase " +
-	"letters, such as invoice:approve. The resource is singular: invoices becomes invoice, " +
-	"permissions becomes permission. Two actions are known: read, which also covers view, see " +
-	"and look up, and approve, which also covers sign off. Write any other permission as asked, " +
-	"without mapping it onto these. Call the tool exactly once. If the question cannot be " +
-	"turned into one lookup, do not call it."
-
-var toolDef = map[string]any{
-	"name":        toolName,
-	"description": "Look up whether one target holds one permission.",
-	"strict":      true,
-	"input_schema": map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"target":     map[string]any{"type": "string", "description": "a name from the question in lowercase (Tom becomes tom), or self"},
-			"permission": map[string]any{"type": "string", "description": "resource:action, lowercase"},
-		},
-		"required":             []string{"target", "permission"},
-		"additionalProperties": false,
-	},
-}
 
 // block is one content block of a reply. It keeps its bytes as received, so a
 // repair retry echoes it unchanged: the API rejects a thinking block that comes
@@ -195,9 +176,8 @@ type response struct {
 	StopReason string  `json:"stop_reason"`
 	Content    []block `json:"content"`
 	Usage      struct {
-		InputTokens  float64  `json:"input_tokens"`
-		OutputTokens float64  `json:"output_tokens"`
-		Cost         *float64 `json:"cost"`
+		InputTokens  float64 `json:"input_tokens"`
+		OutputTokens float64 `json:"output_tokens"`
 	} `json:"usage"`
 }
 
@@ -249,17 +229,29 @@ func providerError(msg string) *Failure {
 	return &Failure{Kind: Fatal, Code: CodeProviderError, msg: msg}
 }
 
+var reasonRe = regexp.MustCompile(`^[a-z0-9_]{1,40}$`)
+
+// brokerFailure is the provider error for a non-2xx Broker reply, keeping its
+// status and its reason code.
+func brokerFailure(status int, raw []byte) *Failure {
+	f := providerError(fmt.Sprintf("status %d", status))
+	f.Status = status
+	var body wire.BrokerError
+	if json.Unmarshal(raw, &body) == nil && reasonRe.MatchString(body.Reason) {
+		f.Reason = body.Reason
+	}
+	return f
+}
+
 func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, error) {
-	attempt := Attempt{Provider: c.cfg.Provider}
-	body, err := json.Marshal(map[string]any{
-		"model":         c.cfg.Model,
-		"max_tokens":    maxTokens,
-		"system":        system,
-		"messages":      messages,
-		"tools":         []any{toolDef},
-		"tool_choice":   map[string]any{"type": "auto", "disable_parallel_tool_use": true},
-		"output_config": map[string]any{"effort": "low"},
-	})
+	attempt := Attempt{}
+	fields := modelrequest.Fields(messages)
+	if c.cfg.Model != "" {
+		// The Broker sets the model unless the caller named one (the Eval does,
+		// to pick from its sweep).
+		fields["model"] = c.cfg.Model
+	}
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return response{}, attempt, providerError("could not encode the request")
 	}
@@ -270,11 +262,15 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 		return response{}, attempt, providerError("could not build the request")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.prov.BearerAuth {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	} else {
-		req.Header.Set("x-api-key", c.cfg.APIKey)
-		req.Header.Set("anthropic-version", anthropicVersion)
+	// A fresh token for every request, so none is sent twice or expires
+	// between attempts. The error is dropped: it may name the socket.
+	svid, err := c.cfg.SVID(ctx)
+	if err != nil {
+		return response{}, attempt, providerError("could not fetch a JWT-SVID")
+	}
+	req.Header.Set(wire.HeaderAuthorization, string(wire.BearerFor(svid)))
+	if c.cfg.CorrelationID != "" {
+		req.Header.Set(wire.HeaderCorrelationID, c.cfg.CorrelationID)
 	}
 	hr, err := c.cfg.HTTPClient.Do(req)
 	if err != nil {
@@ -286,6 +282,9 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 	raw, err := io.ReadAll(io.LimitReader(hr.Body, maxBody))
 	attempt.Raw = string(raw)
 	if err != nil || hr.StatusCode != http.StatusOK {
+		if err == nil {
+			return response{}, attempt, brokerFailure(hr.StatusCode, raw)
+		}
 		return response{}, attempt, providerError(fmt.Sprintf("status %d", hr.StatusCode))
 	}
 	var out response
@@ -295,29 +294,15 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 	if attempt.RequestID == "" {
 		attempt.RequestID = out.ID
 	}
-	attempt.Cost = c.cost(out)
+	// The Broker reports who served the request and what it cost.
+	attempt.Provider = hr.Header.Get(wire.HeaderBrokerProvider)
+	attempt.Model = hr.Header.Get(wire.HeaderBrokerModel)
+	attempt.Cost, _ = strconv.ParseFloat(hr.Header.Get(wire.HeaderBrokerCost), 64)
+	attempt.InputTokens, attempt.OutputTokens = int(out.Usage.InputTokens), int(out.Usage.OutputTokens)
+	if id := hr.Header.Get(wire.HeaderBrokerRequestID); id != "" {
+		attempt.RequestID = id
+	}
 	return out, attempt, nil
-}
-
-// price is USD per million input and output tokens.
-type price struct{ input, output float64 }
-
-// pricesPerMillion is the price per model id (projects/agent-identity/docs/adr/0003-anthropic-api-as-a-second-model-provider.md).
-var pricesPerMillion = map[string]price{
-	"claude-haiku-5-5":  {input: 0.10, output: 0.50},
-	"claude-sonnet-5-5": {input: 2, output: 10},
-	"claude-opus-5-5":   {input: 4, output: 20},
-}
-
-func (c *Client) cost(r response) float64 {
-	if r.Usage.Cost != nil {
-		return *r.Usage.Cost
-	}
-	if !c.prov.PricedByTable {
-		return 0
-	}
-	p := pricesPerMillion[c.cfg.Model]
-	return (r.Usage.InputTokens*p.input + r.Usage.OutputTokens*p.output) / 1e6
 }
 
 // gate applies the five rules in order.
@@ -344,10 +329,10 @@ func gate(r response) (Proposal, *Failure) {
 		}
 	}
 	if len(uses) != 1 {
-		return Proposal{}, &Failure{Kind: Retryable, Code: CodeToolUseCount, msg: fmt.Sprintf("call %s exactly once, not %d times", toolName, len(uses))}
+		return Proposal{}, &Failure{Kind: Retryable, Code: CodeToolUseCount, msg: fmt.Sprintf("call %s exactly once, not %d times", modelrequest.ToolName, len(uses))}
 	}
-	if uses[0].Name != toolName {
-		return Proposal{}, &Failure{Kind: Retryable, Code: CodeToolName, msg: "the only tool is " + toolName}
+	if uses[0].Name != modelrequest.ToolName {
+		return Proposal{}, &Failure{Kind: Retryable, Code: CodeToolName, msg: "the only tool is " + modelrequest.ToolName}
 	}
 	var p Proposal
 	dec := json.NewDecoder(bytes.NewReader(uses[0].Input))

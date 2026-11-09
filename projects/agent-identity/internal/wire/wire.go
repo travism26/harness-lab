@@ -1,7 +1,7 @@
-// Package wire holds what crosses the wire between the Agent and the Warden:
-// the token named types, the header names, the Lookup path and the body shapes.
-// It imports nothing else in the Project, so the Agent and the Warden share it
-// without importing each other.
+// Package wire holds what crosses the wire between the Agent, the Warden and the
+// Broker: the token named types, the header names, the Lookup and Messages paths
+// and the body shapes. It imports nothing else in the Project, so those
+// workloads share it without importing each other.
 package wire
 
 // JWTSVID is a serialized JWT-SVID. It is a named type so the trustlint R3
@@ -50,6 +50,35 @@ type Answer struct {
 type ErrorBody struct {
 	Error string `json:"error"`
 }
+
+// PathMessages is the Broker's one endpoint, served for POST only. It is the
+// Messages API path, so the Model client posts to the Broker as to a provider.
+const PathMessages = "/v1/messages"
+
+// Header names the Broker adds to a 2xx response: who served the request and
+// what it cost (USD).
+const (
+	HeaderBrokerProvider  = "X-Broker-Provider"
+	HeaderBrokerModel     = "X-Broker-Model"
+	HeaderBrokerCost      = "X-Broker-Cost"
+	HeaderBrokerRequestID = "X-Broker-Request-Id"
+)
+
+// BrokerError is the body of every non-2xx Broker response. Reason is a
+// jwt_svid_* code or one of the Broker reasons below; UpstreamStatus is set
+// only on upstream_error, and is 0 when the provider could not be reached.
+type BrokerError struct {
+	Reason         string `json:"reason"`
+	UpstreamStatus int    `json:"upstream_status,omitempty"`
+}
+
+// The Broker's own reasons, beside the jwt_svid_* codes it shares with the Warden.
+const (
+	ReasonNotAllowlisted = "not_allowlisted"
+	ReasonOutsidePin     = "outside_pin"
+	ReasonBadRequest     = "bad_request"
+	ReasonUpstreamError  = "upstream_error"
+)
 
 // The closed set of ErrorBody.Error values.
 const (

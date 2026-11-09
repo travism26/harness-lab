@@ -7,7 +7,9 @@
 #         --spiffe-socket-other /tmp/agent-identity/unlisted-agent.sock
 #
 # The Warden takes its bundle from warden.sock, found beside the Agent's socket
-# (override with --spiffe-socket-warden). Sockets stay under /tmp/agent-identity/
+# (override with --spiffe-socket-warden). The Broker command (go run ./cmd/broker)
+# takes its bundle from model-broker.sock. The Eval command (go run ./cmd/eval)
+# fetches its JWT-SVIDs from model-eval.sock. Sockets stay under /tmp/agent-identity/
 # because a macOS socket path may be at most 104 bytes. There is no table for
 # the HTTP bundle endpoint, so nothing listens on :8080.
 
@@ -17,6 +19,14 @@ jwt_svid_ttl = "5m"
 
 [td."example.com".workload.warden]
 socket_path  = "/tmp/agent-identity/warden.sock"
+jwt_svid_ttl = "5m"
+
+[td."example.com".workload.model-broker]
+socket_path  = "/tmp/agent-identity/model-broker.sock"
+jwt_svid_ttl = "5m"
+
+[td."example.com".workload.model-eval]
+socket_path  = "/tmp/agent-identity/model-eval.sock"
 jwt_svid_ttl = "5m"
 
 [td."example.com".workload.unlisted-agent]

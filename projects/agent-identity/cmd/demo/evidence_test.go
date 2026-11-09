@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/login"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
 )
@@ -26,6 +27,9 @@ var (
 	portMask          = regexp.MustCompile(`127\.0\.0\.1:[0-9]+`)
 	// jwtShaped is three base64url segments joined by dots, the compact JWS form.
 	jwtShaped = regexp.MustCompile(`[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
+	// keyShaped is what a provider key looks like: Anthropic's and OpenRouter's
+	// both start sk- and run on in base64url.
+	keyShaped = regexp.MustCompile(`sk-[A-Za-z0-9_-]{8,}`)
 )
 
 // maskTour replaces what changes from run to run: Correlation IDs,
@@ -63,7 +67,9 @@ func TestTourTranscript(t *testing.T) {
 
 // TestSampleRunLogs holds the committed live Audit logs to the record structs:
 // every line decodes strictly, the two files share their Correlation IDs, and
-// no token appears.
+// no token or key appears. sample-run predates the Broker, so the Broker's log
+// is checked here from a fresh stand-in tour, and from a live run in
+// TestLiveBrokerRunLogs.
 func TestSampleRunLogs(t *testing.T) {
 	sample := filepath.Join(evidenceDir, "sample-run")
 	agentRecs := decodeFile[agent.AuditRecord](t, filepath.Join(sample, "agent.audit.jsonl"))
@@ -77,12 +83,116 @@ func TestSampleRunLogs(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"agent.audit.jsonl", "warden.audit.jsonl"} {
-		raw, err := os.ReadFile(filepath.Join(sample, name))
-		if err != nil {
-			t.Fatal(err)
+		assertNoTokenOrKey(t, filepath.Join(sample, name))
+	}
+
+	// The tour's three logs: strict decoding, one Correlation ID per question
+	// across all three, and no token or key in any of them.
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"tour", "--out", dir}, &stdout, &stderr); code != 0 {
+		t.Fatalf("tour exit %d, stderr: %s", code, stderr.String())
+	}
+	tourAgent := decodeFile[agent.AuditRecord](t, filepath.Join(dir, "agent.audit.jsonl"))
+	tourBroker := decodeFile[broker.AuditRecord](t, filepath.Join(dir, "broker.audit.jsonl"))
+	// One record for the tour's question, then the broker scenario's four.
+	if len(tourBroker) != 5 {
+		t.Fatalf("got %d Broker records, want 5 (the tour's question and four broker outcomes)", len(tourBroker))
+	}
+	for i, want := range []struct {
+		status int
+		reason string
+	}{{200, ""}, {401, "jwt_svid_audience"}, {403, "not_allowlisted"}, {403, "outside_pin"}} {
+		if r := tourBroker[i+1]; r.Status != want.status || r.Reason != want.reason {
+			t.Errorf("broker scenario record %d = status %d reason %q; want %d %q", i, r.Status, r.Reason, want.status, want.reason)
 		}
-		if m := jwtShaped.Find(raw); m != nil {
-			t.Errorf("%s holds a JWT-shaped string: %.20s…", name, m)
+	}
+	b := tourBroker[0]
+	var asked agent.AuditRecord
+	for _, r := range tourAgent {
+		if r.Question != "" {
+			asked = r
+		}
+	}
+	if b.CorrelationID != asked.CorrelationID || b.Outcome != broker.OutcomeAllowed || b.SPIFFEID != permissionAgent.String() ||
+		b.Provider != "stand-in" || b.RequestID == "" || b.InputTokens == 0 || b.OutputTokens == 0 {
+		t.Errorf("Broker record %+v does not match the Agent's %s", b, asked.CorrelationID)
+	}
+	for _, name := range []string{"agent.audit.jsonl", "warden.audit.jsonl", "broker.audit.jsonl"} {
+		assertNoTokenOrKey(t, filepath.Join(dir, name))
+	}
+}
+
+// TestLiveBrokerRunLogs holds the three Audit logs of the live run through a
+// separate Broker process (projects/agent-identity/docs/evidence/live-broker-2026-11-09.md)
+// to the record structs. Every line decodes strictly. The Agent's and the
+// Warden's records share their Correlation IDs. The Broker has one record for
+// the tour's question, joined to the other two logs, and one for the Eval as
+// model-eval. Each Broker record carries the provider's request id, tokens and
+// cost, and no file holds a token or key.
+func TestLiveBrokerRunLogs(t *testing.T) {
+	dir := filepath.Join(evidenceDir, "live-broker-2026-11-09")
+	agentRecs := decodeFile[agent.AuditRecord](t, filepath.Join(dir, "agent.audit.jsonl"))
+	wardenRecs := decodeFile[warden.AuditRecord](t, filepath.Join(dir, "warden.audit.jsonl"))
+	brokerRecs := decodeFile[broker.AuditRecord](t, filepath.Join(dir, "broker.audit.jsonl"))
+	if len(agentRecs) == 0 || len(agentRecs) != len(wardenRecs) {
+		t.Fatalf("got %d agent and %d warden records, want the same nonzero count", len(agentRecs), len(wardenRecs))
+	}
+	for i := range agentRecs {
+		if a, w := agentRecs[i].CorrelationID, wardenRecs[i].CorrelationID; a != w {
+			t.Errorf("record %d: agent correlation_id %s, warden %s", i, a, w)
+		}
+	}
+	if len(brokerRecs) != 2 {
+		t.Fatalf("got %d Broker records, want 2 (the tour's question and the Eval case)", len(brokerRecs))
+	}
+	var asked agent.AuditRecord
+	for _, r := range agentRecs {
+		if r.Question != "" {
+			asked = r
+		}
+	}
+	for i, want := range []struct {
+		workload string
+		joined   bool
+	}{{permissionAgent.String(), true}, {broker.ModelEval.String(), false}} {
+		b := brokerRecs[i]
+		if b.SPIFFEID != want.workload || b.Outcome != broker.OutcomeAllowed || b.Status != 200 || b.Provider != "anthropic" ||
+			b.RequestID == "" || b.InputTokens == 0 || b.OutputTokens == 0 || b.Cost <= 0 {
+			t.Errorf("Broker record %d = %+v; want an allowed %s call with request id, tokens and cost", i, b, want.workload)
+		}
+		if joined := b.CorrelationID == asked.CorrelationID; joined != want.joined {
+			t.Errorf("Broker record %d joined to the Agent's question = %v, want %v", i, joined, want.joined)
+		}
+	}
+	if len(asked.ModelCalls) != 1 || asked.ModelCalls[0].RequestID != brokerRecs[0].RequestID || !asked.ModelCalls[0].BrokerReported {
+		t.Errorf("Agent's model call %+v does not copy the Broker's request id %s as Broker-reported", asked.ModelCalls, brokerRecs[0].RequestID)
+	}
+	for _, name := range []string{"agent.audit.jsonl", "warden.audit.jsonl", "broker.audit.jsonl"} {
+		assertNoTokenOrKey(t, filepath.Join(dir, name))
+	}
+}
+
+// assertNoTokenOrKey fails if the file holds a JWT-shaped or a key-shaped string.
+func assertNoTokenOrKey(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := jwtShaped.Find(raw); m != nil {
+		t.Errorf("%s holds a JWT-shaped string: %.20s…", path, m)
+	}
+	if m := keyShaped.Find(raw); m != nil {
+		t.Errorf("%s holds a key-shaped string: %.8s…", path, m)
+	}
+}
+
+// TestKeyShapedCatchesAProviderKey keeps the key check honest.
+func TestKeyShapedCatchesAProviderKey(t *testing.T) {
+	for _, k := range []string{"sk-ant-api03-AbCdEf123456_-xyz", "sk-or-v1-0123456789abcdef"} {
+		if !keyShaped.MatchString(k) {
+			t.Errorf("keyShaped does not match %q", k)
 		}
 	}
 }

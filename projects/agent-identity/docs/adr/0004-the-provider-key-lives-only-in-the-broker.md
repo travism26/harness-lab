@@ -4,20 +4,20 @@ The Agent reaches the Model through a Broker, the only workload that holds a pro
 
 - A provider key in the Agent never expires and isn't tied to the Agent's identity. Anyone who copies it can spend the provider account from any machine, on any model, prompt and `max_tokens`. Behind the Broker, a leaked Agent can only ask for what its Pin allows.
 - The Broker and the Warden have separate audiences, so a JWT-SVID minted for one fails at the other. A token stolen from one hop can't be replayed on the other.
-- The Pin holds the model ids a workload may use with each provider, a `max_tokens` ceiling and a hash of its tools. The Broker fills in the model when the Pin allows only one, so the Agent no longer chooses a model or knows which provider served it until the response tells it.
+- The Pin holds the model ids a workload may use with each provider, a `max_tokens` ceiling and a request-shape hash. The Broker fills in the model when the Pin allows only one, so the Agent no longer chooses a model or knows which provider served it until the response tells it. The request-shape hash covers every request field except `messages`, `model` and `max_tokens` (`system`, `tools`, `tool_choice`, `output_config` and any other top-level field), computed at start-up from the Model client's own request constants. That hash is what stops a compromised Agent swapping the system prompt: forcing the one tool would not, because the Model client sends `tool_choice: auto` (an Eval case may expect no Proposal), so the output is not limited to one tool call. The Agent can change only the question text.
 - The Broker writes its own Audit record for every Model request. That gives an independent record of who used the key, and it's the authoritative one for tokens and cost.
 
 ## Considered options
 
 - **The key stays in the Agent (before this ADR):** simplest, but it breaks the project's main claim, and nothing outside the Agent limits or records how the key is used.
-- **A narrow `POST /propose {question}` endpoint, where the Broker owns the system prompt and tool schema:** tighter, but it moves Model-client logic into the Broker and reopens ADR 0001. The pass-through `POST /v1/messages` with a tools hash in the Pin gets most of the tightness and leaves ADR 0001 alone.
+- **A narrow `POST /propose {question}` endpoint, where the Broker owns the system prompt and tool schema:** tighter, but it moves Model-client logic into the Broker and reopens ADR 0001. The pass-through `POST /v1/messages` with a request-shape hash in the Pin gets most of the tightness and leaves ADR 0001 alone.
 - **Each Pin names its own provider, and the Broker holds both keys:** lets workloads use different providers, but puts two keys in play for no benefit to the demo. The Broker chooses one provider at start-up, by the ADR 0003 rule.
 - **The Eval keeps reading a key, as a named exception to trustlint R5:** less setup for a live Eval, but the rule would then have a hole. The Eval goes through the Broker under its own SPIFFE ID and Pin instead.
 - **OAuth token exchange (RFC 8693), with the Agent swapping its JWT-SVID and the Caller assertion for a short-lived scoped token:** the planned follow-up, not this step. The Broker is a natural home for that token service.
 
 ## Consequences
 
-- trustlint R5 (key isolation) fails `check` if any package outside the Broker reads a provider key. The Eval has no exception.
+- trustlint R5 (key isolation) fails `check` if any package outside the Broker module and the Broker command references the chosen provider key, calls the `.env` loader, or passes a provider key variable name to `os.Getenv` or `os.LookupEnv`. The Eval has no exception, and the Model client has no key mode.
 - A live run needs a separate Broker process, started with the key, alongside spiffecli. A live Eval needs the same setup. "The Agent's process holds no key" is claimed only for that separate-process mode. The stand-in tour runs in one process with no real key anywhere.
 - `demo --live --model` goes away: to try another model, change the Pin. `cmd/eval --model` stays, and the Broker checks it against the Eval's Pin.
 - The Broker never passes a provider's error body on. An upstream failure becomes `502 upstream_error`, so a bad provider key can't be mistaken for a bad SVID.

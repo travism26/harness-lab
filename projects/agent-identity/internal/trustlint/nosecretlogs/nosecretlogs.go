@@ -14,6 +14,7 @@ import (
 	"go/ast"
 	"go/types"
 	"slices"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
@@ -21,9 +22,11 @@ import (
 	"golang.org/x/tools/go/types/typeutil"
 )
 
-// Config lists the token types as "importpath.TypeName" strings.
+// Config lists the token types as "importpath.TypeName" strings, and the Audit
+// record types ("importpath.TypeName") that must never contain one.
 type Config struct {
-	TokenTypes []string
+	TokenTypes   []string
+	AuditRecords []string
 }
 
 var fmtSinks = []string{
@@ -42,6 +45,21 @@ func New(cfg Config) *analysis.Analyzer {
 }
 
 func run(pass *analysis.Pass, cfg Config) error {
+	// An Audit writer only encodes its record, so a record type that cannot
+	// hold a token is what keeps a token out of the log.
+	for _, rec := range cfg.AuditRecords {
+		path, name := splitQualified(rec)
+		if path != pass.Pkg.Path() {
+			continue
+		}
+		tn, ok := pass.Pkg.Scope().Lookup(name).(*types.TypeName)
+		if !ok {
+			continue
+		}
+		if tok := contains(tn.Type(), cfg.TokenTypes, map[*types.Named]bool{}); tok != "" {
+			pass.Reportf(tn.Pos(), "R3: audit record type %s contains token type %s", rec, tok)
+		}
+	}
 	insp := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 	insp.Preorder([]ast.Node{(*ast.CallExpr)(nil)}, func(n ast.Node) {
 		call := n.(*ast.CallExpr)
@@ -73,6 +91,12 @@ func run(pass *analysis.Pass, cfg Config) error {
 		}
 	})
 	return nil
+}
+
+// splitQualified splits "importpath.Name" at the last dot.
+func splitQualified(s string) (path, name string) {
+	i := strings.LastIndex(s, ".")
+	return s[:i], s[i+1:]
 }
 
 func isSink(fn *types.Func) bool {

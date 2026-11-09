@@ -9,13 +9,15 @@ You ask the Agent a question about who can do what. The Model turns your questio
 Here is a real exchange against Haiku 5.5 on the Anthropic API:
 
 ```
-$ go run ./cmd/demo ask "Can Tom approve invoices?" --live
-demo: live Model: provider anthropic, model claude-haiku-5-5
+$ go run ./cmd/demo ask "Can Tom approve invoices?" --live --broker-url http://127.0.0.1:8787 \
+    --spiffe-socket /tmp/agent-identity/permission-agent.sock --out runs/live
 Yes. tom holds `invoice:approve` in acme through the Finance Approver role.
-[model: live · id 4a02a4fd5de1bdd51a38fad0d989bf04]
+[model: anthropic/claude-haiku-5-5 via broker · id 4a02a4fd5de1bdd51a38fad0d989bf04]
 ```
 
-The id in the footer is the Correlation ID, which joins the Agent's and the Warden's Audit records for that question (see [7. Evidence](#7-evidence)). The full design is in the [spec, #53](https://github.com/travism26/harness-lab/issues/53).
+(The Broker was started first, as a separate process; see [6. Opt-in live modes](#6-opt-in-live-modes). The run in [7. Evidence](#7-evidence) predates the Broker and used the older footer, `[model: live · …]`.)
+
+The id in the footer is the Correlation ID, which joins the Agent's, the Broker's and the Warden's Audit records for that question (see [7. Evidence](#7-evidence)). The full design is in the [spec, #53](https://github.com/travism26/harness-lab/issues/53).
 
 ## 2. Run it
 
@@ -34,7 +36,10 @@ flowchart LR
     Caller([Caller]) -->|question| Agent
     Login[Login] -->|signs the Caller assertion| Agent
     Agent -->|question only| MC[Model client]
-    MC -->|strict tool call| Model[(Model)]
+    MC -->|"POST /v1/messages<br/>JWT-SVID + Correlation-Id"| Broker
+    Broker -->|"provider key + pinned request"| Model[(Model)]
+    Model -->|strict tool call| Broker
+    Broker -->|reply + model and cost| MC
     MC -->|checked Proposal| Agent
     Agent -->|"POST /lookup<br/>JWT-SVID + Caller assertion + Correlation-Id"| Warden
     Warden -->|Answer or Denial| Agent
@@ -42,6 +47,15 @@ flowchart LR
 ```
 
 The Model never sees what the Warden returns, and the Tenant and the Caller come from the Login, never from the Model ([ADR 0001](docs/adr/0001-model-only-proposes-replies-are-templates.md), [ADR 0002](docs/adr/0002-login-signs-the-caller-assertion.md)).
+
+The Broker is the one workload that holds the provider key ([ADR 0004](docs/adr/0004-the-provider-key-lives-only-in-the-broker.md)). It checks each Model request in this order, and stops at the first failure:
+
+1. JWT-SVID: a missing, forged, expired or wrong-audience token gets 401. The Warden's token is not accepted here, nor the Broker's at the Warden.
+2. Broker allowlist: a verified workload that isn't on the list gets 403.
+3. Pin: the request must match what that workload is pinned to (its model, a `max_tokens` ceiling and the hash of the rest of the request shape, system prompt and tools included), or it gets 403 `outside_pin`.
+4. Only then does the Broker add the provider's auth headers and forward the request. It writes `broker.audit.jsonl` with the caller's SPIFFE ID, the model, the tokens and the cost.
+
+The Agent's process holds no key in this mode, because the Broker runs as a separate process (see [6. Opt-in live modes](#6-opt-in-live-modes)). The stand-in tour runs a Broker in the same process as the demo, so it makes no such claim.
 
 The Warden checks each Lookup in this order, and stops at the first failure:
 
@@ -55,13 +69,14 @@ The Warden checks each Lookup in this order, and stops at the first failure:
 
 ## 4. Scenarios
 
-Run any of them with `go run ./cmd/demo <scenario>`. `tour` runs all three in order.
+Run any of them with `go run ./cmd/demo <scenario>`. `tour` runs all four in order.
 
 | Scenario | What it proves |
 |---|---|
 | `tokens` | The Agent's JWT-SVID gets 200, a wrong-audience one gets 401 (`jwt_svid_audience`), and a verified workload off the allowlist gets 403. |
 | `scripted` | With no Model: alice asks about tom (yes), bob asks about tom (Denial, he lacks `permission:read`), and alice reaches across Tenants to `globex/sam` (Denial). `--as acme/nobody` shows a 401 for an unknown Caller. |
 | `ask "<question>"` | The full path: the Model's Proposal, the Lookup and the Reply. The stand-in Model knows a fixed table of questions and answers anything else with text, which gives the `no_proposal` Reply. |
+| `broker` | Four requests to the Broker: the Agent's own (200), the Warden's token (401), an unlisted workload (403) and a swapped system prompt (403 `outside_pin`). The refusals reach no Model. |
 
 The smoke tests for these live in [cmd/demo/main_test.go](cmd/demo/main_test.go) and [cmd/demo/ask_test.go](cmd/demo/ask_test.go).
 
@@ -70,9 +85,10 @@ The smoke tests for these live in [cmd/demo/main_test.go](cmd/demo/main_test.go)
 [`./check`](check) runs offline, with no key and no spiffecli. It runs `gofmt`, `go vet`, staticcheck, trustlint and `go test -race -count=1 ./...`, and stops at the first failure. The trustlint analyzers in [cmd/trustlint](cmd/trustlint/main.go) enforce the trust boundaries, with their package lists in [internal/trustlint/config.go](internal/trustlint/config.go):
 
 - **R1, Model isolation**: only the Agent and the Eval import the Model client ([modelisolation](internal/trustlint/modelisolation/modelisolation.go)).
-- **R2, Warden isolation**: the Warden imports neither the Agent nor the Model client ([wardenisolation](internal/trustlint/wardenisolation/wardenisolation.go)).
-- **R3, no secrets in logs**: no token-typed value reaches a log or print call ([nosecretlogs](internal/trustlint/nosecretlogs/nosecretlogs.go)).
+- **R2, Warden and Broker isolation**: the Warden imports none of the Agent, the Model client and the Broker, and the Broker process (its module and `cmd/broker`) imports none of the Agent, the Warden, the Model client and the Eval, so it links only what it needs to hold the key and check a Pin ([wardenisolation](internal/trustlint/wardenisolation/wardenisolation.go)).
+- **R3, no secrets in logs**: no token-typed value reaches a log or print call, and neither the Agent's nor the Broker's Audit record type can hold one ([nosecretlogs](internal/trustlint/nosecretlogs/nosecretlogs.go)).
 - **R4, no insecure parse**: no go-spiffe `ParseInsecure` outside tests ([noinsecureparse](internal/trustlint/noinsecureparse/noinsecureparse.go)).
+- **R5, key isolation**: outside the Broker module and the Broker command, no package references the chosen provider key (`broker.Choice.Key`, `broker.Select`), uses the `.env` loader (`broker.WithDotEnv`, `broker.DotEnvPath`), or passes `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY` as a constant to `os.Getenv`, `os.LookupEnv` or `syscall.Getenv`. The provider table holds no key variable name (`Provider.KeyEnv` is gone: the Broker keeps the names, so no package can read one from the table and pass it on; a table field named in the analyzer's `KeyRefs` is closed to every package outside the exempt ones). There are no exceptions, so the Model client has no key mode and the Eval goes through the Broker ([keyisolation](internal/trustlint/keyisolation/keyisolation.go)).
 
 The tests also hold the evidence in place. `TestTourTranscript` compares a fresh stand-in tour with `tour.txt`, and `TestSampleRunLogs` decodes the sample logs strictly and rejects anything shaped like a JWT. Both are in [cmd/demo/evidence_test.go](cmd/demo/evidence_test.go).
 
@@ -80,16 +96,7 @@ The tests also hold the evidence in place. `TestTourTranscript` compares a fresh
 
 Each mode is a separate switch, and neither falls back to its stand-in. Run all commands from `projects/agent-identity/`.
 
-**Live Model** (`--live`). Put `ANTHROPIC_API_KEY=…` (or `OPENROUTER_API_KEY=…`) in `projects/agent-identity/.env`, which git ignores, or export it. A key set in the process environment wins over the file. Then run:
-
-```
-go run ./cmd/demo ask "Can Tom approve invoices?" --live
-go run ./cmd/demo ask "Can Tom approve invoices?" --live --provider openrouter --model anthropic/claude-sonnet-5.5
-```
-
-`--provider anthropic|openrouter` names one. Without it, the demo uses Anthropic when its key is present and OpenRouter otherwise, decided once before the first request and never per call ([ADR 0003](docs/adr/0003-anthropic-api-as-a-second-model-provider.md)). A missing key exits non-zero before any request.
-
-**Real spiffecli** (`--spiffe-socket`). Start spiffecli by hand in its own terminal, because the demo never starts or stops it:
+**Real spiffecli** (`--spiffe-socket`). Start spiffecli by hand in its own terminal, because neither the demo nor the Broker starts or stops it:
 
 ```
 mkdir -p /tmp/agent-identity
@@ -103,16 +110,41 @@ go run ./cmd/demo tour --spiffe-socket /tmp/agent-identity/permission-agent.sock
   --spiffe-socket-other /tmp/agent-identity/unlisted-agent.sock
 ```
 
-The Warden takes its bundle from `/tmp/agent-identity/warden.sock`, beside the Agent's socket. Without `--spiffe-socket-other`, `tokens` skips the 403 line and prints a note. The config is [spiffecli/workloads.toml](spiffecli/workloads.toml).
+The Warden takes its bundle from `/tmp/agent-identity/warden.sock`, beside the Agent's socket. Without `--spiffe-socket-other`, `tokens` skips the 403 line and prints a note. The config is [spiffecli/workloads.toml](spiffecli/workloads.toml); its `model-broker` workload is the Broker's.
 
-**Both at once** is how the [sample run](docs/evidence/sample-run/) was made:
+**Live Model** (`--live`) goes through a Broker running as its own process, so the demo holds no key and reads neither `.env` nor any provider key variable. Run each command from `projects/agent-identity/`, in this order:
 
-```
-go run ./cmd/demo tour --live --spiffe-socket /tmp/agent-identity/permission-agent.sock \
-  --spiffe-socket-other /tmp/agent-identity/unlisted-agent.sock
-```
+1. Start spiffecli, as above.
+2. Start the Broker with the key and an `--out`. Put `ANTHROPIC_API_KEY=…` (or `OPENROUTER_API_KEY=…`) in `projects/agent-identity/.env`, which git ignores, or export it; a key in the process environment wins over the file. Only the Broker reads them.
 
-**The Eval** (`go run ./cmd/eval`) needs a key too. See the [baseline report](evals/baseline-2026-11-08.md) for its flags.
+   ```
+   go run ./cmd/broker --out runs/live
+   ```
+
+   It prints the provider it chose and the URL it listens on (default `http://127.0.0.1:8787`, loopback only, `--addr` to change it). `--provider anthropic|openrouter` names one. Without it, the Broker uses Anthropic when its key is present and OpenRouter otherwise, decided once at start-up ([ADR 0003](docs/adr/0003-anthropic-api-as-a-second-model-provider.md)). A missing key for the chosen provider exits non-zero before it serves. It takes its trust bundle from `--spiffe-socket` (default `/tmp/agent-identity/model-broker.sock`) and writes `broker.audit.jsonl` into `--out` (default `runs/<UTC timestamp>/`).
+3. Run the demo with the same `--out`, so the three Audit logs sit together:
+
+   ```
+   go run ./cmd/demo tour --live --broker-url http://127.0.0.1:8787 --out runs/live \
+     --spiffe-socket /tmp/agent-identity/permission-agent.sock \
+     --spiffe-socket-other /tmp/agent-identity/unlisted-agent.sock
+   ```
+
+   `--live` needs `--broker-url` and `--spiffe-socket`, because the Broker verifies the Agent's JWT-SVID against spiffecli's bundle. The demo's `--model` and `--provider` flags are gone; the Broker decides both. A live `tour` skips the stand-in `broker` scenario, since the real Broker owns `broker.audit.jsonl`.
+
+The "holds no key" claim is made only for this separate-process mode. `./check` never runs it, and the [sample run](docs/evidence/sample-run/) predates it.
+
+**The Eval** (`go run ./cmd/eval`) reaches the Model through the same Broker, under its own SPIFFE ID `model-eval`, so it holds no key and reads neither `.env` nor any provider key variable. The steps are the same three as the live tour:
+
+1. Start spiffecli, as above (its `model-eval` workload gives the Eval its JWT-SVIDs).
+2. Start the Broker with the key, as above.
+3. Run the Eval against it, naming the model:
+
+   ```
+   go run ./cmd/eval --broker-url http://127.0.0.1:8787 --model claude-sonnet-5-5
+   ```
+
+   `--model` is required. The Broker holds `model-eval` to a Pin that lists Haiku, Sonnet and Opus for each provider (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5` on Anthropic; `anthropic/claude-{haiku,sonnet,opus}-5.5` on OpenRouter) and refuses any other model, or none, with 403 `outside_pin`. `--spiffe-socket` defaults to `/tmp/agent-identity/model-eval.sock`. The report names the provider and model the Broker reported. `--provider` and `--env-file` are gone; the Broker decides the provider. See the [baseline report](evals/baseline-2026-11-08.md) for the sweep (it predates the Broker).
 
 ## 7. Evidence
 
@@ -121,6 +153,7 @@ go run ./cmd/demo tour --live --spiffe-socket /tmp/agent-identity/permission-age
 - [evals/baseline-2026-11-08.md](evals/baseline-2026-11-08.md): the Eval baseline.
 - [docs/evidence/coverage-2026-11-08.md](docs/evidence/coverage-2026-11-08.md): statement coverage and the behaviour-to-test map.
 - [docs/evidence/live-2026-11-09.md](docs/evidence/live-2026-11-09.md): a run on the real spiffecli and the live Model. Live observations and deterministic checks are kept apart.
+- [docs/evidence/live-broker-2026-11-09.md](docs/evidence/live-broker-2026-11-09.md): `tour --live` and one Eval case through a separate Broker process. The demo's and the Eval's environments held no provider key. The run's three Audit logs ([live-broker-2026-11-09/](docs/evidence/live-broker-2026-11-09/)) join on Correlation IDs, and `TestLiveBrokerRunLogs` holds them.
 
 ### Following one Correlation ID
 
@@ -158,12 +191,13 @@ Sonnet 5.5 and Opus 5.5 (report-only) also scored 100% in every category, at abo
 - Replies read like templates, because they are ([ADR 0001](docs/adr/0001-model-only-proposes-replies-are-templates.md)).
 - spiffecli does no workload attestation, so any process that can open a socket gets that workload's identity ([`TestSpiffecliConfig`](cmd/demo/spiffecli_test.go), [spiffecli/workloads.toml](spiffecli/workloads.toml)).
 - The Login is a stand-in and the Seed data is synthetic, so nothing here is real authentication ([ADR 0002](docs/adr/0002-login-signs-the-caller-assertion.md), [internal/warden/seed.go](internal/warden/seed.go)).
-- Everything runs in one Go process, and separate Agent and Warden processes are left for a v2 ([`TestRunTour`](cmd/demo/main_test.go), spec #53 *Out of Scope*).
+- The offline tour runs everything in one Go process. Only the live Broker is a separate process, and separate Agent and Warden processes are left for a v2 ([`TestRunTour`](cmd/demo/main_test.go), spec #53 *Out of Scope*).
 
 ## 9. Decisions
 
 - [ADR 0001](docs/adr/0001-model-only-proposes-replies-are-templates.md): the Model only proposes, and every Reply is a fixed template.
 - [ADR 0002](docs/adr/0002-login-signs-the-caller-assertion.md): the Login signs the Caller assertion, so the Warden doesn't take the Agent's word for who is asking.
 - [ADR 0003](docs/adr/0003-anthropic-api-as-a-second-model-provider.md): the live Model runs on the Anthropic API first, with OpenRouter as the fallback.
+- [ADR 0004](docs/adr/0004-the-provider-key-lives-only-in-the-broker.md): the provider key lives only in the Broker.
 - Lab-wide decisions are in [docs/adr/](../../docs/adr/).
 - The [agent identity map, #28](https://github.com/travism26/harness-lab/issues/28) holds the reasoning behind every decision, and the [spec, #53](https://github.com/travism26/harness-lab/issues/53) collects the results.

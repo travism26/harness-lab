@@ -22,6 +22,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/svidverify"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/wire"
 )
 
@@ -99,7 +100,7 @@ type Config struct {
 
 // MaxLifetime is the longest exp - iat the Warden accepts on a token,
 // whatever the clock says.
-const MaxLifetime = 5 * time.Minute
+const MaxLifetime = svidverify.MaxLifetime
 
 // Warden is the HTTP handler for POST /lookup.
 type Warden struct {
@@ -284,37 +285,14 @@ func (w *Warden) verifyCallerAssertion(raw wire.CallerAssertion, agent string) (
 	return std.Subject, ""
 }
 
-// verifyJWTSVID checks the Authorization header's JWT-SVID: signature against
-// the bundle, audience, expiry, then the maximum lifetime. On failure it
-// returns a nil SVID and the reason code.
+// verifyJWTSVID checks the Authorization header's JWT-SVID (see svidverify). On
+// failure it returns a nil SVID and the reason code.
 func (w *Warden) verifyJWTSVID(authorization wire.Bearer) (*jwtsvid.SVID, Reason) {
-	token, ok := strings.CutPrefix(string(authorization), wire.BearerPrefix)
-	switch {
-	case authorization == "" || (ok && strings.TrimSpace(token) == ""):
-		return nil, ReasonJWTSVIDMissing
-	case !ok:
-		return nil, ReasonJWTSVIDMalformed
-	}
-	svid, err := jwtsvid.ParseAndValidate(token, w.bundles, []string{w.audience})
+	svid, reason, err := svidverify.Verify(authorization, w.bundles, w.audience)
 	if err != nil {
 		w.log.Debug("jwt-svid rejected", "err", err)
-		return nil, JWTSVIDReason(err)
 	}
-	if !withinLifetime(svid) {
-		return nil, ReasonJWTSVIDLifetime
-	}
-	return svid, ""
-}
-
-// withinLifetime reports whether the SVID has an iat and exp - iat is at most
-// MaxLifetime. A token without iat can't show its lifetime, so it fails.
-func withinLifetime(svid *jwtsvid.SVID) bool {
-	iat, ok := svid.Claims["iat"].(float64)
-	if !ok {
-		return false
-	}
-	issued := time.Unix(int64(iat), 0)
-	return svid.Expiry.Sub(issued) <= MaxLifetime
+	return svid, reason
 }
 
 func (w *Warden) respond(rw http.ResponseWriter, d Decision, body any) {
