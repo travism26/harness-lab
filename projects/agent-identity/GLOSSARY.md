@@ -48,6 +48,20 @@ _Avoid_: Fixtures, mock data, test data, database
 The Warden's list of SPIFFE IDs that may make Lookups at all.
 _Avoid_: Whitelist, ACL, trusted agents
 
+### Reaching the Model
+
+**Broker**:
+The workload that alone holds a provider key, and admits other workloads to the Model by their JWT-SVID. Not a Stand-in service: the key it holds is real.
+_Avoid_: Proxy, gateway, key service
+
+**Pin**:
+What the Broker lets one workload do: the model ids it may use with each provider, a `max_tokens` ceiling and the one tool call it may make.
+_Avoid_: Quota, policy, scope
+
+**Broker allowlist**:
+The Broker's list of SPIFFE IDs, each with its Pin. Separate from the Agent allowlist, because the Broker also admits the Eval, which is not an Agent.
+_Avoid_: Whitelist, ACL, Agent allowlist
+
 ### Asking and answering
 
 **Model**:
@@ -105,9 +119,9 @@ _Avoid_: Test case, fixture, sample
 ### Proving it afterwards
 
 **Audit record**:
-The one fixed-shape entry the Agent or the Warden writes for each question or Lookup, recording who asked, what was decided and why. Each service keeps its own, and the Warden's is the authoritative one.
+The one fixed-shape entry the Agent, the Warden or the Broker writes for each question, Lookup or Model request, recording who asked, what was decided and why. Each service keeps its own, and the Warden's is the authoritative one.
 _Avoid_: Log line, event, trace
 
 **Correlation ID**:
-The id the Agent mints for each question that joins the Agent's and the Warden's Audit records for it. The Warden treats it as untrusted until it checks its shape.
+The id the Agent mints for each question that joins the Agent's, the Warden's and the Broker's Audit records for it. The Warden treats it as untrusted until it checks its shape.
 _Avoid_: Request id, trace id
