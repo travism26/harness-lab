@@ -18,7 +18,7 @@ type Provider struct {
 	// plus anthropic-version.
 	BearerAuth bool
 	// PricedByTable means the provider reports no cost, so the Model client
-	// computes it from its token price table.
+	// computes it from the price table in this package.
 	PricedByTable bool
 }
 

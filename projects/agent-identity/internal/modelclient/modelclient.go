@@ -20,11 +20,10 @@ import (
 )
 
 const (
-	anthropicVersion = "2026-10-21"
-	toolName         = "lookup_permission"
-	maxTokens        = 1024
-	callTimeout      = 20 * time.Second
-	maxBody          = 1 << 20
+	toolName    = "lookup_permission"
+	maxTokens   = 1024
+	callTimeout = 20 * time.Second
+	maxBody     = 1 << 20
 )
 
 // Config is what a Client is given at startup.
@@ -270,12 +269,7 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 		return response{}, attempt, providerError("could not build the request")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.prov.BearerAuth {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	} else {
-		req.Header.Set("x-api-key", c.cfg.APIKey)
-		req.Header.Set("anthropic-version", anthropicVersion)
-	}
+	c.prov.SetAuth(req.Header, c.cfg.APIKey)
 	hr, err := c.cfg.HTTPClient.Do(req)
 	if err != nil {
 		// The raw error may carry the URL; keep only that the call failed.
@@ -299,25 +293,8 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 	return out, attempt, nil
 }
 
-// price is USD per million input and output tokens.
-type price struct{ input, output float64 }
-
-// pricesPerMillion is the price per model id (projects/agent-identity/docs/adr/0003-anthropic-api-as-a-second-model-provider.md).
-var pricesPerMillion = map[string]price{
-	"claude-haiku-5-5":  {input: 0.10, output: 0.50},
-	"claude-sonnet-5-5": {input: 2, output: 10},
-	"claude-opus-5-5":   {input: 4, output: 20},
-}
-
 func (c *Client) cost(r response) float64 {
-	if r.Usage.Cost != nil {
-		return *r.Usage.Cost
-	}
-	if !c.prov.PricedByTable {
-		return 0
-	}
-	p := pricesPerMillion[c.cfg.Model]
-	return (r.Usage.InputTokens*p.input + r.Usage.OutputTokens*p.output) / 1e6
+	return c.prov.Cost(c.cfg.Model, r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.Cost)
 }
 
 // gate applies the five rules in order.
