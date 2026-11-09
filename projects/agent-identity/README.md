@@ -27,24 +27,41 @@ From `projects/agent-identity/`, with Go installed and nothing else:
 go run ./cmd/demo tour
 ```
 
-It runs every scenario offline in one process, with Go stand-ins for the Workload API and the Model. The Warden is real and serves HTTP on loopback. You can see the output in [docs/evidence/tour.txt](docs/evidence/tour.txt). Each run writes its two Audit logs under `runs/<UTC timestamp>/`, and the last stderr line names that directory.
+It runs every scenario offline in one process, with Go stand-ins for the Workload API and the Model. The Broker and the Warden are real and serve HTTP on loopback. You can see the output in [docs/evidence/tour.txt](docs/evidence/tour.txt). Each run writes its three Audit logs (the Agent's, the Broker's and the Warden's) under `runs/<UTC timestamp>/`, and the last stderr line names that directory.
 
 ## 3. How it works
 
+One question, from start to finish:
+
 ```mermaid
-flowchart LR
-    Caller([Caller]) -->|question| Agent
-    Login[Login] -->|signs the Caller assertion| Agent
-    Agent -->|question only| MC[Model client]
-    MC -->|"POST /v1/messages<br/>JWT-SVID + Correlation-Id"| Broker
-    Broker -->|"provider key + pinned request"| Model[(Model)]
-    Model -->|strict tool call| Broker
-    Broker -->|reply + model and cost| MC
-    MC -->|checked Proposal| Agent
-    Agent -->|"POST /lookup<br/>JWT-SVID + Caller assertion + Correlation-Id"| Warden
-    Warden -->|Answer or Denial| Agent
-    Agent -->|fixed-template Reply| Caller
+sequenceDiagram
+    autonumber
+    actor Caller
+    participant Agent
+    participant Broker
+    participant Model
+    participant Warden
+
+    Caller->>Agent: question + Caller assertion (signed by the Login)
+    Agent->>Broker: question + the Agent's JWT-SVID for the Broker
+    Broker->>Model: the pinned request + the provider key
+    Model-->>Broker: a Proposal {target, permission}
+    Broker-->>Agent: the Model's reply, unchanged
+    Agent->>Warden: Lookup + the Agent's JWT-SVID for the Warden + Caller assertion
+    Warden-->>Agent: Answer or Denial
+    Agent-->>Caller: Reply, from a fixed template
 ```
+
+1. The Caller asks the Agent a question. The Login has signed a Caller assertion that says who the Caller is and which Tenant they're in.
+2. The Agent sends the question to the Broker. It proves who it is with a JWT-SVID from the SPIFFE Workload API. It holds no provider key.
+3. The Broker checks the JWT-SVID, its allowlist and the Agent's Pin. Only then does it add the provider key and call the Model.
+4. The Model proposes one `{target, permission}`. It can't decide anything else.
+5. The Broker returns the Model's reply to the Agent unchanged, with the provider, the model and the cost in response headers. The Agent checks the Proposal.
+6. The Agent asks the Warden one Lookup with a second JWT-SVID, minted for the Warden, and the Caller assertion.
+7. The Warden checks both tokens and its rules, and answers from Seed data. No model is involved.
+8. The Agent turns the Answer into a fixed-template Reply. The Model's own words never reach the Caller.
+
+Every hop carries one Correlation ID. The Agent, the Broker and the Warden each write an Audit record under it.
 
 The Model never sees what the Warden returns, and the Tenant and the Caller come from the Login, never from the Model ([ADR 0001](docs/adr/0001-model-only-proposes-replies-are-templates.md), [ADR 0002](docs/adr/0002-login-signs-the-caller-assertion.md)).
 
