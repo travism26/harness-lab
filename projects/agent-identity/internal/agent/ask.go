@@ -160,7 +160,7 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 		return Reply{}, err
 	}
 	out.Status = resp.Status
-	unreachable := fmt.Sprintf("The Warden couldn't be reached, so I can't say whether %s holds `%s`.", name, p.Permission)
+	unreachable := fmt.Sprintf("The Warden couldn't be reached, so I can't say whether `%s` holds `%s` in `%s`.", name, p.Permission, in)
 	// No response, a 5xx, or an unreadable 200 all mean the Warden gave no answer.
 	if resp.Status == 0 || resp.Status >= 500 || (err != nil && resp.Status == http.StatusOK) {
 		return finish(out, ReplyWardenUnreachable, unreachable)
@@ -174,7 +174,7 @@ func (a *Agent) Ask(ctx context.Context, assertion wire.CallerAssertion, questio
 	case http.StatusForbidden:
 		return finish(out, ReplyDenial, denialText)
 	case http.StatusUnprocessableEntity:
-		return finish(out, ReplyUnknownPermission, fmt.Sprintf("The Warden doesn't know the permission `%s`, so no lookup was made.", p.Permission))
+		return finish(out, ReplyUnknownPermission, fmt.Sprintf("The Warden doesn't know the permission `%s`, so it couldn't answer whether `%s` holds it in `%s`.", p.Permission, name, in))
 	case http.StatusUnauthorized:
 		return finish(out, ReplyUnauthenticated, unauthenticatedText)
 	}

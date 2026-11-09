@@ -161,7 +161,7 @@ func runWith(args []string, stdout, stderr io.Writer, d deps) int {
 	if opts.SpiffeSocket != "" {
 		ids, err := openSpiffe(context.Background(), d, opts.SpiffeSocket, opts.SpiffeSocketWarden, opts.SpiffeSocketOther)
 		if err != nil {
-			log.Error("demo could not reach the Workload API", "err", err)
+			log.Error("demo could not reach the Workload API; start spiffecli with `spiffecli run --config spiffecli/workloads.toml` from projects/agent-identity", "err", err)
 			return 1
 		}
 		opts.ids = ids

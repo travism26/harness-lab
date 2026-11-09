@@ -347,3 +347,64 @@ func TestScriptedLookupWritesAnAgentRecordToo(t *testing.T) {
 		t.Errorf("agent %+v; warden %+v", recs, w)
 	}
 }
+
+func TestUnknownPermissionReplyAgreesWithTheWardensAuditRecord(t *testing.T) {
+	e := newAuditEnv(t)
+	m := model.New(model.ToolUse("tom", "invoices:approve"))
+	defer m.Close()
+	r, err := e.agent(t, listedID, e.url, m, 0).Ask(context.Background(), e.assertion(t, "acme/alice", listedID), "Does Tom hold invoices:approve?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "The Warden doesn't know the permission `invoices:approve`, so it couldn't answer whether `tom` holds it in `acme`."
+	if r.ID != agent.ReplyUnknownPermission || r.Status != 422 || body(r) != want {
+		t.Errorf("got %s %d %q", r.ID, r.Status, r.Text)
+	}
+	g, w := e.agentRecords(t), e.wardenRecords(t)
+	if len(g) != 1 || len(w) != 1 || g[0].CorrelationID != r.CorrelationID || w[0].CorrelationID != r.CorrelationID {
+		t.Fatalf("agent %+v; warden %+v; Reply correlation ID %s", g, w, r.CorrelationID)
+	}
+	if g[0].WardenStatus != 422 || g[0].Reply != agent.ReplyUnknownPermission ||
+		w[0].Status != 422 || w[0].Outcome != warden.OutcomeUnknownPermission || w[0].Target != "acme/tom" || w[0].Permission != "invoices:approve" {
+		t.Errorf("agent %+v; warden %+v", g[0], w[0])
+	}
+}
+
+// "No lookup was made" means no accepted Lookup: the no-Proposal and
+// Model-unreachable paths send no request, and a 401 records warden_status 401.
+// Replies are checked by exact string.
+func TestNoLookupWasMadeRepliesMatchTheAgentAuditRecord(t *testing.T) {
+	cases := []struct {
+		name   string
+		caller string
+		script model.Reply
+		reply  agent.ReplyID
+		status int
+		text   string
+	}{
+		{"no proposal", "acme/alice", model.Text("hi"), agent.ReplyNoProposal, 0,
+			"I couldn't turn that into one permission lookup, so no lookup was made. Ask about one person and one permission."},
+		{"model unreachable", "acme/alice", model.Error(500), agent.ReplyModelUnreachable, 0,
+			"The Model couldn't be reached, so no lookup was made."},
+		{"unauthenticated", "acme/nobody", model.ToolUse("tom", "invoice:approve"), agent.ReplyUnauthenticated, 401,
+			"The Warden didn't accept my identity or yours, so no lookup was made."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newAuditEnv(t)
+			m := model.New(tc.script)
+			defer m.Close()
+			r, err := e.agent(t, listedID, e.url, m, 0).Ask(context.Background(), e.assertion(t, tc.caller, listedID), "q")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if body(r) != tc.text {
+				t.Errorf("Reply %q; want %q", body(r), tc.text)
+			}
+			g := e.agentRecords(t)
+			if len(g) != 1 || g[0].Reply != tc.reply || g[0].WardenStatus != tc.status {
+				t.Errorf("agent record %+v; want %s status %d", g, tc.reply, tc.status)
+			}
+		})
+	}
+}

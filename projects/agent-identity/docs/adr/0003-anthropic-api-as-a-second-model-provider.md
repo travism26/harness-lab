@@ -1,7 +1,3 @@
----
-status: proposed
----
-
 # The live Model runs on the Anthropic API first, with OpenRouter as the fallback
 
 The live Model gets a second provider: Anthropic's own Messages API (`https://api.anthropic.com/v1/messages`), paid from the owner's Anthropic API credits. It becomes the default, and OpenRouter becomes the fallback. `--provider anthropic|openrouter` on `demo --live` and `cmd/eval` names one explicitly. Without the flag, the command uses Anthropic when its key is present and OpenRouter otherwise.

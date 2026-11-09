@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -121,7 +122,7 @@ func TestAskReplies(t *testing.T) {
 		{"denial", "acme/bob", []model.Reply{model.ToolUse("tom", "invoice:approve")}, "denial",
 			"I can't answer that: the Warden didn't allow this lookup."},
 		{"unknown_permission", "acme/alice", []model.Reply{model.ToolUse("tom", "invoices:approve")}, "unknown_permission",
-			"The Warden doesn't know the permission `invoices:approve`, so no lookup was made."},
+			"The Warden doesn't know the permission `invoices:approve`, so it couldn't answer whether `tom` holds it in `acme`."},
 		{"unauthenticated", "acme/nobody", []model.Reply{model.ToolUse("tom", "invoice:approve")}, "unauthenticated",
 			"The Warden didn't accept my identity or yours, so no lookup was made."},
 		{"no_proposal text", "acme/alice", []model.Reply{model.Text("SECRET model words")}, "no_proposal",
@@ -195,7 +196,7 @@ func TestOneProposalForTwoPartQuestionMakesOneLookup(t *testing.T) {
 }
 
 func TestWardenUnreachable(t *testing.T) {
-	want := "The Warden couldn't be reached, so I can't say whether tom holds `invoice:approve`."
+	want := "The Warden couldn't be reached, so I can't say whether `tom` holds `invoice:approve` in `acme`."
 	e := newAskEnv(t)
 
 	dead, err := net.Listen("tcp", "127.0.0.1:0") // accepts, never answers
@@ -246,20 +247,26 @@ func TestA401IsNeverRetried(t *testing.T) {
 }
 
 func TestTargetIsCallersTenantPlusModelName(t *testing.T) {
-	var got string
+	var corrID, target string
 	e := newAskEnv(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.Header.Get(wire.HeaderCorrelationID)
+		corrID = r.Header.Get(wire.HeaderCorrelationID)
+		var req wire.LookupRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		target = req.Target
 		w.Write([]byte(`{"holds":false}`))
 	}))
 	defer srv.Close()
-	m := model.New(model.ToolUse("sam", "permission:read"))
+	m := model.New(model.ToolUse("tom", "invoice:approve"))
 	defer m.Close()
 	r := ask(t, e.agent(t, m, srv.URL, 0), e.assertion(t, "globex/sam"), "q")
-	if body(r) != "No. sam does not hold `permission:read` in globex." {
+	if body(r) != "No. tom does not hold `invoice:approve` in globex." {
 		t.Errorf("got %q", body(r))
 	}
-	if got != r.CorrelationID {
-		t.Errorf("Correlation-Id header %q; want %q", got, r.CorrelationID)
+	if target != "globex/tom" {
+		t.Errorf("Warden saw target %q; want globex/tom", target)
+	}
+	if corrID != r.CorrelationID {
+		t.Errorf("Correlation-Id header %q; want %q", corrID, r.CorrelationID)
 	}
 }

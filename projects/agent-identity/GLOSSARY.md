@@ -59,7 +59,7 @@ The one part of the Agent that talks to the Model: it asks for a Proposal, check
 _Avoid_: Harness, LLM client, SDK, wrapper
 
 **Proposal**:
-The Model's structured suggestion of a Lookup: a Target and a Permission. The Tenant and the Caller come from the Login, never from the Model. Not trusted until the Agent has checked it.
+The Model's structured suggestion of a Lookup: a Target and a Permission. The Tenant and the Caller come from the Login, never from the Model, so a Proposal can only name a User in the Caller's own Tenant. Not trusted until the Agent has checked it.
 _Avoid_: Request, intent, query
 
 **Lookup**:
