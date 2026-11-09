@@ -119,6 +119,8 @@ go run ./cmd/demo tour --live --spiffe-socket /tmp/agent-identity/permission-age
 - [docs/evidence/tour.txt](docs/evidence/tour.txt): stdout, then stderr, of the stand-in `demo tour`, with Correlation IDs, timestamps, ports and the run directory masked. Regenerate it with `go test ./cmd/demo -run TestTourTranscript -update`.
 - [docs/evidence/sample-run/](docs/evidence/sample-run/): the [agent](docs/evidence/sample-run/agent.audit.jsonl) and [warden](docs/evidence/sample-run/warden.audit.jsonl) Audit logs from one live `tour --live --spiffe-socket …` run, using spiffecli 0.1.3 and Haiku 5.5 on the Anthropic API. They are copied unchanged. Its stdout matched the stand-in tour.
 - [evals/baseline-2026-11-08.md](evals/baseline-2026-11-08.md): the Eval baseline.
+- [docs/evidence/coverage-2026-11-08.md](docs/evidence/coverage-2026-11-08.md): statement coverage and the behaviour-to-test map.
+- [docs/evidence/live-2026-11-09.md](docs/evidence/live-2026-11-09.md): a run on the real spiffecli and the live Model. Live observations and deterministic checks are kept apart.
 
 ### Following one Correlation ID
 
