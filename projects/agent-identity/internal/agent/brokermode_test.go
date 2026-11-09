@@ -149,6 +149,11 @@ func TestBrokerRefusalOrOutageIsModelUnreachableWithNoLookup(t *testing.T) {
 				t.Errorf("%d Lookups reached the Warden", len(w))
 			}
 			g := e.agentRecords(t)
+			for _, c := range g[0].ModelCalls {
+				if c.BrokerReported {
+					t.Errorf("model call %+v says the Broker reported, but it sent no usable reply", c)
+				}
+			}
 			if len(g) != 1 || g[0].Reply != agent.ReplyModelUnreachable || g[0].WardenStatus != 0 ||
 				g[0].ModelFailure == nil || g[0].ModelFailure.Code != "provider_error" ||
 				g[0].ModelFailure.BrokerStatus != tc.wantStatus || g[0].ModelFailure.BrokerReason != tc.wantReason {

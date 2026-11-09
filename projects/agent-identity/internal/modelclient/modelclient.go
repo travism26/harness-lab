@@ -84,6 +84,9 @@ type Attempt struct {
 	OutputTokens int
 	// Cost is in USD, as the Broker reported it.
 	Cost float64
+	// Reported is true only when the Broker sent a usable reply, so the fields
+	// above are what it told us; false when it was unreachable or refused.
+	Reported bool
 	// Raw is the reply body as received, for the Eval report. Empty when no
 	// reply was read.
 	Raw string
@@ -295,6 +298,7 @@ func (c *Client) call(ctx context.Context, messages []any) (response, Attempt, e
 		attempt.RequestID = out.ID
 	}
 	// The Broker reports who served the request and what it cost.
+	attempt.Reported = true
 	attempt.Provider = hr.Header.Get(wire.HeaderBrokerProvider)
 	attempt.Model = hr.Header.Get(wire.HeaderBrokerModel)
 	attempt.Cost, _ = strconv.ParseFloat(hr.Header.Get(wire.HeaderBrokerCost), 64)

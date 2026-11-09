@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/agent"
+	"github.com/travism26/harness-lab/projects/agent-identity/internal/broker"
 	"github.com/travism26/harness-lab/projects/agent-identity/internal/warden"
 )
 
@@ -118,5 +119,33 @@ func TestAnUnwritableOutDirectoryExitsNonZero(t *testing.T) {
 	}
 	if _, _, code := replyOut("scripted", "--out", file); code != 1 {
 		t.Errorf("exit %d; want 1", code)
+	}
+}
+
+func TestTwoAsksIntoOneOutKeepBothRunsRecordsJoinedByCorrelationID(t *testing.T) {
+	dir := t.TempDir()
+	var traces []string
+	for i := 0; i < 2; i++ {
+		_, errOut, code := replyOut("ask", "Can Tom approve invoices?", "--out", dir)
+		if code != 0 {
+			t.Fatal(errOut)
+		}
+		traces = append(traces, errOut)
+	}
+
+	agents := decodeFile[agent.AuditRecord](t, filepath.Join(dir, "agent.audit.jsonl"))
+	wardens := decodeFile[warden.AuditRecord](t, filepath.Join(dir, "warden.audit.jsonl"))
+	brokers := decodeFile[broker.AuditRecord](t, filepath.Join(dir, "broker.audit.jsonl"))
+	if len(agents) != 2 || len(wardens) != 2 || len(brokers) != 2 {
+		t.Fatalf("records agent/warden/broker = %d/%d/%d; want 2 each", len(agents), len(wardens), len(brokers))
+	}
+	for i, a := range agents {
+		if wardens[i].CorrelationID != a.CorrelationID || brokers[i].CorrelationID != a.CorrelationID {
+			t.Errorf("run %d: Agent %s, Warden %s, Broker %s; want one Correlation ID", i, a.CorrelationID, wardens[i].CorrelationID, brokers[i].CorrelationID)
+		}
+		// The trace names only this run's records.
+		if strings.Count(traces[i], "correlation_id="+a.CorrelationID) != 2 || strings.Contains(traces[i], agents[1-i].CorrelationID) {
+			t.Errorf("run %d trace is not just its own run:\n%s", i, traces[i])
+		}
 	}
 }

@@ -318,9 +318,9 @@ func TestUnauthenticatedCasesAnswer401WithOneBody(t *testing.T) {
 		{"not a jwt", "Bearer not-a-jwt", "jwt_svid_malformed"},
 		{"Basic scheme", "Basic abc", "jwt_svid_malformed"},
 		{"token without Bearer prefix", wire.Bearer(f.fetch(t, agentID, wardenAudience)), "jwt_svid_malformed"},
-		// net/http trims trailing spaces, so the Warden sees "Bearer" with no
-		// prefix and the whitespace-only arm in verifyJWTSVID is unreachable over HTTP.
-		{"Bearer with only spaces", "Bearer   ", "jwt_svid_malformed"},
+		// net/http trims trailing spaces, so the Warden sees "Bearer" alone.
+		{"Bearer with only spaces", "Bearer   ", "jwt_svid_missing"},
+		{"Bearer with no token", "Bearer ", "jwt_svid_missing"},
 		{"foreign trust domain", wire.BearerFor(f.sign(t, spiffeid.RequireFromString("spiffe://other.org/permission-agent"), []string{wardenAudience}, now, now.Add(time.Minute))), "jwt_svid_other"},
 		{"forged payload", wire.BearerFor(forge(t, f.fetch(t, agentID, wardenAudience), "spiffe://example.com/someone-else")), "jwt_svid_signature"},
 		{"unknown signing key", func() wire.Bearer {
@@ -383,7 +383,7 @@ func TestVerifiedAgentOffTheAllowlistGets403(t *testing.T) {
 	}
 }
 
-func TestAudienceAsStringOrArrayIsAccepted(t *testing.T) {
+func TestAudienceAsStringIsAccepted(t *testing.T) {
 	f := newFixture(t)
 	now := time.Now()
 	cases := []struct {
@@ -392,7 +392,6 @@ func TestAudienceAsStringOrArrayIsAccepted(t *testing.T) {
 		wantJSON string
 	}{
 		{"string", []string{wardenAudience}, `"` + wardenAudience + `"`},
-		{"array", []string{wardenAudience, "spiffe://example.com/other"}, `["` + wardenAudience + `","spiffe://example.com/other"]`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -733,5 +732,46 @@ func TestJWTSVIDExpiryLeeway(t *testing.T) {
 				t.Errorf("reason = %q; want %q", d.Reason, tc.wantWhy)
 			}
 		})
+	}
+}
+
+func TestATokenWithTwoAudiencesIsRefused(t *testing.T) {
+	f := newFixture(t)
+	now := time.Now()
+	both := f.sign(t, agentID, []string{wardenAudience, "spiffe://example.com/model-broker"}, now, now.Add(time.Minute))
+
+	got := f.post(t, wire.BearerFor(both), f.valid(t))
+
+	if got.status != http.StatusUnauthorized || got.body != unauthenticatedBody {
+		t.Errorf("response = %d %s; want 401 %s", got.status, got.body, unauthenticatedBody)
+	}
+	if d := f.lastDecision(t); d.Reason != "jwt_svid_audience" || d.Outcome != warden.OutcomeUnauthenticated {
+		t.Errorf("decision = %+v; want unauthenticated/jwt_svid_audience", d)
+	}
+}
+
+func TestTwoAuthorizationHeadersAreRefused(t *testing.T) {
+	f := newFixture(t)
+	good := wire.BearerFor(f.fetch(t, agentID, wardenAudience))
+	body, _ := json.Marshal(wire.LookupRequest{Target: "acme/tom", Permission: "invoice:approve"})
+	req, err := http.NewRequest(http.MethodPost, f.url+wire.PathLookup, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Add(wire.HeaderAuthorization, string(good))
+	req.Header.Add(wire.HeaderAuthorization, string(good))
+	req.Header.Set(wire.HeaderCallerAssertion, string(f.valid(t)))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d; want 401", resp.StatusCode)
+	}
+	if d := f.lastDecision(t); d.Reason != "jwt_svid_malformed" || d.Outcome != warden.OutcomeUnauthenticated {
+		t.Errorf("decision = %+v; want unauthenticated/jwt_svid_malformed", d)
 	}
 }

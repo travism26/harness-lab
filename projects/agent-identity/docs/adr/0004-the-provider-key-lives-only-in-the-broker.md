@@ -22,4 +22,5 @@ The Agent reaches the Model through a Broker, the only workload that holds a pro
 - `demo --live --model` goes away: to try another model, change the Pin. `cmd/eval --model` stays, and the Broker checks it against the Eval's Pin.
 - The Broker never passes a provider's error body on. An upstream failure becomes `502 upstream_error`, so a bad provider key can't be mistaken for a bad SVID.
 - The Broker doesn't read the Caller assertion. Only the Warden reasons about the Caller, and the Correlation ID joins the Broker's records to the Agent's and the Warden's.
+- A JWT-SVID names exactly one audience at both hops, and a request carries exactly one `Authorization` header, so a token minted for one hop can't pass at the other. Replaying a stolen token within its lifetime stays out of scope.
 - Replay protection, rate limits, spend budgets, key rotation, streaming and mTLS are not covered. The Broker hop has the same bearer-token limits as the Warden hop.

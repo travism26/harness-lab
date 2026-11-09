@@ -72,8 +72,9 @@ type auditSink struct {
 }
 
 // openAudit makes the run directory (out, or a UTC-timestamped one under
-// runsBase) and opens the three logs in it. With externalBroker the Broker log
-// is another process's: it is only read, never created or truncated.
+// runsBase) and opens the three logs in it for append, so a second run into the
+// same directory keeps the first's records. With externalBroker the Broker log
+// is another process's: it is only read, never created or written.
 func openAudit(out string, externalBroker bool) (*auditSink, error) {
 	dir, err := rundir.Make(out, runsBase)
 	if err != nil {
@@ -101,7 +102,7 @@ func openAudit(out string, externalBroker bool) (*auditSink, error) {
 }
 
 func openLog(path string) (*recordLog, error) {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
 	}

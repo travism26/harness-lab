@@ -61,14 +61,22 @@ func ReasonFor(err error) Reason {
 	return ReasonOther
 }
 
-// Verify checks the Authorization header's JWT-SVID: signature against the
+// Verify checks the Authorization header values' JWT-SVID: exactly one header, exactly one audience, signature against the
 // bundle, audience, expiry, then the maximum lifetime. On failure it returns a
 // nil SVID, the Reason and the raw error, which is for a debug log only because
 // it may hold token detail. The error is nil for a missing or malformed header.
-func Verify(authorization wire.Bearer, bundles jwtbundle.Source, audience string) (*jwtsvid.SVID, Reason, error) {
-	token, ok := strings.CutPrefix(string(authorization), wire.BearerPrefix)
+func Verify(authorization []string, bundles jwtbundle.Source, audience string) (*jwtsvid.SVID, Reason, error) {
+	if len(authorization) > 1 {
+		return nil, ReasonMalformed, nil
+	}
+	var header wire.Bearer
+	if len(authorization) == 1 {
+		header = wire.Bearer(authorization[0])
+	}
+	// net/http trims trailing spaces, so "Bearer " arrives as "Bearer".
+	token, ok := strings.CutPrefix(string(header), wire.BearerPrefix)
 	switch {
-	case authorization == "" || (ok && strings.TrimSpace(token) == ""):
+	case header == "" || strings.TrimSpace(string(header)) == strings.TrimSpace(wire.BearerPrefix) || (ok && strings.TrimSpace(token) == ""):
 		return nil, ReasonMissing, nil
 	case !ok:
 		return nil, ReasonMalformed, nil
@@ -76,6 +84,9 @@ func Verify(authorization wire.Bearer, bundles jwtbundle.Source, audience string
 	svid, err := jwtsvid.ParseAndValidate(token, bundles, []string{audience})
 	if err != nil {
 		return nil, ReasonFor(err), err
+	}
+	if len(svid.Audience) != 1 {
+		return nil, ReasonAudience, errors.New("svidverify: token names more than one audience")
 	}
 	if !withinLifetime(svid) {
 		return nil, ReasonLifetime, errors.New("svidverify: lifetime too long or unknown")
