@@ -28,7 +28,8 @@ GitHub token:
 Usage:
   uv run python -m factory.ticket claim --repo O/R --issue N --out run-out --login L --app-slug S \\
       --run-url URL
-  uv run python -m factory.ticket revise --repo O/R --pr N --out run-out --login L --app-slug S
+  uv run python -m factory.ticket revise --repo O/R --pr N --out run-out --login L --app-slug S \\
+      --run-url URL
   uv run python -m factory.ticket build --out run-out --work work --login L --model M --max-budget-usd B
   uv run python -m factory.ticket verify --out run-out --work work
   uv run python -m factory.ticket publish --out run-out --work work --app-slug S
@@ -408,6 +409,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     v.add_argument("--out", required=True)
     v.add_argument("--login", choices=LOGINS, required=True)
     v.add_argument("--app-slug", required=True)
+    v.add_argument("--run-url", required=True)
     v.add_argument("--root", default=".", help="the factory checkout holding projects/")
 
     b = sub.add_parser("build")

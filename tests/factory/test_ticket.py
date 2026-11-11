@@ -104,6 +104,29 @@ def test_revise_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, e
     assert not (tmp_path / "out" / "review.md").exists()
 
 
+def test_revise_refusal_through_the_cli_comments_with_the_run_url(tmp_path, monkeypatch, capsys):
+    _root(tmp_path, executable=False)
+    gh = FakeGitHub(issue=_issue(labels=("project:harness",)), pr=_pr())
+    monkeypatch.setattr(ticket, "GitHub", lambda: gh)
+    run = "https://example.test/actions/runs/1"
+    code = ticket.main([
+        "revise", "--repo", REPO, "--pr", "9", "--out", str(tmp_path / "out"),
+        "--login", "subscription", "--app-slug", "harness-factory",
+        "--root", str(tmp_path / "root"), "--run-url", run,
+    ])
+    assert code == 1
+    assert len(gh.posted) == 1
+    comment = gh.posted[0][1]
+    assert gh.posted[0][0] == 4
+    assert "did not start a rework round" in comment
+    assert "no executable `projects/harness/check`" in comment
+    assert run in comment
+    assert "AttributeError" not in capsys.readouterr().out
+    rework = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "rework.yml").read_text()
+    revise = rework.index("python -m factory.ticket revise")
+    assert '--run-url "$RUN_URL"' in rework[revise:rework.index("python -m factory.ticket build")]
+
+
 def test_claim_refuses_a_second_ticket_in_progress(tmp_path):
     _root(tmp_path)
     gh = FakeGitHub(issue=_issue(), in_progress=[2, 4])

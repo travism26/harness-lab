@@ -78,9 +78,10 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: >-
           uv run --no-dev python -m factory.ticket revise --repo "$REPO" --pr "$PR"
-          --out run-out --login "$LOGIN" --app-slug "$APP_SLUG"
+          --out run-out --login "$LOGIN" --app-slug "$APP_SLUG" --run-url "$RUN_URL"
 
       - name: Check out the PR's branch for the agent
         uses: actions/checkout@v7
