@@ -1,6 +1,5 @@
-// Command gateway starts the Gateway: a loopback process that will forward a
-// Call to the Upstream and append a Call record. It does not forward a Call
-// yet. It reads no environment variable and holds no credential; see
+// Command gateway starts the Gateway: a loopback process that forwards a
+
 // projects/ai-gateway/docs/adr/0001-forward-only-on-loopback.md.
 package main
 
@@ -10,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -19,6 +19,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/travism26/harness-lab/projects/ai-gateway/internal/gateway"
 )
 
 const (
@@ -74,10 +76,10 @@ func run(ctx context.Context, args []string, stderr io.Writer, listen listenFunc
 		fmt.Fprintf(stderr, "gateway: listen: %v\n", err)
 		return 1
 	}
-	// No routes yet. The forwarder ticket is what accepts a Call.
+	upstreamURL, _ := url.Parse(*upstream) // checkUpstream accepted it
 	pending := &newConns{}
 	srv := &http.Server{
-		Handler:           http.NewServeMux(),
+		Handler:           gateway.New(upstreamURL, auditFile, log.New(stderr, "", log.LstdFlags)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ConnState:         pending.note,
 	}
