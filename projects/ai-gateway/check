@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# The ai-gateway check: gofmt, vet, staticcheck, trustlint and the
+# race-enabled tests, in that order, stopping at the first failure. Go fetches
+# only the modules locked in go.sum. Exits non-zero on failure.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+unformatted=$(gofmt -l .)
+if [[ -n "$unformatted" ]]; then
+  printf 'gofmt: these files need formatting:\n%s\n' "$unformatted" >&2
+  exit 1
+fi
+go vet ./...
+go tool staticcheck ./...
+go run ./cmd/trustlint ./...
+go test -race -count=1 ./...
