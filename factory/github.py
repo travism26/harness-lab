@@ -82,9 +82,15 @@ class GitHub:
                         f"repos/{repo}/issues/{number}/comments?per_page=100"])
         return [c for page in json.loads(out) for c in page]
 
-    def comment(self, repo: str, number: int, body_file: Path) -> None:
+    def comment(self, repo: str, number: int, body_file: Path) -> int:
         # Issues and PRs share one number space; the issue endpoint takes both.
-        self._gh(["api", f"repos/{repo}/issues/{number}/comments", "-F", f"body=@{body_file}"])
+        out = self._gh(["api", f"repos/{repo}/issues/{number}/comments",
+                        "-F", f"body=@{body_file}", "--jq", ".id"])
+        return int(out.strip())
+
+    def update_comment(self, repo: str, comment_id: int, body_file: Path) -> None:
+        self._gh(["api", "-X", "PATCH", f"repos/{repo}/issues/comments/{comment_id}",
+                  "-F", f"body=@{body_file}"])
 
     def add_labels(self, repo: str, number: int, labels: tuple) -> None:
         if labels:

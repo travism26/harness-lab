@@ -44,12 +44,20 @@ fails with a message naming what is missing. It never goes green without doing a
      that comment. Its `--run-url` is the rework run; the CI run's URL is in the comment.
    - If Review has already charged this head, the failure joins that round and the counter stays.
      If CI charged first, Review's Spec blocker joins the same way. One head, one round.
-   - Rework waits until CI for that head has finished, and until a failure comment is on the PR
-     when CI failed, so the agent sees the excerpt. A repeated delivery of the same CI run does
-     not open another round.
+   - Rework waits until CI for that head has finished. A failure is included once the gate's
+     comment names that run, so the agent sees the excerpt. `timed_out` and `cancelled` count as
+     finished and do not wait for a comment. If CI has failed and Review is ready but the comment
+     never arrives (the gate ignores a non-draft, a fork, or `ready-for-human`), Rework gives the
+     comment two minutes and then continues. A repeated delivery of the same CI run does not open
+     another round. If two charges land together, the later comment is rewritten so it does not
+     claim the round.
    - A **green** run does nothing by itself. Once Review has passed that same head, and that head
-     is not already in an open rework round, the gate removes `in-progress` from the Ticket. The
-     PR stays a draft. A human merges it. No other step asks the owner to act.
+     is not already in an open rework round, the gate removes `in-progress` from the Ticket and
+     comments on the pull request and the Ticket. It does this even if the pull request is no
+     longer a draft: the factory's work on that head is done either way. The pull request stays a
+     draft unless a human has already marked it ready. A human merges it. No other step asks the
+     owner to act. The gate's preflight checks the App and the daily cap. It does not require the
+     Claude Code login, because it runs no agent.
 5. If the Spec axis finds a blocker, Review labels the PR `rework` and `rework:1`, unless this
    head was already charged by CI. That label starts **Rework** (`.github/workflows/rework.yml`).
    Claude Code fixes what the review named, including a CI failure in the comment, and pushes.

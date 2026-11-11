@@ -5,7 +5,7 @@
 # a Spec blocker it labels the PR `rework` and counts the round with
 # `rework:1`..`rework:2`; the blocker after rework:2 labels it ready-for-human
 # and the factory stops. A CI failure on the same head shares that counter
-# (ci-gate.yml): this step does not open a second round for it. It never
+# (.github/workflows/ci-gate.yml): this step does not open a second round for it. It never
 # approves and never merges.
 #
 # PRs from forks are never reviewed here: this workflow holds secrets, and fork

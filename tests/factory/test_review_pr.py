@@ -59,10 +59,13 @@ def test_parse_findings_rejects_bad_answers(text):
 
 
 class FakeGitHub:
-    def __init__(self, pr, issue=None, comments=(), ci=None):
+    def __init__(self, pr, issue=None, comments=(), ci=None, plant=None):
         self._pr, self._issue = pr, issue
         self.ci = ci
+        self.plant = plant
         self.comments, self.added, self.removed = [], [], []
+        self.updated = ""
+        self._reads = 0
         self._thread, self._next = [], 1
         for body in comments:
             self._thread.append({"id": self._next, "body": body})
@@ -75,7 +78,11 @@ class FakeGitHub:
         return self._issue or {"labels": []}
 
     def pr_comments(self, repo, number):
-        return list(self._thread)
+        self._reads += 1
+        thread = list(self._thread)
+        if self.plant and self._reads > 1:
+            return [{"id": 0, "body": self.plant}] + thread
+        return thread
 
     def ci_conclusion(self, repo, sha):
         return self.ci
@@ -83,8 +90,17 @@ class FakeGitHub:
     def comment(self, repo, number, path):
         body = path.read_text()
         self.comments.append(body)
-        self._thread.append({"id": self._next, "body": body})
+        comment_id = self._next
+        self._thread.append({"id": comment_id, "body": body})
         self._next += 1
+        return comment_id
+
+    def update_comment(self, repo, comment_id, path):
+        body = path.read_text()
+        self.updated = body
+        for item in self._thread:
+            if item["id"] == comment_id:
+                item["body"] = body
 
     def add_labels(self, repo, number, labels):
         self.added += list(labels)
@@ -189,6 +205,16 @@ def test_charge_won_is_the_earliest_nonce():
     assert charge_won([earlier, later], sha, "aa")
     assert not charge_won([earlier, later], sha, "bb")
     assert charge_won([], sha, "aa")
+
+
+def test_a_lost_charge_is_rewritten_and_moves_no_labels(tmp_path):
+    _write_review(tmp_path)
+    plant = gate_line("abc123", True, "ci", ci_run=9, nonce="aa", add=("rework", "rework:1"))
+    gh = FakeGitHub(_pr(labels=()), plant=plant)
+    review_pr.apply(_args(tmp_path), gh)
+    assert gh.added == [] and gh.removed == []
+    assert "charged=0" in gh.updated and "already in a rework round" in gh.updated
+    assert "Sent to rework:" not in gh.updated
 
 
 def test_apply_on_a_pass_and_green_ci_clears_in_progress(tmp_path):

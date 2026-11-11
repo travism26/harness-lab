@@ -3,10 +3,11 @@
 # factory/ come from the default branch. The job does not run for a fork, a
 # push to main, or any branch that is not factory/issue-<N>.
 #
-# ci.yml stays free of secrets. This workflow may hold them, and it only
-# proceeds for a pull request whose head repository is this one. The `rework`
-# label is added with the App token: a label added with GITHUB_TOKEN would
-# not start Rework.
+# .github/workflows/ci.yml stays free of secrets. This workflow may hold the
+# App key, and it only proceeds for a pull request whose head repository is
+# this one. It runs no agent, so it does not require the Claude Code login.
+# The `rework` label is added with the App token: a label added with
+# GITHUB_TOKEN would not start Rework.
 
 name: CI gate
 
@@ -16,9 +17,6 @@ on:
     types: [completed]
 
 permissions: {}
-
-env:
-  LOGIN: ${{ vars.FACTORY_CLAUDE_LOGIN || 'subscription' }}
 
 concurrency:
   # One gate decision at a time per branch. A re-run of the same CI completion
@@ -78,9 +76,7 @@ jobs:
         with:
           client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
           private-key: ${{ secrets.FACTORY_APP_KEY }}
-          login: ${{ env.LOGIN }}
-          subscription-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          openrouter-key: ${{ secrets.OPENROUTER_API_KEY }}
+          require-login: false
           daily-run-cap: ${{ vars.FACTORY_DAILY_RUN_CAP || '20' }}
 
       - name: Post the finding and move the labels

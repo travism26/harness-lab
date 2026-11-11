@@ -35,8 +35,8 @@ from factory import claude
 from factory.github import GitHub, GitHubError, author, label_names, write_comment
 from factory.review_pr import (
     HUMAN_LABEL, MARKER, MAX_REWORK, REWORK_LABEL, Moves, already_settled, charge_won,
-    gate_line, head_charged, label_moves, linked_ticket, mark_for_run, parse_gate,
-    review_passed, rework_round, settled_comment,
+    drop_in_progress, gate_line, head_charged, label_moves, linked_ticket, mark_for_run,
+    move_labels, parse_gate, review_passed, rework_round, settled_comment,
 )
 
 CI_WORKFLOW = "ci.yml"
@@ -44,6 +44,10 @@ REVIEW_WORKFLOW = "review.yml"
 FACTORY_BRANCH = re.compile(r"^factory/issue-([0-9]+)$")
 EXCERPT_MAX_LINES = 60
 EXCERPT_MAX_CHARS = 3000
+NO_FAILED_JOB = "The CI run failed and no failed job was listed."
+# CI conclusions that mean the run is over. `timed_out` is over too: Rework
+# must not sit out the whole wait for a comment the gate will not post.
+_CI_DONE = ("success", "failure", "cancelled", "timed_out")
 # Token shapes the factory or a test might print. CI itself holds no secrets;
 # this is the belt on top of replacing values from the environment.
 _TOKEN_RE = re.compile(
@@ -175,7 +179,7 @@ def _render_failure(event: GateEvent, moves: Moves, charged: bool, nonce: Option
     labels = list(event.labels)
     labels_after = [label for label in labels if label not in moves.remove] + list(moves.add)
     issue = linked_ticket(event.body, event.repo)
-    jobs = event.failed_jobs or (FailedJob("CI", "The CI run failed and no failed job was listed."),)
+    jobs = event.failed_jobs or (FailedJob("CI", NO_FAILED_JOB),)
     gate = gate_line(event.head_sha, charged, "ci", ci_run=event.run_id,
                      nonce=nonce if charged else None, add=moves.add if charged else ())
     lines = [MARKER, gate, "## Factory review: BLOCKED", ""]
@@ -240,7 +244,7 @@ def _decide_failure(event: GateEvent, nonce: str) -> Decision:
     if posted is not None:
         return _duplicate(event, posted)
     if head_charged(event.comments, event.head_sha):
-        comment = _render_failure(event, Moves("join"), charged=False, nonce=None, joining=True)
+        comment = _render_failure(event, Moves("pass"), charged=False, nonce=None, joining=True)
         return Decision("join", "this head is already in a rework round", comment=comment)
     moves = label_moves(list(event.labels), True)
     comment = _render_failure(event, moves, charged=True, nonce=nonce, joining=False)
@@ -263,22 +267,7 @@ def _duplicate(event: GateEvent, meta) -> Decision:
                     add=missing, remove=remove)
 
 
-def inputs_ready(ci_run: Optional[dict], review_run: Optional[dict], comments: Sequence,
-                 head_sha: str) -> bool:
-    """True when revise can read this head's CI result and its review.
-
-    A failure is ready only once the gate's comment names that run, so the
-    agent is not started on the review alone. A review comment for the head
-    is enough; if the review workflow has already finished without one, stop
-    waiting.
-    """
-    conclusion = (ci_run or {}).get("conclusion") or ""
-    if conclusion not in ("success", "failure", "cancelled"):
-        return False
-    if conclusion == "failure":
-        run_id = (ci_run or {}).get("databaseId")
-        if not any(f"ci-run={run_id}" in (c.get("body") or "") for c in comments):
-            return False
+def _review_ready(review_run: Optional[dict], comments: Sequence, head_sha: str) -> bool:
     for comment in comments:
         meta = parse_gate(comment.get("body") or "")
         if meta and meta.head == head_sha and meta.source == "review":
@@ -287,33 +276,62 @@ def inputs_ready(ci_run: Optional[dict], review_run: Optional[dict], comments: S
     return review_conclusion in ("success", "failure", "cancelled", "skipped")
 
 
+def _failure_comment_posted(ci_run: Optional[dict], comments: Sequence) -> bool:
+    run_id = (ci_run or {}).get("databaseId")
+    return any(f"ci-run={run_id}" in (comment.get("body") or "") for comment in comments)
+
+
+def inputs_ready(ci_run: Optional[dict], review_run: Optional[dict], comments: Sequence,
+                 head_sha: str) -> bool:
+    """True when revise can read this head's CI result and its review.
+
+    A failure is ready only once the gate's comment names that run, so the
+    agent is not started on the review alone. `timed_out` and `cancelled` are
+    finished runs and do not wait for that comment. A review comment for the
+    head is enough; if the review workflow has already finished without one,
+    stop waiting.
+    """
+    conclusion = (ci_run or {}).get("conclusion") or ""
+    if conclusion not in _CI_DONE:
+        return False
+    if conclusion == "failure" and not _failure_comment_posted(ci_run, comments):
+        return False
+    return _review_ready(review_run, comments, head_sha)
+
+
 def wait_for_inputs(fetch: Callable, sleep: Callable, monotonic: Callable, timeout: float,
-                    interval: float, head_sha: str) -> str:
+                    interval: float, head_sha: str, failure_grace: float = 120) -> str:
     """Poll until inputs_ready or the timeout. Returns 'ready' or 'timeout'.
 
     `fetch` returns `(ci_run, review_run, comments)` and may raise GitHubError.
-    A read error is a retry, not a failed rework.
+    A read error is a retry, not a failed rework. Once CI has failed and Review
+    is ready, wait only `failure_grace` seconds for the gate's comment. The
+    gate posts nothing for a non-draft, a fork, or `ready-for-human`, and
+    Rework must not sit out the whole timeout for a comment that will not come.
     """
     start = monotonic()
+    failure_since = None
     while True:
         try:
             ci_run, review_run, comments = fetch()
         except GitHubError:
             print("::warning title=CI gate wait::GitHub could not be read; retrying")
-            ci_run = review_run = None
-            comments = []
+            ci_run, review_run, comments = None, None, []
         else:
             if inputs_ready(ci_run, review_run, comments, head_sha):
                 return "ready"
+        conclusion = (ci_run or {}).get("conclusion") or ""
+        if (conclusion == "failure" and not _failure_comment_posted(ci_run, comments)
+                and _review_ready(review_run, comments, head_sha)):
+            if failure_since is None:
+                failure_since = monotonic()
+            if monotonic() - failure_since >= failure_grace:
+                return "ready"
+        else:
+            failure_since = None
         if monotonic() - start >= timeout:
             return "timeout"
         sleep(interval)
-
-
-def _facts_from_args(args) -> dict:
-    return {"conclusion": args.conclusion, "event": args.event, "head_branch": args.head_branch,
-            "head_sha": args.head_sha, "head_repo": args.head_repo, "repo": args.repo,
-            "run_id": args.run_id, "run_url": args.run_url}
 
 
 def collect(args, gh: Optional[GitHub] = None) -> int:
@@ -334,9 +352,11 @@ def collect(args, gh: Optional[GitHub] = None) -> int:
                 logs[job.get("id")] = ""
         jobs = failed_findings(raw_jobs, logs, hidden)
         if not jobs:
-            jobs = (FailedJob("CI", "The CI run failed and no failed job was listed."),)
-    payload = _facts_from_args(args)
-    payload["failed_jobs"] = [{"name": job.name, "excerpt": job.excerpt} for job in jobs]
+            jobs = (FailedJob("CI", NO_FAILED_JOB),)
+    payload = {"conclusion": args.conclusion, "event": args.event, "head_branch": args.head_branch,
+               "head_sha": args.head_sha, "head_repo": args.head_repo, "repo": args.repo,
+               "run_id": args.run_id, "run_url": args.run_url,
+               "failed_jobs": [{"name": job.name, "excerpt": job.excerpt} for job in jobs]}
     (out / "event.json").write_text(json.dumps(payload, indent=2) + "\n")
     names = ", ".join(job.name for job in jobs) or "none"
     print(f"CI run {args.run_id} {args.conclusion}: failed jobs: {names}")
@@ -375,15 +395,8 @@ def _live_event(facts: dict, gh: GitHub, app_slug: str) -> Optional[GateEvent]:
         app_slug=app_slug, issue_labels=issue_labels)
 
 
-def _apply_labels(gh: GitHub, repo: str, number: int, decision: Decision) -> None:
-    if not decision.add and not decision.remove:
-        return
-    current = set(label_names(gh.pr(repo, number)))
-    remove = tuple(label for label in decision.remove if label in current)
-    gh.remove_labels(repo, number, remove)
-    current.difference_update(remove)
-    add = tuple(label for label in decision.add if label not in current)
-    gh.add_labels(repo, number, add)
+def _join_comment(event: GateEvent) -> str:
+    return _render_failure(event, Moves("pass"), charged=False, nonce=None, joining=True)
 
 
 def apply(args, gh: Optional[GitHub] = None) -> int:
@@ -399,19 +412,23 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
     if decision.action == "ignore":
         print(f"CI gate ignored: {decision.reason}")
         return 0
+    comment_id = None
     if decision.comment:
         path = write_comment(out, "comment.md", decision.comment)
         if claude.scrub(out, env_secrets(os.environ)):
             print("::warning title=Secret scrubbed::The CI gate's files held a secret value; "
                   "it was redacted")
-        gh.comment(event.repo, event.pr, path)
+        comment_id = gh.comment(event.repo, event.pr, path)
     if decision.nonce and not charge_won(gh.pr_comments(event.repo, event.pr), event.head_sha,
                                          decision.nonce):
+        # Posted as the charge before the other comment was visible. Rewrite it
+        # so it does not claim a round it did not take.
+        joined = write_comment(out, "comment.md", _join_comment(event))
+        gh.update_comment(event.repo, comment_id, joined)
         print("CI gate joined a round already charged; labels unchanged")
         return 0
-    _apply_labels(gh, event.repo, event.pr, decision)
+    move_labels(gh, event.repo, event.pr, decision.add, decision.remove)
     if decision.clear_in_progress and decision.issue:
-        from factory.ticket import drop_in_progress
         if drop_in_progress(gh, event.repo, decision.issue):
             note = decision.comment or settled_comment(event.head_sha, decision.issue)
             gh.comment(event.repo, decision.issue, write_comment(out, "settled-issue.md", note))
@@ -427,7 +444,8 @@ def wait(args, gh: Optional[GitHub] = None, sleep=time.sleep, monotonic=time.mon
                 gh.workflow_run(args.repo, args.sha, REVIEW_WORKFLOW),
                 gh.pr_comments(args.repo, args.pr))
 
-    status = wait_for_inputs(fetch, sleep, monotonic, args.timeout, args.interval, args.sha)
+    status = wait_for_inputs(fetch, sleep, monotonic, args.timeout, args.interval, args.sha,
+                             args.failure_grace)
     if status == "timeout":
         print("::warning title=CI gate wait ended::CI or Review did not finish before the "
               "wait; rework continues with the comments posted so far")
@@ -461,6 +479,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     w.add_argument("--sha", required=True)
     w.add_argument("--timeout", type=float, default=900)
     w.add_argument("--interval", type=float, default=15)
+    w.add_argument("--failure-grace", type=float, default=120)
 
     args = parser.parse_args(argv)
     try:

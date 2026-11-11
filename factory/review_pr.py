@@ -42,6 +42,7 @@ from factory.switch_rule import LOGINS, refusal
 
 REWORK_LABEL = "rework"
 HUMAN_LABEL = "ready-for-human"
+IN_PROGRESS_LABEL = "in-progress"
 # The design's brake: stop after two rework rounds per ticket.
 MAX_REWORK = 2
 # Everything that could change a file, run a command or reach the network.
@@ -479,15 +480,26 @@ def review(args, run_agent=claude.run) -> int:
                   "it was redacted")
 
 
-def _move_labels(gh: GitHub, repo: str, number: int, moves: Moves) -> None:
-    """Apply moves. A label that is removed and added again is added after the
-    remove, so the `rework` event still fires when a new round starts."""
+def move_labels(gh: GitHub, repo: str, number: int, add: tuple, remove: tuple) -> None:
+    """Apply label adds and removes. A label that is removed and added again is
+    added after the remove, so the `rework` event still fires for a new round."""
+    if not add and not remove:
+        return
     current = set(label_names(gh.pr(repo, number)))
-    remove = tuple(label for label in moves.remove if label in current)
-    gh.remove_labels(repo, number, remove)
-    current.difference_update(remove)
-    add = tuple(label for label in moves.add if label not in current)
-    gh.add_labels(repo, number, add)
+    removing = tuple(label for label in remove if label in current)
+    gh.remove_labels(repo, number, removing)
+    current.difference_update(removing)
+    adding = tuple(label for label in add if label not in current)
+    gh.add_labels(repo, number, adding)
+
+
+def drop_in_progress(gh: GitHub, repo: str, issue: int) -> bool:
+    """Remove `in-progress` from a Ticket. Returns whether it was there."""
+    item = gh.issue(repo, issue)
+    if IN_PROGRESS_LABEL not in label_names(item):
+        return False
+    gh.remove_labels(repo, issue, (IN_PROGRESS_LABEL,))
+    return True
 
 
 def apply(args, gh: Optional[GitHub] = None) -> int:
@@ -517,19 +529,22 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
     if summary:
         with open(summary, "a") as f:
             f.write(report)
-    gh.comment(args.repo, args.pr, path)
+    comment_id = gh.comment(args.repo, args.pr, path)
     applied = moves
     if nonce and not charge_won(gh.pr_comments(args.repo, args.pr), ctx["head_sha"], nonce):
+        # The comment was posted as the charge. Another comment won, so this
+        # one must not keep claiming the round.
+        corrected = render_report(findings, ctx, Moves("same-round"), labels, stale_head)
+        corrected_path = write_comment(out, "report.md", corrected)
+        gh.update_comment(args.repo, comment_id, corrected_path)
         applied = Moves("same-round")
         print(f"PR {args.repo}#{args.pr}: another charge for this head won; labels unchanged")
     else:
-        _move_labels(gh, args.repo, args.pr, moves)
+        move_labels(gh, args.repo, args.pr, moves.add, moves.remove)
     if (moves.outcome == "pass" and ci == "success" and ctx.get("ticket")
             and not already_settled(comments, ctx["head_sha"])):
         note = settled_comment(ctx["head_sha"], ctx["ticket"])
         gh.comment(args.repo, args.pr, write_comment(out, "settled.md", note))
-        # Local import: ticket imports this module.
-        from factory.ticket import drop_in_progress
         if drop_in_progress(gh, args.repo, ctx["ticket"]):
             gh.comment(args.repo, ctx["ticket"], write_comment(out, "settled-issue.md", note))
     print(f"Posted the review on PR {args.repo}#{args.pr}: {applied.outcome}; "

@@ -1,6 +1,6 @@
 # The factory's rework round (docs/factory/README.md).
 #
-# Review, or the CI gate, labels a blocked factory PR `rework` with the App's
+# Review, or .github/workflows/ci-gate.yml, labels a blocked factory PR `rework` with the App's
 # token, and that label event starts this workflow (a label added with
 # GITHUB_TOKEN would start nothing). The agent fixes what the review named on
 # the PR's branch, including a CI failure in that comment. The push starts
@@ -85,7 +85,7 @@ jobs:
           SHA: ${{ github.event.pull_request.head.sha }}
         run: >-
           uv run --no-dev python -m factory.ci_gate wait --repo "$REPO" --pr "$PR"
-          --sha "$SHA" --timeout 1200 --interval 15
+          --sha "$SHA" --timeout 1200 --interval 15 --failure-grace 120
 
       - name: Read the PR, its Ticket and the blockers for this head
         env:

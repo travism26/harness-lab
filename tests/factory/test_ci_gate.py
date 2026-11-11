@@ -253,7 +253,9 @@ def test_wait_stays_pending_until_the_failure_comment_and_the_review_exist():
     assert inputs_ready(ci, {"conclusion": "success"}, [ci_comment], SHA)
     green = {"conclusion": "success", "databaseId": 6}
     assert inputs_ready(green, {"conclusion": ""}, [review], SHA)
+    assert inputs_ready({"conclusion": "timed_out"}, {"conclusion": ""}, [review], SHA)
     assert not inputs_ready({"conclusion": "cancelled"}, {"conclusion": ""}, [], SHA)
+    assert not inputs_ready({"conclusion": "timed_out"}, {"conclusion": ""}, [], SHA)
 
 
 def test_wait_loop_polls_until_ready():
@@ -280,6 +282,22 @@ def test_wait_loop_polls_until_ready():
                              head_sha=SHA)
     assert status == "ready"
     assert sleeps == [15, 15]
+
+
+def test_a_finished_failure_without_a_comment_stops_waiting_after_the_grace():
+    review = {"body": "\n".join([MARKER, gate_line(SHA, False, "review"),
+                                 "## Factory review: PASS"])}
+    ci = {"conclusion": "failure", "databaseId": 5}
+    clock = {"t": 0.0}
+
+    def sleep(seconds):
+        clock["t"] += seconds
+
+    status = wait_for_inputs(lambda: (ci, {"conclusion": ""}, [review]), sleep,
+                             lambda: clock["t"], timeout=1000, interval=15, head_sha=SHA,
+                             failure_grace=30)
+    assert status == "ready"
+    assert clock["t"] == 30
 
 
 def test_wait_loop_times_out_and_lets_rework_continue():
@@ -323,8 +341,17 @@ class FakeGitHub:
     def comment(self, repo, number, path):
         body = path.read_text()
         self.posted.append((number, body))
-        self._thread.append({"id": self._next, "body": body})
+        comment_id = self._next
+        self._thread.append({"id": comment_id, "body": body})
         self._next += 1
+        return comment_id
+
+    def update_comment(self, repo, comment_id, path):
+        body = path.read_text()
+        self.updated = body
+        for item in self._thread:
+            if item["id"] == comment_id:
+                item["body"] = body
 
     def add_labels(self, repo, number, labels):
         self.added += list(labels)
@@ -389,6 +416,34 @@ def test_apply_posts_the_finding_and_the_rework_labels(tmp_path):
     assert gh.added == ["rework", "rework:1"]
     assert gh.posted and "TestOnlyPostMessages" in gh.posted[0][1]
     assert gh.posted[0][0] == 118
+
+
+def test_a_lost_charge_is_rewritten_and_moves_no_labels(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "event.json").write_text(json.dumps({
+        "conclusion": "failure", "event": "pull_request", "head_branch": "factory/issue-114",
+        "head_sha": SHA, "head_repo": REPO, "repo": REPO, "run_id": RUN,
+        "run_url": "https://example.test/run",
+        "failed_jobs": [{"name": "check ai-gateway", "excerpt": "FAIL: TestOnlyPostMessages"}],
+    }))
+    gh = FakeGitHub(_pr(), comments=[_pass()])
+    prior = _charge(nonce="aa", number=0)
+    original = gh.pr_comments
+
+    def pr_comments(repo, number):
+        comments = original(repo, number)
+        if gh.posted:
+            return [prior] + comments
+        return comments
+
+    gh.pr_comments = pr_comments
+    import argparse
+    assert ci_gate.apply(argparse.Namespace(out=str(out), app_slug="travism26-factory"), gh) == 0
+    assert gh.added == [] and gh.removed == []
+    assert "charged=0" in gh.updated and "counter stays" in gh.updated
+    assert "Sent to rework:" not in gh.updated
+    assert "TestOnlyPostMessages" in gh.updated
 
 
 def test_apply_second_time_does_not_charge_again(tmp_path):
