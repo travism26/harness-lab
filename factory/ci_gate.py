@@ -45,9 +45,10 @@ FACTORY_BRANCH = re.compile(r"^factory/issue-([0-9]+)$")
 EXCERPT_MAX_LINES = 60
 EXCERPT_MAX_CHARS = 3000
 NO_FAILED_JOB = "The CI run failed and no failed job was listed."
-# CI conclusions that mean the run is over. `timed_out` is over too: Rework
-# must not sit out the whole wait for a comment the gate will not post.
-_CI_DONE = ("success", "failure", "cancelled", "timed_out")
+# CI conclusions that mean the run is over. `timed_out` and `skipped` are
+# over too: Rework must not sit out the whole wait for a comment that will
+# not be posted.
+_CI_DONE = ("success", "failure", "cancelled", "timed_out", "skipped")
 # Token shapes the factory or a test might print. CI itself holds no secrets;
 # this is the belt on top of replacing values from the environment.
 _TOKEN_RE = re.compile(
@@ -286,10 +287,10 @@ def inputs_ready(ci_run: Optional[dict], review_run: Optional[dict], comments: S
     """True when revise can read this head's CI result and its review.
 
     A failure is ready only once the gate's comment names that run, so the
-    agent is not started on the review alone. `timed_out` and `cancelled` are
-    finished runs and do not wait for that comment. A review comment for the
-    head is enough; if the review workflow has already finished without one,
-    stop waiting.
+    agent is not started on the review alone. `timed_out`, `cancelled` and
+    `skipped` are finished runs and do not wait for that comment. A review
+    comment for the head is enough; if the review workflow has already
+    finished without one, stop waiting.
     """
     conclusion = (ci_run or {}).get("conclusion") or ""
     if conclusion not in _CI_DONE:
@@ -304,31 +305,41 @@ def wait_for_inputs(fetch: Callable, sleep: Callable, monotonic: Callable, timeo
     """Poll until inputs_ready or the timeout. Returns 'ready' or 'timeout'.
 
     `fetch` returns `(ci_run, review_run, comments)` and may raise GitHubError.
-    A read error is a retry, not a failed rework. Once CI has failed and Review
-    is ready, wait only `failure_grace` seconds for the gate's comment. The
-    gate posts nothing for a non-draft, a fork, or `ready-for-human`, and
-    Rework must not sit out the whole timeout for a comment that will not come.
+    A read error starts another poll. It does not fail the rework. Once CI has
+    failed and Review is ready, wait only `failure_grace` seconds for the
+    gate's comment. The same grace applies when no CI run exists for the head
+    and Review is already ready. The gate posts nothing for a non-draft, a
+    fork, or `ready-for-human`.
     """
     start = monotonic()
     failure_since = None
+    missing_since = None
     while True:
         try:
             ci_run, review_run, comments = fetch()
         except GitHubError:
-            print("::warning title=CI gate wait::GitHub could not be read; retrying")
+            print("::warning title=CI gate wait::GitHub could not be read; polling again")
             ci_run, review_run, comments = None, None, []
         else:
             if inputs_ready(ci_run, review_run, comments, head_sha):
                 return "ready"
         conclusion = (ci_run or {}).get("conclusion") or ""
+        review_ready = _review_ready(review_run, comments, head_sha)
         if (conclusion == "failure" and not _failure_comment_posted(ci_run, comments)
-                and _review_ready(review_run, comments, head_sha)):
+                and review_ready):
             if failure_since is None:
                 failure_since = monotonic()
             if monotonic() - failure_since >= failure_grace:
                 return "ready"
         else:
             failure_since = None
+        if ci_run is None and review_ready:
+            if missing_since is None:
+                missing_since = monotonic()
+            if monotonic() - missing_since >= failure_grace:
+                return "ready"
+        else:
+            missing_since = None
         if monotonic() - start >= timeout:
             return "timeout"
         sleep(interval)

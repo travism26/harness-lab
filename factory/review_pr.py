@@ -534,19 +534,11 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
     comments = gh.pr_comments(args.repo, args.pr)
 
     stale_head = pr.get("headRefOid") if pr.get("headRefOid") != ctx["head_sha"] else None
-    # ci-conclusion.txt is written by a step that holds GITHUB_TOKEN. The App
-    # token used here has no Actions permission, so it must not call gh run list.
+    # Written by the ci-conclusion step with GITHUB_TOKEN. Missing or empty
+    # means CI is unknown. Apply never lists workflow runs: the App token
+    # has no Actions permission.
     recorded = out / "ci-conclusion.txt"
-    if recorded.is_file():
-        ci = recorded.read_text().strip() or None
-    elif stale_head:
-        ci = None
-    else:
-        try:
-            ci = gh.ci_conclusion(args.repo, ctx["head_sha"])
-        except GitHubError:
-            ci = None
-            print("::warning title=CI conclusion unreadable::Review will not treat CI as finished")
+    ci = recorded.read_text().strip() or None if recorded.is_file() else None
     if stale_head:
         moves = Moves("stale")
     else:
@@ -572,12 +564,8 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
         print(f"PR {args.repo}#{args.pr}: another charge for this head won; labels unchanged")
     else:
         move_labels(gh, args.repo, args.pr, moves.add, moves.remove)
-    if (moves.outcome == "pass" and ci == "success" and ctx.get("ticket")
-            and not already_settled(comments, ctx["head_sha"])):
-        note = settled_comment(ctx["head_sha"], ctx["ticket"])
-        gh.comment(args.repo, args.pr, write_comment(out, "settled.md", note))
-        if drop_in_progress(gh, args.repo, ctx["ticket"]):
-            gh.comment(args.repo, ctx["ticket"], write_comment(out, "settled-issue.md", note))
+    # Clearing in-progress is the CI gate's job. It checks the factory branch,
+    # the App author and that this head is not already in a rework round.
     print(f"Posted the review on PR {args.repo}#{args.pr}: {applied.outcome}; "
           f"removed {list(applied.remove)}, added {list(applied.add)}")
     return 0

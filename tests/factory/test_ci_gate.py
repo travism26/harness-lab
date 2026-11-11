@@ -254,6 +254,7 @@ def test_wait_stays_pending_until_the_failure_comment_and_the_review_exist():
     green = {"conclusion": "success", "databaseId": 6}
     assert inputs_ready(green, {"conclusion": ""}, [review], SHA)
     assert inputs_ready({"conclusion": "timed_out"}, {"conclusion": ""}, [review], SHA)
+    assert inputs_ready({"conclusion": "skipped"}, {"conclusion": ""}, [review], SHA)
     assert not inputs_ready({"conclusion": "cancelled"}, {"conclusion": ""}, [], SHA)
     assert not inputs_ready({"conclusion": "timed_out"}, {"conclusion": ""}, [], SHA)
 
@@ -294,6 +295,21 @@ def test_a_finished_failure_without_a_comment_stops_waiting_after_the_grace():
         clock["t"] += seconds
 
     status = wait_for_inputs(lambda: (ci, {"conclusion": ""}, [review]), sleep,
+                             lambda: clock["t"], timeout=1000, interval=15, head_sha=SHA,
+                             failure_grace=30)
+    assert status == "ready"
+    assert clock["t"] == 30
+
+
+def test_a_missing_ci_run_stops_waiting_once_review_is_ready():
+    review = {"body": "\n".join([MARKER, gate_line(SHA, False, "review"),
+                                 "## Factory review: PASS"])}
+    clock = {"t": 0.0}
+
+    def sleep(seconds):
+        clock["t"] += seconds
+
+    status = wait_for_inputs(lambda: (None, {"conclusion": ""}, [review]), sleep,
                              lambda: clock["t"], timeout=1000, interval=15, head_sha=SHA,
                              failure_grace=30)
     assert status == "ready"

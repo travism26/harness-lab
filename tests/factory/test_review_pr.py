@@ -245,16 +245,20 @@ def test_a_lost_charge_is_rewritten_and_moves_no_labels(tmp_path):
     assert "Sent to rework:" not in gh.updated
 
 
-def test_apply_on_a_pass_and_green_ci_clears_in_progress(tmp_path):
+def test_apply_does_not_list_workflow_runs_or_clear_in_progress(tmp_path):
     sha = "abc123"
     (tmp_path / "context.json").write_text(json.dumps(
         {"repo": "o/r", "pr": 3, "base_sha": "b", "head_sha": sha, "code_dir": "pr", "ticket": 7}))
     from dataclasses import asdict
-    passed = Findings("ok", "ok", [], [])
-    (tmp_path / "findings.json").write_text(json.dumps(asdict(passed)))
-    gh = FakeGitHub(_pr(labels=(), head=sha, body="Closes #7"),
-                    issue={"labels": [{"name": "in-progress"}]}, ci="success")
+    (tmp_path / "findings.json").write_text(json.dumps(asdict(Findings("ok", "ok", [], []))))
+    (tmp_path / "ci-conclusion.txt").write_text("success\n")
+
+    class NoActions(FakeGitHub):
+        def ci_conclusion(self, repo, sha):
+            raise AssertionError("apply must not call the Actions API")
+
+    gh = NoActions(_pr(labels=(), head=sha, body="Closes #7"),
+                   issue={"labels": [{"name": "in-progress"}]})
     review_pr.apply(_args(tmp_path, head_sha=sha), gh)
-    assert "in-progress" in gh.removed
-    assert any("factory:settled" in comment for comment in gh.comments)
-    assert "round" not in gh.added
+    assert "in-progress" not in gh.removed
+    assert not any("factory:settled" in comment for comment in gh.comments)
