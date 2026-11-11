@@ -86,7 +86,9 @@ jobs:
 
       - name: Read the Ticket's Project
         id: project
-        run: echo "name=$(jq -r .project run-out/context.json)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "name=$(jq -r .project run-out/context.json)" >> "$GITHUB_OUTPUT"
+          echo "bootstrap=$(jq -r .bootstrap run-out/context.json)" >> "$GITHUB_OUTPUT"
 
       # The same conditional step .github/workflows/ci.yml has: Go for a Project with a go.mod,
       # at the version its `go` line names.
@@ -109,6 +111,32 @@ jobs:
         run: >-
           uv run --no-dev python -m factory.ticket build --out run-out --work work
           --login "$LOGIN" --model "$MODEL" --max-budget-usd "$BUDGET_USD"
+
+      # Bootstrap only, and only after Build: go.mod did not exist when the earlier
+      # setup-go step ran. Same action and inputs as .github/workflows/ci.yml,
+      # pointed at the agent's checkout under work/.
+      - name: Install Go for the new Project
+        if: >-
+          steps.project.outputs.bootstrap == 'true'
+          && hashFiles(format('work/projects/{0}/go.mod', steps.project.outputs.name)) != ''
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: work/projects/${{ steps.project.outputs.name }}/go.mod
+          cache-dependency-path: work/projects/${{ steps.project.outputs.name }}/go.sum
+
+      # Secret-free. The script was just written by the agent, so this step gets
+      # neither the App token nor the Claude login. A missing or failing check
+      # fails the job: Publish does not run, and the failure step below drops
+      # in-progress.
+      - name: Run the new Project check
+        if: steps.project.outputs.bootstrap == 'true'
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          FACTORY_SUBSCRIPTION_TOKEN: ""
+          FACTORY_OPENROUTER_KEY: ""
+        run: >-
+          uv run --no-dev python -m factory.ticket verify --out run-out --work work
 
       - name: Commit, push and open the draft PR
         env:

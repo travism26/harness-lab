@@ -6,13 +6,20 @@ the steps holding the App token run no agent, and the agent step holds no
 GitHub token:
 
   claim    (App token) checks the Ticket may start: it is open, the switch rule
-           allows the login, it names one Project with a `project:<name>` label
-           whose folder has an executable `check`, and no other Ticket is in
-           progress (one Ticket at a time). Then labels it in-progress and writes it into --out.
+           allows the login, it names one Project with a `project:<name>` label,
+           and no other Ticket is in progress (one Ticket at a time). An
+           existing Project has an executable `check`. A registered safe name
+           whose `check` is not on this checkout yet is a bootstrap: the agent
+           creates it. Then claim labels the Ticket in-progress and writes it
+           into --out.
   revise   (App token) the rework round's claim: reads the blocked PR, its
            Ticket (and its Project) and the latest factory review into --out.
+           The Project is judged on this checkout, which is the PR base.
   build    (Claude login, no GitHub token) runs the agent in --work, the
            checkout it may edit, capped at --max-budget-usd.
+  verify   (no token) for a bootstrap only: runs the new `projects/<name>/check`
+           in --work. A missing or failing check publishes nothing. An existing
+           Project is left alone.
   publish  (App token) commits what the agent changed, pushes the branch and,
            for a new Ticket, opens a draft PR that closes it.
   release  (App token) on a failed run: says so on the Ticket and drops
@@ -23,6 +30,7 @@ Usage:
       --run-url URL
   uv run python -m factory.ticket revise --repo O/R --pr N --out run-out --login L --app-slug S
   uv run python -m factory.ticket build --out run-out --work work --login L --model M --max-budget-usd B
+  uv run python -m factory.ticket verify --out run-out --work work
   uv run python -m factory.ticket publish --out run-out --work work --app-slug S
   uv run python -m factory.ticket release --repo O/R --issue N --out run-out --run-url URL
 """
@@ -30,15 +38,17 @@ Usage:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set, Tuple
 
 from factory import claude
 from factory.github import GitHub, GitHubError, author, label_names, write_comment
 from factory.review_pr import HUMAN_LABEL, MARKER, REWORK_LABEL, linked_ticket
 from factory.switch_rule import LOGINS, refusal
+from factory.sync_labels import load_labels
 
 START_LABEL = "ready-for-factory"
 PROGRESS_LABEL = "in-progress"
@@ -49,6 +59,9 @@ BASE_BRANCH = "main"
 # The agent may edit and run things in its checkout, but not reach the web or
 # spawn helpers, and not read /proc, where its own environment lives.
 DENIED_TOOLS = ["WebFetch", "WebSearch", "Agent", "Task", "Read(//proc/**)"]
+# Lowercase words separated by single hyphens. This is what keeps a label suffix
+# inside projects/<name>/ when a workflow interpolates it into a path.
+_SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 class Refused(RuntimeError):
@@ -64,11 +77,30 @@ def blocking_tickets(in_progress: List[int], issue: int) -> List[int]:
     return sorted(n for n in in_progress if n != issue)
 
 
-def project_of(issue: dict, root: Path) -> str:
-    """The Project a Ticket builds, from its one `project:<name>` label.
+def _registered(root: Path) -> Set[str]:
+    """Project names with a `project:<name>` row in this checkout's label set.
 
-    Raises Refused unless there is exactly one and projects/<name>/check is an
-    executable file under root.
+    The file is the factory checkout's (the default branch, or the PR base on a
+    rework round), not the branch the agent edits. A missing file registers nothing.
+    """
+    path = root / "factory" / "labels.json"
+    if not path.is_file():
+        return set()
+    try:
+        labels = load_labels(path)
+    except (OSError, ValueError, KeyError) as e:
+        raise Refused(f"`factory/labels.json` cannot be read ({e})") from e
+    return {label.name[len(PROJECT_PREFIX):] for label in labels
+            if label.name.startswith(PROJECT_PREFIX)}
+
+
+def project_of(issue: dict, root: Path) -> Tuple[str, bool]:
+    """The Project a Ticket builds, and whether this run bootstraps it.
+
+    Returns `(name, bootstrap)`. Raises Refused unless there is exactly one
+    `project:<name>` label and the name is a safe slug. An executable
+    `projects/<name>/check` is an existing Project (`bootstrap` false). A
+    registered name whose check is absent is a bootstrap. Anything else refuses.
     """
     names = sorted(n[len(PROJECT_PREFIX):] for n in label_names(issue) if n.startswith(PROJECT_PREFIX))
     if not names:
@@ -78,11 +110,19 @@ def project_of(issue: dict, root: Path) -> str:
         raise Refused("the Ticket has more than one `project:` label "
                       f"({', '.join(f'`{PROJECT_PREFIX}{n}`' for n in names)}); it must name exactly one")
     name = names[0]
+    if _SLUG.fullmatch(name) is None:
+        raise Refused(f"`{PROJECT_PREFIX}{name}` is not a safe project name (use lowercase letters, "
+                      "digits and single hyphens, like `ai-gateway`)")
     check = root / PROJECTS_DIR / name / "check"
-    if "/" in name or name in ("", ".", "..") or not (check.is_file() and os.access(check, os.X_OK)):
-        raise Refused(f"`{PROJECT_PREFIX}{name}` names no Project: there is no executable "
-                      f"`{PROJECTS_DIR}/{name}/check`")
-    return name
+    if check.is_file() and os.access(check, os.X_OK):
+        return name, False
+    rel = f"{PROJECTS_DIR}/{name}/check"
+    if check.exists():
+        raise Refused(f"`{PROJECT_PREFIX}{name}` names no Project: there is no executable `{rel}`")
+    if name in _registered(root):
+        return name, True
+    raise Refused(f"`{PROJECT_PREFIX}{name}` names no Project: there is no executable `{rel}`, "
+                  f"and `{PROJECT_PREFIX}{name}` is not registered in `factory/labels.json`")
 
 
 # ---- prompts ---------------------------------------------------------------
@@ -107,6 +147,22 @@ contents of environment variables.
 When you are done, reply with a short summary of what you changed, for the \
 pull request description."""
 
+# Appended only when the check is not on the factory checkout yet. The paragraph
+# above still tells an existing Project to run its check; this one overrides that
+# for the Ticket that creates the check.
+_BOOTSTRAP = """
+
+The Project's `{check}` is not on the base branch yet, so the sentences above \
+that say to run it do not apply yet. Create the Project scaffold the Ticket \
+describes, including an executable `{check}` that satisfies `CODING_STANDARDS.md`: \
+it runs the Project's tests against committed, locked dependencies and exits \
+non-zero on failure. The factory runs `{check}` after you finish, with no GitHub \
+token and no Claude login. A missing script or a non-zero exit means nothing is published. \
+If the Project is Go, write its `go.mod` and do not install a toolchain yourself: \
+the factory installs the Go version that file names before it runs the check. You \
+may edit `GLOSSARY-MAP.md`. When the Ticket adds a Python workspace member you may \
+edit the root `pyproject.toml` and `uv.lock`."""
+
 _REWORK = """
 
 This is a rework round. The factory's review blocked the pull request built for \
@@ -118,9 +174,12 @@ Ticket."""
 
 
 def build_prompt(out: Path) -> str:
-    project = f"{PROJECTS_DIR}/{_load(out)['project']}"
-    prompt = _BUILD.format(ticket=(out / "ticket.md").resolve(), project=project,
-                           check=f"{project}/check")
+    ctx = _load(out)
+    project = f"{PROJECTS_DIR}/{ctx['project']}"
+    check = f"{project}/check"
+    prompt = _BUILD.format(ticket=(out / "ticket.md").resolve(), project=project, check=check)
+    if ctx.get("bootstrap"):
+        prompt += _BOOTSTRAP.format(project=project, check=check)
     if (out / "review.md").is_file():
         prompt += _REWORK.format(review=(out / "review.md").resolve())
     return prompt
@@ -157,10 +216,10 @@ def claim(args, gh: Optional[GitHub] = None) -> int:
         if others:
             reason = (f"one Ticket at a time: {', '.join(f'#{n}' for n in others)} is still "
                       f"`{PROGRESS_LABEL}`. Re-apply `{START_LABEL}` here when it is done")
-    project = None
+    project, bootstrap = None, False
     if not reason:
         try:
-            project = project_of(issue, Path(args.root))
+            project, bootstrap = project_of(issue, Path(args.root))
         except Refused as e:
             reason = str(e)
     if reason:
@@ -177,7 +236,8 @@ def claim(args, gh: Optional[GitHub] = None) -> int:
         out, "started.md", f"The factory started this Ticket. [Run]({args.run_url})\n"))
     _write_ticket(out, issue)
     _save(out, {"repo": args.repo, "issue": args.issue, "title": issue.get("title", ""),
-                "branch": branch_for(args.issue), "pr": None, "project": project})
+                "branch": branch_for(args.issue), "pr": None, "project": project,
+                "bootstrap": bootstrap})
     print(f"Claimed Ticket {args.repo}#{args.issue}")
     return 0
 
@@ -207,7 +267,7 @@ def revise(args, gh: Optional[GitHub] = None) -> int:
     if reason:
         raise RuntimeError(f"switch rule: {reason}")
     try:
-        project = project_of(issue, Path(args.root))
+        project, bootstrap = project_of(issue, Path(args.root))
     except Refused as e:
         body = (f"The factory did not start a rework round for PR #{args.pr}: {e}. "
                 f"[Run]({args.run_url})\n")
@@ -219,7 +279,8 @@ def revise(args, gh: Optional[GitHub] = None) -> int:
     _write_ticket(out, issue)
     (out / "review.md").write_text(review)
     _save(out, {"repo": args.repo, "issue": number, "title": issue.get("title", ""),
-                "branch": pr["headRefName"], "pr": args.pr, "project": project})
+                "branch": pr["headRefName"], "pr": args.pr, "project": project,
+                "bootstrap": bootstrap})
     print(f"Rework round for PR {args.repo}#{args.pr} (Ticket #{number})")
     return 0
 
@@ -241,6 +302,36 @@ def build(args, run_agent=claude.run) -> int:
         if claude.scrub(out, claude.secret_values(os.environ)):
             print("::warning title=Secret scrubbed::The run's files held a secret value; "
                   "it was redacted")
+
+
+def verify(args) -> int:
+    """Run a bootstrap Project's new check. The workflow calls this before publish.
+
+    It holds no GitHub token and no Claude login, and the check's environment
+    has those credentials removed. A missing or failing check exits non-zero,
+    so the job never reaches publish. An existing Project (`bootstrap` false)
+    is unchanged, and its check is not run.
+    """
+    ctx = _load(Path(args.out))
+    if not ctx.get("bootstrap"):
+        print("Existing Project: the factory does not run its check")
+        return 0
+    name = ctx.get("project") or ""
+    if _SLUG.fullmatch(name) is None:
+        raise RuntimeError(f"`{name}` is not a safe project name, so nothing is published")
+    rel = f"{PROJECTS_DIR}/{name}/check"
+    script = Path(args.work) / rel
+    if not (script.is_file() and os.access(script, os.X_OK)):
+        raise RuntimeError(f"bootstrap produced no executable `{rel}`, so nothing is published")
+    # Same credentials the agent step drops (factory/claude.py). The script was
+    # just written by the agent.
+    env = {k: v for k, v in os.environ.items()
+           if k not in claude._DROPPED and not k.startswith("ANTHROPIC_")}
+    result = subprocess.run([f"./{rel}"], cwd=args.work, env=env)
+    if result.returncode != 0:
+        raise RuntimeError(f"`{rel}` failed (exit {result.returncode}), so nothing is published")
+    print(f"Bootstrap check passed: {rel}")
+    return 0
 
 
 def _git(work: str, *args: str) -> str:
@@ -326,6 +417,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     b.add_argument("--model", choices=claude.MODELS, default="sonnet")
     b.add_argument("--max-budget-usd", type=float, required=True)
 
+    k = sub.add_parser("verify")
+    k.add_argument("--out", required=True)
+    k.add_argument("--work", required=True)
+
     p = sub.add_parser("publish")
     p.add_argument("--out", required=True)
     p.add_argument("--work", required=True)
@@ -338,8 +433,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     r.add_argument("--run-url", required=True)
 
     args = parser.parse_args(argv)
-    steps = {"claim": claim, "revise": revise, "build": build, "publish": publish,
-             "release": release}
+    steps = {"claim": claim, "revise": revise, "build": build, "verify": verify,
+             "publish": publish, "release": release}
     try:
         return steps[args.step](args)
     except (RuntimeError, GitHubError, claude.ConfigError) as e:

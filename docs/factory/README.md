@@ -13,19 +13,22 @@ fails with a message naming what is missing. It never goes green without doing a
 ## How a Ticket moves
 
 1. The owner writes a Ticket (a GitHub issue), applies one `project:<name>` label and applies
-   `ready-for-factory`. The `project:<name>` label names the Project the Ticket builds
-   (`projects/<name>/`). Adding a Project means adding one such label to `factory/labels.json`.
-   The Project must have an executable `projects/<name>/check`: that script, not a fixed command,
-   is how the factory tests the Project, so a Project can be in any language. A Ticket with no
-   `project:` label, more than one, or a label whose folder has no executable `check` is refused
-   before any agent runs: the factory comments why on the Ticket and removes `ready-for-factory`.
+   `ready-for-factory`. The label names the Project (`projects/<name>/`). The name is a safe slug:
+   lowercase letters, digits and single hyphens. An existing Project has an executable
+   `projects/<name>/check`, and that script, not a fixed command, is how its work is tested, in
+   whatever language the Project uses. A Ticket with no `project:` label, more than one, an unsafe
+   name, or a name that is not registered and has no executable `check` is refused before any agent
+   runs: the factory comments why on the Ticket and removes `ready-for-factory`. A name that is
+   already a row in `factory/labels.json` and has no `check` yet is how a Project starts. See
+   [Starting a Project](#starting-a-project).
 2. **Implement** (`.github/workflows/implement.yml`) claims it. It removes `ready-for-factory`, adds
    `in-progress` and comments with a link to the run. Claude Code builds the change in a fresh
    checkout; its prompt names `projects/<name>/` and tells it to run `projects/<name>/check` until it
-   passes, and to read that Project's glossary and decision records. A Project with a `go.mod` gets
-   Go first, at the version its `go.mod` names (Rework does the same). The factory then commits it
-   to `factory/issue-<N>`, pushes, and opens a **draft** PR
-   whose body closes the Ticket.
+   passes, and to read that Project's glossary and decision records. A Project with a `go.mod`
+   already on the branch gets Go first, at the version its `go.mod` names (Rework does the same).
+   The factory then commits it to `factory/issue-<N>`, pushes, and opens a **draft** PR
+   whose body closes the Ticket. A new Project is the exception: before that commit, the factory
+   itself runs the `check` the agent just wrote. See [Starting a Project](#starting-a-project).
 3. **Review** (`.github/workflows/review.yml`) runs on the new PR. A fresh agent with read-only
    tools reviews the diff along two axes: Spec (does it do what the Ticket asks?) and Standards
    (does it follow `CLAUDE.md`, the glossaries and the decision records?). It posts one report on the PR.
@@ -37,6 +40,54 @@ fails with a message naming what is missing. It never goes green without doing a
    then on.
 6. When review passes, the PR waits, still a draft. The owner reads it, marks it ready and merges it.
    The merge closes the Ticket, and the next Ticket can start.
+
+## Starting a Project
+
+A new Project is a Ticket whose `project:<name>` label is already a row in `factory/labels.json` on
+the factory checkout, and whose `projects/<name>/check` is not an executable file there yet. Claim
+records that as a bootstrap and starts the Ticket. The agent creates the Project tree, including
+the check. Claim does not refuse the Ticket for the missing file. A `check` that is already there
+but not executable is still refused: that is a half-written Project, not a new one.
+
+Registering that row is the remaining manual step. A name that is not in the file, or is not a safe
+slug, is still refused, so a typo cannot take the one-at-a-time lock or the build budget. The
+factory does not add the row itself. `sync_labels` only creates labels that are already listed, and
+an issue can only wear a label GitHub already has, so there is nothing to sync until the row is on
+`main`. A row committed on the bootstrap pull request would not count either: Claim reads the
+factory checkout, which is the default branch, or the pull request's base on a rework round, not
+the pull request head.
+
+What the owner does once:
+
+1. Add a `project:<name>` row to `factory/labels.json`. The name is a safe slug, such as `ai-gateway`.
+2. Merge that edit, then run `uv run python -m factory.sync_labels --apply` so GitHub has the label.
+   Run it without `--apply` first to see the dry run.
+3. Label the Ticket `project:<name>` and `ready-for-factory`.
+
+From there it is automatic. The agent's prompt tells it to create `projects/<name>/`, including an
+executable `check` that satisfies `CODING_STANDARDS.md`, and that it may edit `GLOSSARY-MAP.md` and,
+when the Ticket adds a Python workspace member, the root `pyproject.toml` and `uv.lock`. It still
+may not edit `.github/`. After the agent finishes, and only on a bootstrap, the job installs Go if
+the new `go.mod` exists, the same way [CI](#ci) does (the same setup-go action, version file and
+cache path), and then runs `projects/<name>/check`. That step has no App token and no Claude login.
+A missing check, a check that is not executable, or a check that exits non-zero fails the job.
+Publish does not run. Implement's existing failure step drops `in-progress`, and the Ticket can be
+labelled again. On a Go Project the agent does not have Go during its own turn, because
+`go.mod` appears during that turn. The factory installs Go afterwards and runs the check once. A
+Python Project has `uv` for the whole turn, since Implement installs `uv` before the agent starts.
+
+Rework of that pull request uses the same rule. The label row is on the base, so a round can start
+before the check has merged, and the check runs from the pull request's branch. A failure leaves
+the `rework` label, as any failed rework does.
+
+Once `projects/<name>/check` is an executable file on the default branch, later Tickets for that
+Project are ordinary. The prompt tells the agent to run the check. The factory does not run it
+itself. CI runs it after the pull request opens, as for every other Project.
+
+The one gate on the check is the owner's merge of that pull request. The factory only sees the
+script's exit code. A script whose body is `exit 0` passes this step, and it passes CI. Review can
+read the script and has no shell, so it cannot tell that script from a real test run. Merging is
+what accepts the script as the Project's check. Every later Ticket is told to satisfy it.
 
 ## Brakes
 
@@ -78,7 +129,9 @@ From [ADR 0005](../adr/0005-label-only-factory-start-and-no-secrets-for-forks.md
 - **The agent never holds a GitHub token.** The steps that hold the App token (`claim`, `prepare`,
   `publish`, `apply`) run no agent. The agent step gets only its Claude Code login, through
   `factory/claude.py`, which drops every other credential from its environment. The checkouts keep
-  no git credentials, so the agent cannot push. Any secret value found in a run's files is redacted
+  no git credentials, so the agent cannot push. The new-project check is its own step, after the
+  agent and before publish, and it gets neither the App token nor the Claude login: it runs a
+  script the agent just wrote. Any secret value found in a run's files is redacted
   before they are posted or uploaded.
 - **The reviewer reads PR content, so it gets no shell.** Review's agent has only Read, Grep and
   Glob, and cannot read `/proc`, so text in a PR cannot make it run anything or reveal its login.
@@ -122,7 +175,7 @@ factory's Claude Code.
 |---|---|
 | Label set and sync | `factory/labels.json`, `factory/sync_labels.py` |
 | Preflight: configuration, daily cap, App token | `.github/actions/factory-preflight/action.yml` |
-| Build a Ticket | `.github/workflows/implement.yml`, `factory/ticket.py` (`claim`, `build`, `publish`, `release`) |
+| Build a Ticket | `.github/workflows/implement.yml`, `factory/ticket.py` (`claim`, `build`, `verify`, `publish`, `release`) |
 | Review step | `.github/workflows/review.yml`, `factory/review_pr.py` (`prepare`, `review`, `apply`) |
 | Rework round | `.github/workflows/rework.yml`, `factory/ticket.py` (`revise`, `build`, `publish`) |
 | Live check | `.github/workflows/factory-check.yml`, `factory/check.py` |
@@ -153,7 +206,7 @@ factory's Claude Code.
 | `in-progress` | Factory | The factory is working on this Ticket. It stays until the Ticket closes. |
 | `rework`, `rework:1`, `rework:2` | Factory (Review) | Review found a Spec blocker; the counter is the rework round |
 | `ready-for-human` | Factory (Review) | Two rework rounds were not enough; the factory has stopped |
-| `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds: `projects/<name>/`, tested with its own `check` |
+| `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds. The row is in `factory/labels.json`. See [Starting a Project](#starting-a-project) |
 | `factory-check` | Owner | Run the live check |
 | `ready-for-agent` | Owner or a skill | Triage only: fully specified. It does not start the factory, so a Ticket can carry it and still be built on the laptop |
 | `needs-triage`, `needs-info`, `wontfix` | Owner | Triage, see [triage-labels.md](../agents/triage-labels.md) |
@@ -182,7 +235,7 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 | What you see | What to do |
 |---|---|
 | A comment says the factory did not start the Ticket | Read the reason. For "one Ticket at a time", finish or close the other Ticket. For "switch rule", switch to `openrouter`. Then re-apply `ready-for-factory`. |
-| A comment says the factory run failed | Open the run. The Ticket has lost `in-progress`, so it can be retried. |
+| A comment says the factory run failed | Open the run. A new Project whose `check` was missing or failed looks like this. The Ticket has lost `in-progress`, so it can be retried. |
 | A factory PR is closed without merging | Remove `in-progress` from its Ticket by hand. Otherwise one-at-a-time keeps every other Ticket waiting. |
 | A PR is labelled `ready-for-human` | Finish it by hand, or close it. The factory will not touch it again. |
 | A Rework run failed | The PR keeps `rework`. Fix it by hand and push, or re-add `rework` to retry. |
