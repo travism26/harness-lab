@@ -116,6 +116,16 @@ jobs:
           uv run --no-dev python -m factory.review_pr review --out review-out
           --login "$LOGIN" --model "$MODEL" --max-budget-usd "$BUDGET_USD"
 
+      # GITHUB_TOKEN has actions: read. The App token used to post the report does not.
+      - name: Read CI for this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          uv run --no-dev python -m factory.review_pr ci-conclusion
+          --repo "$REPO" --sha "$SHA" --out review-out
+
       - name: Post the report and move the labels
         env:
           GH_TOKEN: ${{ steps.preflight.outputs.token }}

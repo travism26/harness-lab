@@ -19,6 +19,7 @@ Usage:
       --head-sha SHA --code-dir pr --out review-out --login subscription --app-slug S
   uv run python -m factory.review_pr review --out review-out --login subscription \\
       --model sonnet --max-budget-usd 2
+  uv run python -m factory.review_pr ci-conclusion --repo O/R --sha SHA --out review-out
   uv run python -m factory.review_pr apply --repo O/R --pr N --out review-out
 
 Every step exits non-zero when it cannot do its job, so a run that did not
@@ -502,6 +503,24 @@ def drop_in_progress(gh: GitHub, repo: str, issue: int) -> bool:
     return True
 
 
+def ci_conclusion(args, gh: Optional[GitHub] = None) -> int:
+    """Record CI's conclusion for this head. The workflow runs this with
+    GITHUB_TOKEN, which has actions: read. A failed lookup writes an empty
+    file and exits 0, so Review still posts its report.
+    """
+    gh = gh or GitHub()
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        conclusion = gh.ci_conclusion(args.repo, args.sha) or ""
+    except GitHubError:
+        conclusion = ""
+        print("::warning title=CI conclusion unreadable::Review will not treat CI as finished")
+    (out / "ci-conclusion.txt").write_text(conclusion + ("\n" if conclusion else ""))
+    print(f"CI conclusion for {args.sha[:12]}: {conclusion or 'unknown'}")
+    return 0
+
+
 def apply(args, gh: Optional[GitHub] = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
@@ -515,7 +534,19 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
     comments = gh.pr_comments(args.repo, args.pr)
 
     stale_head = pr.get("headRefOid") if pr.get("headRefOid") != ctx["head_sha"] else None
-    ci = None if stale_head else gh.ci_conclusion(args.repo, ctx["head_sha"])
+    # ci-conclusion.txt is written by a step that holds GITHUB_TOKEN. The App
+    # token used here has no Actions permission, so it must not call gh run list.
+    recorded = out / "ci-conclusion.txt"
+    if recorded.is_file():
+        ci = recorded.read_text().strip() or None
+    elif stale_head:
+        ci = None
+    else:
+        try:
+            ci = gh.ci_conclusion(args.repo, ctx["head_sha"])
+        except GitHubError:
+            ci = None
+            print("::warning title=CI conclusion unreadable::Review will not treat CI as finished")
     if stale_head:
         moves = Moves("stale")
     else:
@@ -572,6 +603,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     r.add_argument("--model", choices=claude.MODELS, default="sonnet")
     r.add_argument("--max-budget-usd", type=float, required=True)
 
+    c = sub.add_parser("ci-conclusion")
+    c.add_argument("--repo", required=True)
+    c.add_argument("--sha", required=True)
+    c.add_argument("--out", required=True)
+
     a = sub.add_parser("apply")
     a.add_argument("--repo", required=True)
     a.add_argument("--pr", type=int, required=True)
@@ -579,7 +615,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     args = parser.parse_args(argv)
     try:
-        return {"prepare": prepare, "review": review, "apply": apply}[args.step](args)
+        return {"prepare": prepare, "review": review, "ci-conclusion": ci_conclusion,
+                "apply": apply}[args.step](args)
     except (RuntimeError, GitHubError, claude.ConfigError) as e:
         # A workflow command on stdout, so the run page shows it as an error.
         print(f"::error title=Factory review {args.step} failed::{e}")

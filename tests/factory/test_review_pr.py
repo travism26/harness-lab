@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from factory.github import GitHubError
 from factory import review_pr
 from factory.claude import Result
 from factory.review_pr import (
@@ -205,6 +206,33 @@ def test_charge_won_is_the_earliest_nonce():
     assert charge_won([earlier, later], sha, "aa")
     assert not charge_won([earlier, later], sha, "bb")
     assert charge_won([], sha, "aa")
+
+
+def test_ci_conclusion_records_the_run_and_survives_a_failed_lookup(tmp_path):
+    gh = FakeGitHub(_pr(), ci="success")
+    args = _args(tmp_path, sha="abc123")
+    assert review_pr.ci_conclusion(args, gh) == 0
+    assert (tmp_path / "ci-conclusion.txt").read_text().strip() == "success"
+
+    class Boom:
+        def ci_conclusion(self, repo, sha):
+            raise GitHubError("no actions permission")
+
+    assert review_pr.ci_conclusion(args, Boom()) == 0
+    assert (tmp_path / "ci-conclusion.txt").read_text() == ""
+
+
+def test_apply_reads_the_recorded_ci_conclusion(tmp_path):
+    sha = "abc123"
+    (tmp_path / "context.json").write_text(json.dumps(
+        {"repo": "o/r", "pr": 3, "base_sha": "b", "head_sha": sha, "code_dir": "pr", "ticket": 7}))
+    from dataclasses import asdict
+    (tmp_path / "findings.json").write_text(json.dumps(asdict(Findings("ok", "ok", [], []))))
+    (tmp_path / "ci-conclusion.txt").write_text("failure\n")
+    gh = FakeGitHub(_pr(labels=("rework", "rework:1"), head=sha), ci="success")
+    review_pr.apply(_args(tmp_path, head_sha=sha), gh)
+    assert gh.removed == [] and gh.added == []
+    assert "CI failed" in gh.comments[0]
 
 
 def test_a_lost_charge_is_rewritten_and_moves_no_labels(tmp_path):

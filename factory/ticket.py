@@ -48,14 +48,12 @@ from typing import List, Optional, Set, Tuple
 
 from factory import claude
 from factory.github import GitHub, GitHubError, author, label_names, write_comment
-from factory.review_pr import (
-    HUMAN_LABEL, IN_PROGRESS_LABEL as PROGRESS_LABEL, REWORK_LABEL, drop_in_progress,
-    linked_ticket, review_input,
-)
+from factory.review_pr import HUMAN_LABEL, REWORK_LABEL, linked_ticket, review_input
 from factory.switch_rule import LOGINS, refusal
 from factory.sync_labels import load_labels
 
 START_LABEL = "ready-for-factory"
+PROGRESS_LABEL = "in-progress"
 PROJECT_PREFIX = "project:"
 PROJECTS_DIR = "projects"
 BRANCH_PREFIX = "factory/"
@@ -380,12 +378,14 @@ def publish(args, gh: Optional[GitHub] = None) -> int:
 
 def release(args, gh: Optional[GitHub] = None) -> int:
     gh = gh or GitHub()
+    issue = gh.issue(args.repo, args.issue)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     body = (f"The factory run for this Ticket failed: [run]({args.run_url}). "
             f"`{PROGRESS_LABEL}` has been removed; re-apply `{START_LABEL}` to try again.\n")
     gh.comment(args.repo, args.issue, write_comment(out, "failed.md", body))
-    drop_in_progress(gh, args.repo, args.issue)
+    if PROGRESS_LABEL in label_names(issue):
+        gh.remove_labels(args.repo, args.issue, (PROGRESS_LABEL,))
     return 0
 
 
