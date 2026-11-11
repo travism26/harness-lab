@@ -7,3 +7,6 @@ dist/
 
 # Run logs: one JSON-lines file per Run.
 projects/harness/runs/
+
+# Bench runs: the ledger, the lock and each run's files.
+bench-runs/
