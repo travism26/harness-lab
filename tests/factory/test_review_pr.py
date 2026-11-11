@@ -4,7 +4,10 @@ import pytest
 
 from factory import review_pr
 from factory.claude import Result
-from factory.review_pr import Findings, Finding, Moves, label_moves, linked_ticket, parse_findings
+from factory.review_pr import (
+    Findings, Finding, Moves, charge_won, gate_line, label_moves, linked_ticket, parse_findings,
+    parse_gate, review_gate,
+)
 
 
 @pytest.mark.parametrize("labels,blocker,expected", [
@@ -56,18 +59,32 @@ def test_parse_findings_rejects_bad_answers(text):
 
 
 class FakeGitHub:
-    def __init__(self, pr, issue=None):
+    def __init__(self, pr, issue=None, comments=(), ci=None):
         self._pr, self._issue = pr, issue
+        self.ci = ci
         self.comments, self.added, self.removed = [], [], []
+        self._thread, self._next = [], 1
+        for body in comments:
+            self._thread.append({"id": self._next, "body": body})
+            self._next += 1
 
     def pr(self, repo, number):
         return self._pr
 
     def issue(self, repo, number):
-        return self._issue
+        return self._issue or {"labels": []}
+
+    def pr_comments(self, repo, number):
+        return list(self._thread)
+
+    def ci_conclusion(self, repo, sha):
+        return self.ci
 
     def comment(self, repo, number, path):
-        self.comments.append(path.read_text())
+        body = path.read_text()
+        self.comments.append(body)
+        self._thread.append({"id": self._next, "body": body})
+        self._next += 1
 
     def add_labels(self, repo, number, labels):
         self.added += list(labels)
@@ -141,3 +158,49 @@ def test_apply_on_a_moved_head_changes_no_labels(tmp_path):
     gh = FakeGitHub(_pr(head="new"))
     review_pr.apply(_args(tmp_path), gh)
     assert gh.added == [] and gh.removed == [] and "moved on" in gh.comments[0]
+
+
+def test_gate_line_round_trips():
+    line = gate_line("ba2ea98635fd261912159e8bc8f4f54f1f5411d0", True, "ci", ci_run=99,
+                     nonce="abc", add=("rework", "rework:1"))
+    mark = parse_gate(line)
+    assert mark.charged and mark.source == "ci" and mark.ci_run == 99
+    assert mark.nonce == "abc" and mark.add == ("rework", "rework:1")
+
+
+def test_review_joins_a_head_ci_already_charged():
+    sha = "ba2ea98635fd261912159e8bc8f4f54f1f5411d0"
+    comment = {"id": 1, "body": gate_line(sha, True, "ci", ci_run=5, nonce="aa",
+                                          add=("rework", "rework:1"))}
+    moves = review_gate(["rework", "rework:1"], [comment], sha, True, "failure")
+    assert moves == Moves("same-round")
+
+
+def test_spec_pass_leaves_a_ci_failure_to_the_gate():
+    moves = review_gate(["rework", "rework:1"], [], "ba2ea98635fd", False, "failure")
+    assert moves == Moves("ci-blocked")
+
+
+def test_charge_won_is_the_earliest_nonce():
+    sha = "ba2ea98635fd"
+    earlier = {"id": 1, "body": gate_line(sha, True, "review", nonce="aa", add=("rework", "rework:1"))}
+    later = {"id": 2, "body": gate_line(sha, True, "ci", ci_run=3, nonce="bb",
+                                       add=("rework", "rework:1"))}
+    assert charge_won([earlier, later], sha, "aa")
+    assert not charge_won([earlier, later], sha, "bb")
+    assert charge_won([], sha, "aa")
+
+
+def test_apply_on_a_pass_and_green_ci_clears_in_progress(tmp_path):
+    sha = "abc123"
+    (tmp_path / "context.json").write_text(json.dumps(
+        {"repo": "o/r", "pr": 3, "base_sha": "b", "head_sha": sha, "code_dir": "pr", "ticket": 7}))
+    from dataclasses import asdict
+    passed = Findings("ok", "ok", [], [])
+    (tmp_path / "findings.json").write_text(json.dumps(asdict(passed)))
+    gh = FakeGitHub(_pr(labels=(), head=sha, body="Closes #7"),
+                    issue={"labels": [{"name": "in-progress"}]}, ci="success")
+    review_pr.apply(_args(tmp_path, head_sha=sha), gh)
+    assert "in-progress" in gh.removed
+    assert any("factory:settled" in comment for comment in gh.comments)
+    assert "round" not in gh.added

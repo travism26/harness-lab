@@ -12,6 +12,7 @@ GitHub token and the steps holding the App token run no agent:
   apply    (App token, no agent) posts the report on the PR and moves the
            labels: on a blocker `rework` plus a `rework:N` counter; after
            rework:2 the next blocker labels the PR ready-for-human instead.
+           A CI failure on the same head shares that counter (factory/ci_gate.py).
 
 Usage:
   uv run python -m factory.review_pr prepare --repo O/R --pr N --base-sha SHA \\
@@ -28,11 +29,12 @@ import argparse
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from factory import claude
 from factory.github import GitHub, GitHubError, author, label_names, write_comment
@@ -49,6 +51,18 @@ DENIED_TOOLS = ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"
                 "Agent", "Task", "Read(//proc/**)"]
 READ_TOOLS = ["Read", "Grep", "Glob"]
 MARKER = "<!-- factory:review -->"
+# Second line of a factory comment. `charged=1` means this comment took the
+# rework counter for that head; CI and Review share it, so a head is charged
+# once. `add` is the labels that charge intended, so a re-run can finish them.
+_GATE_RE = re.compile(
+    r"<!-- factory:gate "
+    r"head=(?P<head>[0-9a-f]{6,64}) "
+    r"charged=(?P<charged>[01]) "
+    r"source=(?P<source>review|ci)"
+    r"(?: ci-run=(?P<ci_run>\d+))?"
+    r"(?: nonce=(?P<nonce>[0-9a-f]+))?"
+    r"(?: add=(?P<add>[A-Za-z0-9:,_-]+))?"
+    r" -->")
 
 _COUNTER_RE = re.compile(r"^rework:(\d+)$")
 # GitHub's closing keywords, then #N or owner/repo#N.
@@ -134,11 +148,135 @@ def rework_round(labels: List[str]) -> int:
 
 
 @dataclass(frozen=True)
+class GateMark:
+    """The machine-readable line under the review marker."""
+    head: str
+    charged: bool
+    source: str
+    ci_run: Optional[int] = None
+    nonce: Optional[str] = None
+    add: tuple = ()
+
+
+def gate_line(head_sha: str, charged: bool, source: str, ci_run: Optional[int] = None,
+              nonce: Optional[str] = None, add: tuple = ()) -> str:
+    bits = [f"head={head_sha}", f"charged={1 if charged else 0}", f"source={source}"]
+    if ci_run is not None:
+        bits.append(f"ci-run={ci_run}")
+    if nonce:
+        bits.append(f"nonce={nonce}")
+    if add:
+        bits.append("add=" + ",".join(add))
+    return "<!-- factory:gate " + " ".join(bits) + " -->"
+
+
+def parse_gate(body: str) -> Optional[GateMark]:
+    match = _GATE_RE.search(body or "")
+    if not match:
+        return None
+    add = tuple(part for part in (match.group("add") or "").split(",") if part)
+    ci_run = int(match.group("ci_run")) if match.group("ci_run") else None
+    return GateMark(match.group("head"), match.group("charged") == "1", match.group("source"),
+                    ci_run, match.group("nonce"), add)
+
+
+def _bodies(comments: Sequence) -> List[str]:
+    return [c if isinstance(c, str) else (c.get("body") or "") for c in comments or ()]
+
+
+def review_verdict(body: str) -> Optional[str]:
+    for line in (body or "").splitlines():
+        if line.startswith("## Factory review: "):
+            return line[len("## Factory review: "):].strip()
+    return None
+
+
+def earliest_charge(comments: Sequence, head_sha: str) -> Optional[dict]:
+    """The charged comment for this head with the lowest id, if any."""
+    found = []
+    for comment in comments or ():
+        body = comment if isinstance(comment, str) else (comment.get("body") or "")
+        meta = parse_gate(body)
+        if not meta or meta.head != head_sha or not meta.charged:
+            continue
+        found.append(comment if isinstance(comment, dict) else {"id": 0, "body": body})
+    if not found:
+        return None
+    return min(found, key=lambda comment: comment.get("id") or 0)
+
+
+def head_charged(comments: Sequence, head_sha: str) -> bool:
+    return earliest_charge(comments, head_sha) is not None
+
+
+def charge_won(comments: Sequence, head_sha: str, nonce: str) -> bool:
+    """True when this nonce may move labels. No charge yet, or ours is earliest."""
+    winner = earliest_charge(comments, head_sha)
+    if winner is None:
+        return True
+    meta = parse_gate(winner.get("body") or "")
+    return bool(meta and meta.nonce == nonce)
+
+
+def mark_for_run(comments: Sequence, run_id: int) -> Optional[GateMark]:
+    for body in _bodies(comments):
+        meta = parse_gate(body)
+        if meta and meta.ci_run == run_id:
+            return meta
+    return None
+
+
+def review_passed(comments: Sequence, head_sha: str) -> bool:
+    for body in _bodies(comments):
+        meta = parse_gate(body)
+        if (meta and meta.head == head_sha and meta.source == "review"
+                and review_verdict(body) == "PASS"):
+            return True
+    return False
+
+
+def settled_marker(head_sha: str) -> str:
+    return f"<!-- factory:settled head={head_sha} -->"
+
+
+def already_settled(comments: Sequence, head_sha: str) -> bool:
+    marker = settled_marker(head_sha)
+    return any(marker in body for body in _bodies(comments))
+
+
+def settled_comment(head_sha: str, issue: Optional[int]) -> str:
+    where = f"Ticket #{issue}" if issue else "the Ticket"
+    return (f"{settled_marker(head_sha)}\n"
+            f"Review passed and CI is green for `{head_sha[:12]}`. "
+            f"`in-progress` has been removed from {where}. "
+            "The draft PR waits for a human to merge.\n")
+
+
+def review_input(comments: List[dict], head_sha: str = "") -> Optional[str]:
+    """What revise hands the rework agent.
+
+    Every BLOCKED factory comment for this head is included, oldest first, so
+    one round sees a Spec blocker and a CI failure together. With none, the
+    latest factory comment: older comments have no gate line to filter on.
+    """
+    marked = [c.get("body") or "" for c in comments if MARKER in (c.get("body") or "")]
+    if head_sha:
+        blocked = []
+        for body in marked:
+            meta = parse_gate(body)
+            if meta and meta.head == head_sha and review_verdict(body) == "BLOCKED":
+                blocked.append(body)
+        if blocked:
+            return "\n\n".join(blocked)
+    return marked[-1] if marked else None
+
+
+@dataclass(frozen=True)
 class Moves:
     """What apply does to the PR's labels. remove runs before add, so a
     `rework` already on the PR comes off and goes back on, and the label
     event that starts a rework round fires again."""
-    outcome: str  # pass | rework | human | human-owned | stale
+    outcome: str  # pass | rework | human | human-owned | stale | same-round | ci-blocked
     add: tuple = ()
     remove: tuple = ()
 
@@ -159,6 +297,26 @@ def label_moves(labels: List[str], blocker: bool) -> Moves:
     return Moves("rework", add=(REWORK_LABEL, f"rework:{done + 1}"), remove=remove)
 
 
+def review_gate(labels: List[str], comments: Sequence, head_sha: str, spec_blocker: bool,
+                ci_conclusion: Optional[str]) -> Moves:
+    """Label moves for a review, sharing the counter with a CI failure.
+
+    A Spec blocker charges the round unless this head already has one. A Spec
+    pass does not remove that charge when CI has failed: the CI gate owns it.
+    `ci_conclusion` None means CI has not finished; a pass then only clears a
+    stale `rework` label, and the gate settles in-progress once CI is green.
+    """
+    if HUMAN_LABEL in labels:
+        return Moves("human-owned")
+    if spec_blocker:
+        if head_charged(comments, head_sha):
+            return Moves("same-round")
+        return label_moves(labels, True)
+    if ci_conclusion == "failure":
+        return Moves("ci-blocked")
+    return label_moves(labels, False)
+
+
 def _axis_verdict(findings: List[Finding]) -> str:
     if any(f.blocks for f in findings):
         return "BLOCKER"
@@ -166,10 +324,13 @@ def _axis_verdict(findings: List[Finding]) -> str:
 
 
 def render_report(findings: Findings, ctx: dict, moves: Moves, labels_after: List[str],
-                  stale_head: Optional[str] = None) -> str:
+                  stale_head: Optional[str] = None, nonce: Optional[str] = None) -> str:
     """The PR comment: a headline, what was reviewed against, then each axis."""
     verdict = "BLOCKED" if findings.blocker else "PASS"
-    lines = [MARKER, f"## Factory review: {verdict}", ""]
+    charged = moves.outcome in ("rework", "human")
+    gate = gate_line(ctx["head_sha"], charged, "review", nonce=nonce if charged else None,
+                     add=moves.add if charged else ())
+    lines = [MARKER, gate, f"## Factory review: {verdict}", ""]
     against = (f"Ticket #{ctx['ticket']}" if ctx.get("ticket")
                else "the PR description (the PR closes no Ticket)")
     lines.append(f"Reviewed `{ctx['head_sha'][:12]}` against {against}.")
@@ -184,6 +345,12 @@ def render_report(findings: Findings, ctx: dict, moves: Moves, labels_after: Lis
         lines.append(f"The PR has moved on to `{(stale_head or '')[:12]}` since this "
                      "review started, so no labels were changed; the review of the new "
                      "head decides them.")
+    elif moves.outcome == "same-round":
+        lines.append("This head is already in a rework round, so the counter stays. "
+                     "The findings below join that round.")
+    elif moves.outcome == "ci-blocked":
+        lines.append("Spec passed. Required CI failed on this head, so the rework "
+                     "counter is left to the CI gate and no labels were changed.")
     for name, summary, items in (("Spec", findings.spec_summary, findings.spec_findings),
                                  ("Standards", findings.standards_summary,
                                   findings.standards_findings)):
@@ -191,7 +358,7 @@ def render_report(findings: Findings, ctx: dict, moves: Moves, labels_after: Lis
         for f in items:
             where = f" (`{f.file_path}`)" if f.file_path else ""
             lines.append(f"- **{f.kind}** {f.description}{where}. Fix: {f.resolution}")
-    lines += ["", "Only a Spec blocker (a missing or wrongly implemented requirement) "
+    lines += ["", "A Spec blocker or a failing required CI run on a factory draft "
               "sends a PR to rework. The merge is a human's."]
     return "\n".join(lines) + "\n"
 
@@ -312,6 +479,17 @@ def review(args, run_agent=claude.run) -> int:
                   "it was redacted")
 
 
+def _move_labels(gh: GitHub, repo: str, number: int, moves: Moves) -> None:
+    """Apply moves. A label that is removed and added again is added after the
+    remove, so the `rework` event still fires when a new round starts."""
+    current = set(label_names(gh.pr(repo, number)))
+    remove = tuple(label for label in moves.remove if label in current)
+    gh.remove_labels(repo, number, remove)
+    current.difference_update(remove)
+    add = tuple(label for label in moves.add if label not in current)
+    gh.add_labels(repo, number, add)
+
+
 def apply(args, gh: Optional[GitHub] = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
@@ -322,22 +500,40 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
         print(f"PR {args.repo}#{args.pr} is {pr.get('state')}; nothing posted")
         return 0
     labels = label_names(pr)
+    comments = gh.pr_comments(args.repo, args.pr)
 
     stale_head = pr.get("headRefOid") if pr.get("headRefOid") != ctx["head_sha"] else None
-    moves = Moves("stale") if stale_head else label_moves(labels, blocker=findings.blocker)
+    ci = None if stale_head else gh.ci_conclusion(args.repo, ctx["head_sha"])
+    if stale_head:
+        moves = Moves("stale")
+    else:
+        moves = review_gate(labels, comments, ctx["head_sha"], findings.blocker, ci)
     labels_after = [label for label in labels if label not in moves.remove] + list(moves.add)
+    nonce = secrets.token_hex(8) if moves.outcome in ("rework", "human") else None
 
-    report = render_report(findings, ctx, moves, labels_after, stale_head)
+    report = render_report(findings, ctx, moves, labels_after, stale_head, nonce)
     path = write_comment(out, "report.md", report)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as f:
             f.write(report)
     gh.comment(args.repo, args.pr, path)
-    gh.remove_labels(args.repo, args.pr, moves.remove)
-    gh.add_labels(args.repo, args.pr, moves.add)
-    print(f"Posted the review on PR {args.repo}#{args.pr}: {moves.outcome}; "
-          f"removed {list(moves.remove)}, added {list(moves.add)}")
+    applied = moves
+    if nonce and not charge_won(gh.pr_comments(args.repo, args.pr), ctx["head_sha"], nonce):
+        applied = Moves("same-round")
+        print(f"PR {args.repo}#{args.pr}: another charge for this head won; labels unchanged")
+    else:
+        _move_labels(gh, args.repo, args.pr, moves)
+    if (moves.outcome == "pass" and ci == "success" and ctx.get("ticket")
+            and not already_settled(comments, ctx["head_sha"])):
+        note = settled_comment(ctx["head_sha"], ctx["ticket"])
+        gh.comment(args.repo, args.pr, write_comment(out, "settled.md", note))
+        # Local import: ticket imports this module.
+        from factory.ticket import drop_in_progress
+        if drop_in_progress(gh, args.repo, ctx["ticket"]):
+            gh.comment(args.repo, ctx["ticket"], write_comment(out, "settled-issue.md", note))
+    print(f"Posted the review on PR {args.repo}#{args.pr}: {applied.outcome}; "
+          f"removed {list(applied.remove)}, added {list(applied.add)}")
     return 0
 
 

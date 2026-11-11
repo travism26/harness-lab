@@ -2,7 +2,9 @@
 # each Project the change touches (factory/ci_projects.py chooses which; docs/factory/README.md).
 #
 # Plain `pull_request`, no secrets: it runs fork PRs' code, so it holds nothing
-# worth taking (docs/adr/0005).
+# worth taking (docs/adr/0005). A failure on a factory draft is handled by
+# ci-gate.yml, which runs on workflow_run from the default branch. This file
+# stays free of secrets and of write permissions.
 
 name: CI
 
