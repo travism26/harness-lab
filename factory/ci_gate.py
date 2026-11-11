@@ -200,10 +200,25 @@ def _render_failure(event: GateEvent, moves: Moves, charged: bool, nonce: Option
         lines += ["",
                   f"- **ci_failure** Job `{job.name}` failed ([run]({event.run_url})). "
                   "Fix: make the Project check pass. Log excerpt:",
-                  "", "```", _fence(job.excerpt) or "(no log)", "```"]
+                  "", "```", _fence(_TOKEN_RE.sub("[REDACTED]", job.excerpt)) or "(no log)", "```"]
     lines += ["", "A failing required CI run sends this PR to rework, on the same "
               "counter as a Spec blocker. The merge is a human's."]
-    return redact("\n".join(lines) + "\n", ())
+    return "\n".join(lines) + "\n"
+
+
+def conclusion_for_trigger(workflow: str, conclusion: str, ci_run: Optional[dict]) -> str:
+    """The CI conclusion this gate should judge.
+
+    A Review completion is not a CI result. When Review finishes, only an
+    already-green CI run for the same head is a success; anything else is
+    ignored so this path never starts a rework round. CI's own completion
+    still carries its own conclusion.
+    """
+    if workflow != "Review":
+        return conclusion
+    if (ci_run or {}).get("conclusion") == "success":
+        return "success"
+    return "ignored"
 
 
 def decide(event: GateEvent, nonce: str = "") -> Decision:
@@ -245,8 +260,7 @@ def _decide_failure(event: GateEvent, nonce: str) -> Decision:
     if posted is not None:
         return _duplicate(event, posted)
     if head_charged(event.comments, event.head_sha):
-        comment = _render_failure(event, Moves("pass"), charged=False, nonce=None, joining=True)
-        return Decision("join", "this head is already in a rework round", comment=comment)
+        return Decision("join", "this head is already in a rework round", comment=_join_comment(event))
     moves = label_moves(list(event.labels), True)
     comment = _render_failure(event, moves, charged=True, nonce=nonce, joining=False)
     return Decision(moves.outcome, "required CI failed", comment=comment,
@@ -350,8 +364,18 @@ def collect(args, gh: Optional[GitHub] = None) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     hidden = env_secrets(os.environ)
+    conclusion, run_id, run_url = args.conclusion, args.run_id, args.run_url
+    if getattr(args, "workflow", "CI") == "Review":
+        try:
+            ci_run = gh.workflow_run(args.repo, args.head_sha, CI_WORKFLOW)
+        except GitHubError:
+            ci_run = None
+        conclusion = conclusion_for_trigger("Review", args.conclusion, ci_run)
+        if conclusion == "success" and ci_run:
+            run_id = int(ci_run["databaseId"])
+            run_url = ci_run.get("url") or run_url
     jobs: Tuple[FailedJob, ...] = ()
-    if args.conclusion == "failure":
+    if conclusion == "failure":
         logs = {}
         raw_jobs = gh.jobs(args.repo, args.run_id)
         for job in raw_jobs:
@@ -364,13 +388,13 @@ def collect(args, gh: Optional[GitHub] = None) -> int:
         jobs = failed_findings(raw_jobs, logs, hidden)
         if not jobs:
             jobs = (FailedJob("CI", NO_FAILED_JOB),)
-    payload = {"conclusion": args.conclusion, "event": args.event, "head_branch": args.head_branch,
+    payload = {"conclusion": conclusion, "event": args.event, "head_branch": args.head_branch,
                "head_sha": args.head_sha, "head_repo": args.head_repo, "repo": args.repo,
-               "run_id": args.run_id, "run_url": args.run_url,
+               "run_id": run_id, "run_url": run_url,
                "failed_jobs": [{"name": job.name, "excerpt": job.excerpt} for job in jobs]}
     (out / "event.json").write_text(json.dumps(payload, indent=2) + "\n")
     names = ", ".join(job.name for job in jobs) or "none"
-    print(f"CI run {args.run_id} {args.conclusion}: failed jobs: {names}")
+    print(f"CI run {run_id} {conclusion}: failed jobs: {names}")
     return 0
 
 
@@ -381,7 +405,7 @@ def _load_facts(path: Path) -> dict:
     return raw
 
 
-def _live_event(facts: dict, gh: GitHub, app_slug: str) -> Optional[GateEvent]:
+def _live_event(facts: dict, gh: GitHub, app_slug: str) -> GateEvent:
     prs = [pr for pr in gh.open_prs_for_branch(facts["repo"], facts["head_branch"])
            if pr.get("headRefOid") == facts["head_sha"]]
     if not prs:
@@ -415,7 +439,7 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
     out = Path(args.out)
     facts = _load_facts(out / "event.json")
     event = _live_event(facts, gh, args.app_slug)
-    if event is None or event.pr is None:
+    if event.pr is None:
         print("CI gate ignored: no open pull request for this head")
         return 0
     nonce = secrets.token_hex(8)
@@ -474,6 +498,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     c.add_argument("--run-id", type=int, required=True)
     c.add_argument("--run-url", required=True)
     c.add_argument("--conclusion", required=True)
+    c.add_argument("--workflow", default="CI")
     c.add_argument("--event", required=True)
     c.add_argument("--head-branch", required=True)
     c.add_argument("--head-sha", required=True)

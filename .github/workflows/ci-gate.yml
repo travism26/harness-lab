@@ -1,5 +1,5 @@
-# When CI finishes on a factory draft, enter the existing rework path or clear
-# `in-progress` (docs/factory/README.md). workflow_run, so this file and
+# When CI or Review finishes on a factory draft, enter the existing rework path
+# or clear `in-progress` (docs/factory/README.md). workflow_run, so this file and
 # factory/ come from the default branch. The job does not run for a fork, a
 # push to main, or any branch that is not factory/issue-<N>.
 #
@@ -13,7 +13,10 @@ name: CI gate
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    # Review as well as CI: a green CI run that finishes before Review posts
+    # PASS would otherwise never clear in-progress. A Review completion only
+    # settles; it does not start a rework round.
+    workflows: ["CI", "Review"]
     types: [completed]
 
 permissions: {}
@@ -32,7 +35,8 @@ jobs:
     # Cancelled and timed-out runs are not a rework signal. The Python step
     # repeats these checks and also requires the factory App's pull request.
     if: >-
-      github.event.workflow_run.event == 'pull_request'
+      (github.event.workflow_run.event == 'pull_request'
+        || github.event.workflow_run.event == 'pull_request_target')
       && github.event.workflow_run.head_repository.full_name == github.repository
       && startsWith(github.event.workflow_run.head_branch, 'factory/issue-')
       && (github.event.workflow_run.conclusion == 'failure'
@@ -59,6 +63,7 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
           EVENT_NAME: ${{ github.event.workflow_run.event }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -66,7 +71,7 @@ jobs:
         run: >-
           uv run --no-dev python -m factory.ci_gate collect
           --repo "$REPO" --run-id "$RUN_ID" --run-url "$RUN_URL"
-          --conclusion "$CONCLUSION" --event "$EVENT_NAME"
+          --conclusion "$CONCLUSION" --workflow "$WORKFLOW" --event "$EVENT_NAME"
           --head-branch "$HEAD_BRANCH" --head-sha "$HEAD_SHA"
           --head-repo "$HEAD_REPO" --out run-out
 

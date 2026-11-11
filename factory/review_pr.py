@@ -194,14 +194,13 @@ def review_verdict(body: str) -> Optional[str]:
 
 
 def earliest_charge(comments: Sequence, head_sha: str) -> Optional[dict]:
-    """The charged comment for this head with the lowest id, if any."""
-    found = []
-    for comment in comments or ():
-        body = comment if isinstance(comment, str) else (comment.get("body") or "")
-        meta = parse_gate(body)
-        if not meta or meta.head != head_sha or not meta.charged:
-            continue
-        found.append(comment if isinstance(comment, dict) else {"id": 0, "body": body})
+    """The charged comment for this head with the lowest id, if any.
+
+    `comments` are GitHub comment objects (`id` and `body`), not bare strings.
+    """
+    found = [comment for comment in comments or ()
+             if (meta := parse_gate(comment.get("body") or ""))
+             and meta.head == head_sha and meta.charged]
     if not found:
         return None
     return min(found, key=lambda comment: comment.get("id") or 0)
@@ -513,7 +512,8 @@ def ci_conclusion(args, gh: Optional[GitHub] = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     try:
         conclusion = gh.ci_conclusion(args.repo, args.sha) or ""
-    except GitHubError:
+    except (GitHubError, ValueError):
+        # ValueError covers json.JSONDecodeError from a malformed `gh run list`.
         conclusion = ""
         print("::warning title=CI conclusion unreadable::Review will not treat CI as finished")
     (out / "ci-conclusion.txt").write_text(conclusion + ("\n" if conclusion else ""))

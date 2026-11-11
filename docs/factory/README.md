@@ -32,8 +32,8 @@ fails with a message naming what is missing. It never goes green without doing a
 3. **Review** (`.github/workflows/review.yml`) runs on the new PR. A fresh agent with read-only
    tools reviews the diff along two axes: Spec (does it do what the Ticket asks?) and Standards
    (does it follow `CLAUDE.md`, the glossaries and the decision records?). It posts one report on the PR.
-4. **CI** (`.github/workflows/ci.yml`) runs on the PR with no secrets. When that run finishes,
-   **CI gate** (`.github/workflows/ci-gate.yml`) runs from the default branch, and only for an open
+4. **CI** (`.github/workflows/ci.yml`) runs on the PR with no secrets. When CI or Review
+   finishes, **CI gate** (`.github/workflows/ci-gate.yml`) runs from the default branch, and only for an open
    pull request whose branch is `factory/issue-<N>`, whose head repository is this one, and whose
    author is the factory App. A failure starts Rework only while the PR is still a draft. A fork,
    any other branch, or a PR the owner opened by hand is ignored.
@@ -51,8 +51,9 @@ fails with a message naming what is missing. It never goes green without doing a
      a fork, or `ready-for-human`), Rework gives it two minutes and then continues. A repeated
      delivery of the same CI run does not open another round. If two charges land together, the
      later comment is rewritten so it does not claim the round.
-   - A **green** run does nothing by itself. Once Review has passed that same head, and that head
-     is not already in an open rework round, the gate removes `in-progress` from the Ticket and
+   - A **green** CI run does nothing by itself. The gate runs again when Review finishes. If CI
+     for that head is already green and the new Review comment is PASS, and the head is not
+     already in an open rework round, the gate removes `in-progress` from the Ticket and
      comments on the pull request and the Ticket. It does this even if the pull request is no
      longer a draft: the factory's work on that head is done either way. The pull request stays a
      draft unless a human has already marked it ready. A human merges it. No other step asks the

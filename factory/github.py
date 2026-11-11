@@ -49,7 +49,7 @@ class GitHub:
 
     def open_prs_for_branch(self, repo: str, branch: str) -> List[dict]:
         out = self._gh(["pr", "list", "-R", repo, "--head", branch, "--state", "open",
-                        "--json", "number,headRefOid,isCrossRepository"])
+                        "--json", "number,headRefOid"])
         return json.loads(out)
 
     def pull_head_repo(self, repo: str, number: int) -> str:

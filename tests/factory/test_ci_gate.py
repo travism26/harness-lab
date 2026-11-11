@@ -5,7 +5,8 @@ import json
 import pytest
 
 from factory.ci_gate import (
-    Decision, FailedJob, bound_excerpt, decide, failed_findings, inputs_ready, wait_for_inputs,
+    Decision, FailedJob, bound_excerpt, conclusion_for_trigger, decide, failed_findings,
+    inputs_ready, wait_for_inputs,
 )
 from factory.github import GitHubError, select_head_run
 from factory.review_pr import MARKER, gate_line
@@ -162,6 +163,19 @@ def test_duplicate_human_charge_finishes_without_a_second_comment():
     assert decision.add == ("ready-for-human",)
     assert decision.remove == ("rework",)
     assert decision.comment == ""
+
+
+def test_ci_green_then_review_pass_clears_in_progress():
+    ci_run = {"conclusion": "success", "databaseId": 99, "url": "https://example.test/ci"}
+    assert conclusion_for_trigger("Review", "success", ci_run) == "success"
+    assert conclusion_for_trigger("Review", "success", {"conclusion": "failure"}) == "ignored"
+    assert conclusion_for_trigger("Review", "failure", None) == "ignored"
+    assert conclusion_for_trigger("CI", "failure", None) == "failure"
+    decision = decide(event(conclusion="success", failed_jobs=(), run_id=99,
+                            run_url="https://example.test/ci", comments=(_pass(),)))
+    assert decision.action == "settle" and decision.clear_in_progress and decision.issue == 114
+    ignored = decide(event(conclusion="ignored", failed_jobs=()))
+    assert ignored.action == "ignore"
 
 
 def test_green_ci_after_pass_clears_in_progress():

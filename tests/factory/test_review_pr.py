@@ -208,6 +208,23 @@ def test_charge_won_is_the_earliest_nonce():
     assert charge_won([], sha, "aa")
 
 
+def test_ci_conclusion_writes_empty_on_malformed_json(tmp_path):
+    class BadJson:
+        def ci_conclusion(self, repo, sha):
+            raise json.JSONDecodeError("Expecting value", "x", 0)
+
+    args = _args(tmp_path, sha="abc123def456")
+    assert review_pr.ci_conclusion(args, BadJson()) == 0
+    assert (tmp_path / "ci-conclusion.txt").read_text() == ""
+
+    class BadValue:
+        def ci_conclusion(self, repo, sha):
+            raise ValueError("not a conclusion")
+
+    assert review_pr.ci_conclusion(args, BadValue()) == 0
+    assert (tmp_path / "ci-conclusion.txt").read_text() == ""
+
+
 def test_ci_conclusion_records_the_run_and_survives_a_failed_lookup(tmp_path):
     gh = FakeGitHub(_pr(), ci="success")
     args = _args(tmp_path, sha="abc123")
