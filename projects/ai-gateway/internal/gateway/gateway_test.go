@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -333,5 +334,52 @@ func TestOverlappingCallsMakeTwoLines(t *testing.T) {
 	}
 	if n := len(r.records(t)); n != 20 {
 		t.Fatalf("%d records", n)
+	}
+}
+
+type failingBody struct{}
+
+func (failingBody) Read([]byte) (int, error) { return 0, errors.New("boom") }
+
+// A request body that cannot be read is a Call: 400, failure true, recorded,
+// and no Upstream request.
+func TestUnreadableBodyIsRecordedAs400(t *testing.T) {
+	r := newRig(t, okJSON)
+	var audit bytes.Buffer
+	u, _ := url.Parse("http://" + r.stand + "/v1/messages")
+	h := gateway.New(u, &audit, nil)
+	req := httptest.NewRequest("POST", "/v1/messages", failingBody{})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 400 || rec.Body.String() != gateway.BadRequestBody {
+		t.Fatalf("got %d %q", rec.Code, rec.Body.String())
+	}
+	var m map[string]any
+	if err := json.Unmarshal(audit.Bytes(), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["status"] != float64(400) || m["failure"] != true || m["response_body"] != gateway.BadRequestBody {
+		t.Errorf("record %v", m)
+	}
+	if len(r.got) != 0 {
+		t.Error("upstream request for an unreadable body")
+	}
+}
+
+// An empty body reaches the Upstream with only the framing the Go transport
+// sets (Content-Length: 0); the Gateway adds nothing else.
+func TestEmptyBodyHeadersPinned(t *testing.T) {
+	r := newRig(t, okJSON)
+	resp := post(t, r.gw.URL+"/v1/messages", "", map[string]string{"Anthropic-Version": "1"})
+	resp.Body.Close()
+	g := r.got[0]
+	want := map[string]bool{"Anthropic-Version": true, "Content-Length": true}
+	for k := range g.header {
+		if !want[k] {
+			t.Errorf("unexpected header %q", k)
+		}
+	}
+	if g.header.Get("Content-Length") != "0" {
+		t.Errorf("content-length %q", g.header.Get("Content-Length"))
 	}
 }

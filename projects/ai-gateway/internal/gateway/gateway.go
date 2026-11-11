@@ -18,6 +18,10 @@ import (
 
 // BadGatewayBody is the body of the 502 the Gateway returns when the Upstream
 // cannot be reached. It holds no request byte.
+// BadRequestBody is the body of the 400 the Gateway returns when the client
+// request body cannot be read.
+const BadRequestBody = "gateway: cannot read request body\n"
+
 const BadGatewayBody = "gateway: upstream unreachable\n"
 
 var hopByHop = []string{
@@ -55,21 +59,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start := time.Now()
-	reqBody, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "gateway: cannot read request body", http.StatusBadRequest)
-		return
-	}
+	reqBody, readErr := io.ReadAll(r.Body)
 
 	var status int
 	var respBody []byte
 	var latency time.Duration
-	out, err := h.upstreamRequest(r, reqBody)
 	var resp *http.Response
-	if err == nil {
-		resp, err = h.client.Do(out)
+	var err error
+	if readErr == nil {
+		var out *http.Request
+		if out, err = h.upstreamRequest(r, reqBody); err == nil {
+			resp, err = h.client.Do(out)
+		}
 	}
-	if err != nil {
+	if readErr != nil {
+		// A body that cannot be read is still a Call: recorded as a 400, no Upstream request.
+		status = http.StatusBadRequest
+		respBody = []byte(BadRequestBody)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(status)
+		_, _ = w.Write(respBody)
+		latency = time.Since(start)
+	} else if err != nil {
 		status = http.StatusBadGateway
 		respBody = []byte(BadGatewayBody)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
