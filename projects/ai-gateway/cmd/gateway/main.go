@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -73,7 +74,18 @@ func run(ctx context.Context, args []string, stderr io.Writer, listen listenFunc
 		fmt.Fprintf(stderr, "gateway: listen: %v\n", err)
 		return 1
 	}
-	srv := &http.Server{Handler: handler(), ReadHeaderTimeout: 10 * time.Second}
+	// No routes yet. The forwarder ticket is what accepts a Call.
+	pending := &newConns{}
+	srv := &http.Server{
+		Handler:           http.NewServeMux(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ConnState:         pending.note,
+	}
+	// A client can dial and never write a request (net/http's Transport does
+	// this when a spare dial loses the race to an idle connection). Shutdown
+	// leaves that StateNew connection alone for five seconds, which is also
+	// this deadline, so Shutdown would return context.DeadlineExceeded.
+	srv.RegisterOnShutdown(pending.close)
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
 	if ready != nil {
@@ -104,7 +116,8 @@ func checkListen(addr string) error {
 	if host != "127.0.0.1" && host != "::1" {
 		return fmt.Errorf("--listen %q: only 127.0.0.1 and ::1 may bind", addr)
 	}
-	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
+	// A port is an unsigned decimal in 0..65535. A leading sign is not a port.
+	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
 		return fmt.Errorf("--listen %q: bad port", addr)
 	}
 	return nil
@@ -122,11 +135,40 @@ func checkUpstream(raw string) error {
 	return nil
 }
 
-// handler accepts POST /v1/messages only. It forwards nothing yet.
-func handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/messages", func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "forwarding is not built yet", http.StatusNotImplemented)
-	})
-	return mux
+// newConns is the set of accepted connections that have not sent a request.
+type newConns struct {
+	mu      sync.Mutex
+	closing bool
+	conns   map[net.Conn]struct{}
+}
+
+func (n *newConns) note(c net.Conn, st http.ConnState) {
+	n.mu.Lock()
+	if n.conns == nil {
+		n.conns = make(map[net.Conn]struct{})
+	}
+	closeNow := false
+	if st == http.StateNew {
+		n.conns[c] = struct{}{}
+		closeNow = n.closing
+	} else {
+		delete(n.conns, c)
+	}
+	n.mu.Unlock()
+	if closeNow {
+		c.Close()
+	}
+}
+
+// close closes every connection that has not sent a request. A connection
+// accepted after close has started is closed from note.
+func (n *newConns) close() {
+	n.mu.Lock()
+	n.closing = true
+	conns := n.conns
+	n.conns = nil
+	n.mu.Unlock()
+	for c := range conns {
+		c.Close()
+	}
 }

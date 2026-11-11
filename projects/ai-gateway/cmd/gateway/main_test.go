@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
@@ -42,7 +42,7 @@ func start(t *testing.T, args ...string) (result, net.Addr) {
 }
 
 func TestRefusesNonLoopbackListen(t *testing.T) {
-	for _, l := range []string{"0.0.0.0:8791", "[::]:8791", "localhost:8791", "192.168.1.5:8791", ":8791", "127.0.0.1", "127.0.0.1:x"} {
+	for _, l := range []string{"0.0.0.0:8791", "[::]:8791", "localhost:8791", "192.168.1.5:8791", ":8791", "127.0.0.1", "127.0.0.1:x", "127.0.0.1:+80", "[::1]:-1"} {
 		t.Run(l, func(t *testing.T) {
 			res, _ := start(t, "--listen", l, "--upstream", upstreamArg, "--audit", filepath.Join(t.TempDir(), "a.jsonl"))
 			if res.code == 0 || res.listens != 0 {
@@ -82,37 +82,35 @@ func TestMissingUpstreamExitsBeforeListen(t *testing.T) {
 }
 
 func TestAuditFileIsPrivate(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no unix modes")
-	}
-	audit := filepath.Join(t.TempDir(), "a.jsonl")
-	// A pre-existing, looser file is tightened too.
-	if err := os.WriteFile(audit, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if res, _ := start(t, "--listen", "127.0.0.1:0", "--upstream", upstreamArg, "--audit", audit); res.code != 0 {
-		t.Fatalf("code=%d; stderr: %s", res.code, res.stderr)
-	}
-	fi, err := os.Stat(audit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fi.Mode().Perm() != 0o600 {
-		t.Fatalf("audit mode = %v, want 0600", fi.Mode().Perm())
-	}
-}
-
-func TestAuditFileCreatedPrivate(t *testing.T) {
-	audit := filepath.Join(t.TempDir(), "new.jsonl")
-	if res, _ := start(t, "--listen", "127.0.0.1:0", "--upstream", upstreamArg, "--audit", audit); res.code != 0 {
-		t.Fatalf("code=%d; stderr: %s", res.code, res.stderr)
-	}
-	fi, err := os.Stat(audit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
-		t.Fatalf("audit mode = %v, want 0600", fi.Mode().Perm())
+	for _, precreate := range []bool{false, true} {
+		name := "created"
+		if precreate {
+			name = "tightened"
+		}
+		t.Run(name, func(t *testing.T) {
+			if precreate && runtime.GOOS == "windows" {
+				t.Skip("no unix modes")
+			}
+			audit := filepath.Join(t.TempDir(), "a.jsonl")
+			if precreate {
+				if err := os.WriteFile(audit, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if res, _ := start(t, "--listen", "127.0.0.1:0", "--upstream", upstreamArg, "--audit", audit); res.code != 0 {
+				t.Fatalf("code=%d; stderr: %s", res.code, res.stderr)
+			}
+			if runtime.GOOS == "windows" {
+				return
+			}
+			fi, err := os.Stat(audit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fi.Mode().Perm() != 0o600 {
+				t.Fatalf("audit mode = %v, want 0600", fi.Mode().Perm())
+			}
+		})
 	}
 }
 
@@ -156,39 +154,67 @@ func TestCredentialFlagDoesNotExist(t *testing.T) {
 	}
 }
 
-func TestOnlyPostMessages(t *testing.T) {
+// acceptSignal reports the first successful Accept.
+type acceptSignal struct {
+	net.Listener
+	once sync.Once
+	got  chan struct{}
+}
+
+func (a *acceptSignal) Accept() (net.Conn, error) {
+	c, err := a.Listener.Accept()
+	if err == nil {
+		a.once.Do(func() { close(a.got) })
+	}
+	return c, err
+}
+
+// TestShutdownClosesConnWithNoRequest is the race that failed CI: a client
+// dials and writes nothing, so the connection stays StateNew. Shutdown used
+// to wait out its whole five-second deadline and exit 1.
+func TestShutdownClosesConnWithNoRequest(t *testing.T) {
 	var stderr bytes.Buffer
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	accepted := make(chan struct{})
+	listen := func(network, address string) (net.Listener, error) {
+		ln, err := net.Listen(network, address)
+		if err != nil {
+			return nil, err
+		}
+		return &acceptSignal{Listener: ln, got: accepted}, nil
+	}
 	addrCh := make(chan net.Addr, 1)
 	done := make(chan int, 1)
+	audit := filepath.Join(t.TempDir(), "a.jsonl")
 	go func() {
-		done <- run(ctx, []string{"--listen", "127.0.0.1:0", "--upstream", upstreamArg, "--audit", filepath.Join(t.TempDir(), "a.jsonl")},
-			&stderr, net.Listen, func(a net.Addr) { addrCh <- a })
+		done <- run(ctx, []string{"--listen", "127.0.0.1:0", "--upstream", upstreamArg, "--audit", audit}, &stderr, listen, func(a net.Addr) {
+			addrCh <- a
+		})
 	}()
-	base := "http://" + (<-addrCh).String()
-	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 5 * time.Second}
-	for path, want := range map[string]int{"/v1/messages": http.StatusNotImplemented, "/other": http.StatusNotFound} {
-		req, _ := http.NewRequest(http.MethodPost, base+path, nil)
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != want {
-			t.Errorf("POST %s = %d, want %d", path, resp.StatusCode, want)
-		}
+	var addr net.Addr
+	select {
+	case addr = <-addrCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("did not listen")
 	}
-	resp, err := client.Get(base + "/v1/messages")
+	conn, err := net.Dial("tcp", addr.String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Errorf("GET /v1/messages = %d, want 405", resp.StatusCode)
+	defer conn.Close()
+	select {
+	case <-accepted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not accept")
 	}
 	cancel()
-	if code := <-done; code != 0 {
-		t.Fatalf("exit %d: %s", code, stderr.String())
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not return before the deadline")
 	}
 }
