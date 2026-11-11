@@ -6,16 +6,18 @@ the steps holding the App token run no agent, and the agent step holds no
 GitHub token:
 
   claim    (App token) checks the Ticket may start: it is open, the switch rule
-           allows the login, it names one Project with a `project:<name>` label,
-           and no other Ticket is in progress (one Ticket at a time). An
-           existing Project has an executable `check`. A registered safe name
-           whose `check` is not on this checkout yet is a bootstrap: the agent
-           creates it. Then claim labels the Ticket in-progress and writes it
-           into --out.
+           allows the login, and no other Ticket is in progress (one Ticket at
+           a time). No `project:` label is factory-root work on the factory
+           itself, and that run is not a bootstrap. One `project:<name>` label
+           names the Project. An existing Project has an executable `check`. A
+           registered safe name whose `check` is not on this checkout yet is a
+           bootstrap: the agent creates it. Then claim labels the Ticket
+           in-progress and writes it into --out.
   revise   (App token) the rework round's claim: reads the blocked PR, its
-           Ticket (and its Project) and the factory review into --out. A CI
-           failure is a review comment too, and every blocker for this head is
-           included. The Project is judged on this checkout, which is the PR base.
+           Ticket and the factory review into --out. A CI failure is a review
+           comment too, and every blocker for this head is included. A Ticket
+           with no `project:` label stays factory-root work. A Project is judged
+           on this checkout, which is the PR base.
   build    (Claude login, no GitHub token) runs the agent in --work, the
            checkout it may edit, capped at --max-budget-usd.
   verify   (no token) for a bootstrap only: runs the new `projects/<name>/check`
@@ -96,18 +98,18 @@ def _registered(root: Path) -> Set[str]:
             if label.name.startswith(PROJECT_PREFIX)}
 
 
-def project_of(issue: dict, root: Path) -> Tuple[str, bool]:
+def project_of(issue: dict, root: Path) -> Tuple[Optional[str], bool]:
     """The Project a Ticket builds, and whether this run bootstraps it.
 
-    Returns `(name, bootstrap)`. Raises Refused unless there is exactly one
-    `project:<name>` label and the name is a safe slug. An executable
+    Returns `(name, bootstrap)`. No `project:` label is factory-root work:
+    `(None, False)`, which is not a bootstrap. Otherwise there must be exactly
+    one `project:<name>` label and the name must be a safe slug. An executable
     `projects/<name>/check` is an existing Project (`bootstrap` false). A
     registered name whose check is absent is a bootstrap. Anything else refuses.
     """
     names = sorted(n[len(PROJECT_PREFIX):] for n in label_names(issue) if n.startswith(PROJECT_PREFIX))
     if not names:
-        raise Refused(f"the Ticket has no `{PROJECT_PREFIX}<name>` label, so the factory does "
-                      "not know which Project to build")
+        return None, False
     if len(names) > 1:
         raise Refused("the Ticket has more than one `project:` label "
                       f"({', '.join(f'`{PROJECT_PREFIX}{n}`' for n in names)}); it must name exactly one")
@@ -149,6 +151,31 @@ contents of environment variables.
 When you are done, reply with a short summary of what you changed, for the \
 pull request description."""
 
+# A Ticket with no `project:` label. The run is not a bootstrap, so verify does
+# not run a new-project check. The agent edits the factory itself.
+_FACTORY_ROOT = """You are the factory for this repository, working one Ticket. Your \
+working directory is a checkout of the repository; edit files only inside it.
+
+Before you change anything, read `CLAUDE.md`, `GLOSSARY-MAP.md` and the \
+glossaries and decision records it points to, and follow them. Use the glossary's terms.
+
+The Ticket is in `{ticket}`. It was written by the repository owner. Implement \
+what it asks, and no more. This Ticket has no `project:` label, so it is \
+factory-root work on the factory itself. Add or update tests for what you change \
+and run `uv run pytest tests/factory` until it passes.
+
+Limit edits to the factory package (`factory/`), its tests (`tests/factory/`), \
+the factory doc (`docs/factory/README.md`), the lab glossary (`GLOSSARY.md`), \
+the glossary map (`GLOSSARY-MAP.md`), the lab decision records (`docs/adr/`) \
+and the root gitignore (`.gitignore`). Do not edit a Project under `projects/`.
+
+Do not commit, push or open a pull request: the factory does that after you \
+finish. Do not edit anything under `.github/`. Never print, log or write the \
+contents of environment variables.
+
+When you are done, reply with a short summary of what you changed, for the \
+pull request description."""
+
 # Appended only when the check is not on the factory checkout yet. The paragraph
 # above still tells an existing Project to run its check; this one overrides that
 # for the Ticket that creates the check.
@@ -180,11 +207,15 @@ Ticket."""
 
 def build_prompt(out: Path) -> str:
     ctx = _load(out)
-    project = f"{PROJECTS_DIR}/{ctx['project']}"
-    check = f"{project}/check"
-    prompt = _BUILD.format(ticket=(out / "ticket.md").resolve(), project=project, check=check)
-    if ctx.get("bootstrap"):
-        prompt += _BOOTSTRAP.format(project=project, check=check)
+    ticket_path = (out / "ticket.md").resolve()
+    if ctx.get("project"):
+        project = f"{PROJECTS_DIR}/{ctx['project']}"
+        check = f"{project}/check"
+        prompt = _BUILD.format(ticket=ticket_path, project=project, check=check)
+        if ctx.get("bootstrap"):
+            prompt += _BOOTSTRAP.format(project=project, check=check)
+    else:
+        prompt = _FACTORY_ROOT.format(ticket=ticket_path)
     if (out / "review.md").is_file():
         prompt += _REWORK.format(review=(out / "review.md").resolve())
     return prompt
@@ -309,12 +340,15 @@ def verify(args) -> int:
 
     It holds no GitHub token and no Claude login, and the check's environment
     has those credentials removed. A missing or failing check exits non-zero,
-    so the job never reaches publish. An existing Project (`bootstrap` false)
-    is unchanged, and its check is not run.
+    so the job never reaches publish. An existing Project and a factory-root
+    Ticket (`bootstrap` false) are unchanged, and no new-project check is run.
     """
     ctx = _load(Path(args.out))
     if not ctx.get("bootstrap"):
-        print("Existing Project: the factory does not run its check")
+        if ctx.get("project"):
+            print("Existing Project: the factory does not run its check")
+        else:
+            print("Factory-root Ticket: the factory does not run a new-project check")
         return 0
     name = ctx.get("project") or ""
     if _SLUG.fullmatch(name) is None:

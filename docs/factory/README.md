@@ -12,20 +12,28 @@ fails with a message naming what is missing. It never goes green without doing a
 
 ## How a Ticket moves
 
-1. The owner writes a Ticket (a GitHub issue), applies one `project:<name>` label and applies
-   `ready-for-factory`. The label names the Project (`projects/<name>/`). The name is a safe slug:
-   lowercase letters, digits and single hyphens. An existing Project has an executable
-   `projects/<name>/check`, and that script, not a fixed command, is how its work is tested, in
-   whatever language the Project uses. A Ticket with no `project:` label, more than one, an unsafe
-   name, or a name that is not registered and has no executable `check` is refused before any agent
-   runs: the factory comments why on the Ticket and removes `ready-for-factory`. A name that is
-   already a row in `factory/labels.json` and has no `check` yet is how a Project starts. See
+1. The owner writes a Ticket (a GitHub issue) and applies `ready-for-factory`. A Ticket with no
+   `project:` label is factory-root work, scored by the factory tests (`uv run pytest tests/factory`).
+   A Project Ticket is unchanged: it also carries one `project:<name>` label. The label names the
+   Project (`projects/<name>/`). The name is a safe slug: lowercase letters, digits and single
+   hyphens. An existing Project has an executable `projects/<name>/check`, and that script, not a
+   fixed command, is how its work is tested, in whatever language the Project uses. A Ticket with
+   more than one `project:` label, an unsafe name, a name that is not registered and has no
+   executable `check`, or a `check` that is not executable, is refused before any agent runs: the
+   factory comments why on the Ticket and removes `ready-for-factory`. A name that is already a
+   row in `factory/labels.json` and has no `check` yet is how a Project starts. See
    [Starting a Project](#starting-a-project).
 2. **Implement** (`.github/workflows/implement.yml`) claims it. It removes `ready-for-factory`, adds
    `in-progress` and comments with a link to the run. Claude Code builds the change in a fresh
-   checkout; its prompt names `projects/<name>/` and tells it to run `projects/<name>/check` until it
-   passes, and to read that Project's glossary and decision records. A Project with a `go.mod`
-   already on the branch gets Go first, at the version its `go.mod` names (Rework does the same).
+   checkout. For a Project Ticket the prompt names `projects/<name>/` and tells it to run
+   `projects/<name>/check` until it passes, and to read that Project's glossary and decision
+   records. For factory-root work the prompt tells the agent to run `uv run pytest tests/factory`
+   until it passes, and to limit edits to the factory package, its tests, the factory doc, the lab
+   glossary, the glossary map, the lab decision records and the root gitignore. It does not name a
+   Project folder or a `projects/<name>/check`, and the run is not a bootstrap, so the factory does
+   not run a new-project check. A Project with a `go.mod` already on the branch gets Go first, at
+   the version its `go.mod` names (Rework does the same). Rework of a factory-root Ticket uses the
+   same prompt.
    The factory then commits it to `factory/issue-<N>`, pushes, and opens a **draft** PR
    whose body closes the Ticket. A new Project is the exception: before that commit, the factory
    itself runs the `check` the agent just wrote. See [Starting a Project](#starting-a-project).

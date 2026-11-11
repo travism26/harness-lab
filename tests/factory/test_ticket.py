@@ -70,11 +70,11 @@ def test_claim_labels_the_ticket_and_writes_it(tmp_path):
     prompt = ticket.build_prompt(tmp_path / "out")
     assert "projects/harness/check" in prompt and "projects/harness/GLOSSARY.md" in prompt
     assert "not on the base branch yet" not in prompt
+    assert "uv run pytest tests/factory" not in prompt and "factory-root" not in prompt
     assert "it loops" in (tmp_path / "out" / "ticket.md").read_text()
 
 
 @pytest.mark.parametrize("labels, executable, match", [
-    (("ready-for-factory",), True, "no `project:<name>` label"),
     (("ready-for-factory", "project:harness", "project:other"), True, "more than one"),
     (("ready-for-factory", "project:missing"), True, "no executable `projects/missing/check`"),
     (("ready-for-factory", "project:harness"), False, "no executable `projects/harness/check`"),
@@ -89,8 +89,38 @@ def test_claim_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, ex
     assert "did not start" in gh.posted[0][1] and not (tmp_path / "out" / "context.json").exists()
 
 
+def _assert_factory_root_prompt(prompt):
+    assert "run `uv run pytest tests/factory` until it passes" in prompt
+    for path in ("`factory/`", "`tests/factory/`", "`docs/factory/README.md`", "`GLOSSARY.md`",
+                 "`GLOSSARY-MAP.md`", "`docs/adr/`", "`.gitignore`"):
+        assert path in prompt
+    assert "Limit edits to" in prompt
+    assert "Do not edit a Project" in prompt and "`.github/`" in prompt
+    assert "Build inside" not in prompt and "/check" not in prompt
+    assert "The Ticket is for the Project" not in prompt
+    assert "not on the base branch yet" not in prompt
+
+
+def test_claim_factory_root_ticket_with_no_project_label(tmp_path, capsys):
+    gh = FakeGitHub(issue=_issue(labels=("ready-for-factory",)))
+    assert ticket.claim(_args(tmp_path), gh) == 0
+    assert gh.removed == ["ready-for-factory"] and gh.added == ["in-progress"]
+    assert gh.posted and all("did not start" not in body for _, body in gh.posted)
+    ctx = json.loads((tmp_path / "out" / "context.json").read_text())
+    assert ctx["project"] is None and ctx["bootstrap"] is False
+    _assert_factory_root_prompt(ticket.build_prompt(tmp_path / "out"))
+
+    work = tmp_path / "work"
+    script = work / "projects" / "harness" / "check"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/bin/sh\necho ran > ran\nexit 1\n")
+    script.chmod(0o755)
+    assert ticket.verify(_args(tmp_path, work=str(work))) == 0
+    assert not (work / "ran").exists()
+    assert "does not run a new-project check" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("labels, executable, match", [
-    ((), True, "no `project:<name>` label"),
     (("project:harness", "project:other"), True, "more than one"),
     (("project:missing",), True, "no executable `projects/missing/check`"),
     (("project:harness",), False, "no executable `projects/harness/check`"),
@@ -102,6 +132,17 @@ def test_revise_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, e
         ticket.revise(_args(tmp_path), gh)
     assert "did not start a rework round" in gh.posted[0][1]
     assert not (tmp_path / "out" / "review.md").exists()
+
+
+def test_revise_factory_root_ticket_is_not_refused(tmp_path):
+    gh = FakeGitHub(issue=_issue(labels=()), pr=_pr(), comments=[{"body": f"{MARKER}\nfix the spec"}])
+    assert ticket.revise(_args(tmp_path), gh) == 0
+    assert gh.posted == []
+    ctx = json.loads((tmp_path / "out" / "context.json").read_text())
+    assert ctx["project"] is None and ctx["bootstrap"] is False and ctx["pr"] == 9
+    prompt = ticket.build_prompt(tmp_path / "out")
+    _assert_factory_root_prompt(prompt)
+    assert "rework round" in prompt
 
 
 def test_revise_refusal_through_the_cli_comments_with_the_run_url(tmp_path, monkeypatch, capsys):
