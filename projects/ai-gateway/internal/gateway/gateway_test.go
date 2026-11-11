@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,8 @@ type seen struct {
 type rig struct {
 	gw    *httptest.Server
 	audit string
+	errs  *bytes.Buffer
+	stand string // the Stand-in service's host:port
 	mu    sync.Mutex
 	got   []seen
 }
@@ -44,6 +47,7 @@ func newRig(t *testing.T, upstream http.HandlerFunc) *rig {
 		upstream(w, q)
 	}))
 	t.Cleanup(stand.Close)
+	r.stand = strings.TrimPrefix(stand.URL, "http://")
 	r.start(t, stand.URL+"/v1/messages")
 	return r
 }
@@ -55,7 +59,8 @@ func (r *rig) start(t *testing.T, upstream string) {
 	}
 	t.Cleanup(func() { f.Close() })
 	u, _ := url.Parse(upstream)
-	r.gw = httptest.NewServer(gateway.New(u, f, nil))
+	r.errs = &bytes.Buffer{}
+	r.gw = httptest.NewServer(gateway.New(u, f, log.New(r.errs, "", 0)))
 	t.Cleanup(r.gw.Close)
 }
 
@@ -144,7 +149,7 @@ func TestForwardsAndRecords(t *testing.T) {
 	if g.method != "POST" || g.uri != "/v1/messages?beta=true" {
 		t.Fatalf("upstream got %s %s", g.method, g.uri)
 	}
-	if g.host != strings.TrimPrefix(strings.TrimSuffix(r.gw.URL, ""), "http://") && g.host == "" {
+	if g.host != r.stand || g.host == strings.TrimPrefix(r.gw.URL, "http://") {
 		t.Fatalf("host %q", g.host)
 	}
 	if string(g.body) != body {
@@ -199,9 +204,12 @@ func TestForwardsAndRecords(t *testing.T) {
 		t.Errorf("latency")
 	}
 	raw, _ := os.ReadFile(r.audit)
-	for _, s := range []string{"SENTINEL-AUTH-1", sentKey, sentCookie} {
+	for _, s := range []string{sentAuth, sentKey, sentCookie} {
 		if bytes.Contains(raw, []byte(s)) {
 			t.Errorf("audit file holds %s", s)
+		}
+		if strings.Contains(r.errs.String(), s) {
+			t.Errorf("errlog holds %s", s)
 		}
 	}
 }
@@ -285,6 +293,12 @@ func TestUnreachableUpstream(t *testing.T) {
 		t.Fatal("502 body leaks request")
 	}
 	m := r.records(t)[0]
+	raw, _ := os.ReadFile(r.audit)
+	for _, s := range []string{sentAuth, "SENTINEL"} {
+		if bytes.Contains(raw, []byte(s)) || strings.Contains(r.errs.String(), s) {
+			t.Errorf("sentinel %s leaked", s)
+		}
+	}
 	if m["status"] != 502.0 || m["failure"] != true || m["response_body"] != string(b) {
 		t.Fatalf("record %v", m)
 	}

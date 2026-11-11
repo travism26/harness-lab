@@ -1,5 +1,6 @@
 // Command gateway starts the Gateway: a loopback process that forwards a
-
+// Call to the Upstream and appends a Call record. It reads no environment
+// variable and holds no credential; see
 // projects/ai-gateway/docs/adr/0001-forward-only-on-loopback.md.
 package main
 
@@ -76,7 +77,11 @@ func run(ctx context.Context, args []string, stderr io.Writer, listen listenFunc
 		fmt.Fprintf(stderr, "gateway: listen: %v\n", err)
 		return 1
 	}
-	upstreamURL, _ := url.Parse(*upstream) // checkUpstream accepted it
+	upstreamURL, err := url.Parse(*upstream)
+	if err != nil {
+		fmt.Fprintln(stderr, "gateway: --upstream is not a valid URL")
+		return 1
+	}
 	pending := &newConns{}
 	srv := &http.Server{
 		Handler:           gateway.New(upstreamURL, auditFile, log.New(stderr, "", log.LstdFlags)),

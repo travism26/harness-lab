@@ -61,16 +61,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := h.upstreamRequest(r, reqBody)
 	var status int
 	var respBody []byte
-	resp, err := h.client.Do(out)
+	var latency time.Duration
+	out, err := h.upstreamRequest(r, reqBody)
+	var resp *http.Response
+	if err == nil {
+		resp, err = h.client.Do(out)
+	}
 	if err != nil {
 		status = http.StatusBadGateway
 		respBody = []byte(BadGatewayBody)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(status)
 		_, _ = w.Write(respBody)
+		latency = time.Since(start)
 	} else {
 		defer resp.Body.Close()
 		status = resp.StatusCode
@@ -82,6 +87,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var buf bytes.Buffer
 		// Copied to completion, stream or not; chunk-by-chunk flushing is a later ticket.
 		_, _ = io.Copy(io.MultiWriter(w, &buf), resp.Body)
+		latency = time.Since(start)
 		respBody = buf.Bytes()
 	}
 	if f, ok := w.(http.Flusher); ok {
@@ -98,7 +104,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ResponseBody:  string(respBody),
 		Status:        status,
 		Failure:       status < 200 || status > 299,
-		LatencyMS:     time.Since(start).Milliseconds(),
+		LatencyMS:     latency.Milliseconds(),
 		Usage:         usageOf(respBody),
 
 		RequestClass:      hint(r, "x-claude-code-request-class"),
@@ -113,7 +119,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) upstreamRequest(r *http.Request, body []byte) *http.Request {
+func (h *Handler) upstreamRequest(r *http.Request, body []byte) (*http.Request, error) {
 	u := *h.upstream
 	u.RawQuery = r.URL.RawQuery
 	var rd io.Reader = http.NoBody
@@ -122,8 +128,7 @@ func (h *Handler) upstreamRequest(r *http.Request, body []byte) *http.Request {
 	}
 	out, err := http.NewRequestWithContext(r.Context(), http.MethodPost, u.String(), rd)
 	if err != nil {
-		// u came from a parsed URL, so this does not happen.
-		panic(err)
+		return nil, err
 	}
 	hdr := r.Header.Clone()
 	dropHopByHop(hdr)
@@ -136,7 +141,7 @@ func (h *Handler) upstreamRequest(r *http.Request, body []byte) *http.Request {
 	}
 	out.Header = hdr
 	out.Host = u.Host
-	return out
+	return out, nil
 }
 
 // dropHopByHop removes the hop-by-hop headers and every name Connection lists.
