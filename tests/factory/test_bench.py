@@ -96,7 +96,7 @@ def test_tracer_standards_notes_keep_pass(bench_case, tmp_path):
 
 def test_tracer_noop_standin_fails_on_missing_requirement(bench_case, tmp_path):
     row = run(bench_case, tmp_path, standin(tmp_path, NOOP), BLOCK_ANSWER)
-    assert row["outcome"] == "fail" and row["review"] == "BLOCKER"
+    assert row["outcome"] == "fail" and row["review"] == "BLOCKED"
 
 
 def test_tracer_noop_standin_fails_check(bench_case, tmp_path):
@@ -205,4 +205,18 @@ def test_tracer_live_lock_holder_refuses(bench_case, tmp_path):
 def test_tracer_secrets_scrubbed(bench_case, tmp_path):
     script = "print(os.environ.get('BENCH_MODEL'))\nprint('leak', 'hunter2hunter2')\n" + GOOD
     run(bench_case, tmp_path, standin(tmp_path, script), env={"GH_TOKEN": "hunter2hunter2"})
-    assert "hunter2hunter2" not in (tmp_path / "out" / "runs").rglob("standin.log").__next__().read_text()
+    assert "hunter2hunter2" not in next((tmp_path / "out" / "runs").rglob("standin.log")).read_text()
+
+
+def test_tracer_lock_records_open_reservation(tmp_path):
+    from datetime import datetime, timezone
+    limits = bench.Limits(monthly_cap_usd=10.0)
+    lock = bench.acquire(tmp_path, limits, datetime.now(timezone.utc))
+    assert json.loads(lock.read_text())["reservation_usd"] == limits.reservation_usd
+    lock.unlink()
+
+
+def test_tracer_reported_zero_duration_is_kept(bench_case, tmp_path):
+    script = GOOD.replace('"duration_ms": 5', '"duration_ms": 0')
+    row = run(bench_case, tmp_path, standin(tmp_path, script))
+    assert row["duration_ms"] == 0

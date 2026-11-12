@@ -89,13 +89,15 @@ def _alive(pid: int) -> bool:
 
 def acquire(out: Path, limits: Limits, now: datetime) -> Path:
     """Take the one lock, then check the remaining dollars against the reservation
-    for this run. The check is at each start, so a run that spends the cap is
+    for this run. The lock file records the open reservation while the run is
+    live; a holder that is gone drops it with the lock. The check is at each start, so a run that spends the cap is
     reported and the next start is refused. A lock whose process is gone is
     released. Raises LedgerRefused."""
     lock = out / "ledger.lock"
     for _ in range(2):
         tmp = out / f"ledger.lock.{os.getpid()}"
-        tmp.write_text(json.dumps({"pid": os.getpid()}))
+        tmp.write_text(json.dumps({"pid": os.getpid(),
+                                   "reservation_usd": limits.reservation_usd}))
         try:
             os.link(tmp, lock)  # atomic: the lock never exists empty
         except FileExistsError:
@@ -122,20 +124,16 @@ def acquire(out: Path, limits: Limits, now: datetime) -> Path:
 
 # ---- the run ---------------------------------------------------------------
 
-def _is_secret_name(name: str) -> bool:
-    return name in _DROPPED or name.startswith("ANTHROPIC_") or "OPENROUTER" in name
-
-
 def standin_env(step_env: Mapping[str, str], ticket: Path, result: Path, model: str,
                 budget: float) -> dict:
-    env = {k: v for k, v in step_env.items() if not _is_secret_name(k)}
+    env = {k: v for k, v in step_env.items() if k not in _DROPPED}
     env.update({"BENCH_TICKET": str(ticket), "BENCH_RESULT": str(result),
                 "BENCH_MODEL": model, "BENCH_BUDGET": f"{budget:g}"})
     return env
 
 
 def secrets(step_env: Mapping[str, str]) -> List[str]:
-    return [v for k, v in step_env.items() if len(v or "") >= 8 and _is_secret_name(k)]
+    return [v for k, v in step_env.items() if len(v or "") >= 8 and k in _DROPPED]
 
 
 def _git(*args: str, cwd: Path) -> str:
@@ -186,11 +184,11 @@ def score_check(clone: Path, case: dict, env: dict) -> str:
 
 def review_case(case: dict, clone: Path, run_dir: Path, start: str, setup: dict,
                 limits: Limits, run_agent: Callable) -> Tuple[str, float]:
-    """(verdict, cost). The verdict is PASS, BLOCKER or error; an unparseable
+    """(verdict, cost). The verdict is PASS, BLOCKED (as review_pr names it) or error; an unparseable
     answer is not retried."""
     _git("add", "-A", cwd=clone)
     (run_dir / "diff.patch").write_text(_git("diff", "--cached", "--no-color", start, cwd=clone) + "\n")
-    ctx = {"repo": "bench", "pr": None, "base_sha": start,
+    ctx = {"repo": "bench", "pr": start[:12], "base_sha": start,
            "head_sha": _git("rev-parse", "HEAD", cwd=clone), "code_dir": str(clone),
            "ticket": case.get("issue")}
     try:
@@ -199,7 +197,8 @@ def review_case(case: dict, clone: Path, run_dir: Path, start: str, setup: dict,
                            cwd=str(clone), transcript=run_dir / "review.jsonl",
                            disallowed_tools=review_pr.DENIED_TOOLS,
                            allowed_tools=review_pr.READ_TOOLS)
-    except Exception:
+    except Exception as e:  # the agent's failure is a Review error; keep the trace
+        (run_dir / "review-error.txt").write_text(f"{type(e).__name__}: {e}\n")
         return "error", limits.review_cap_usd
     cost = result.cost_usd if result.cost_usd is not None else limits.review_cap_usd
     if not result.success:
@@ -208,7 +207,23 @@ def review_case(case: dict, clone: Path, run_dir: Path, start: str, setup: dict,
         findings = review_pr.parse_findings(result.text)
     except (ValueError, KeyError, TypeError, AttributeError):
         return "error", cost
-    return ("BLOCKER" if findings.blocker else PASS), cost
+    return ("BLOCKED" if findings.blocker else PASS), cost
+
+
+def run_standin(setup: dict, clone: Path, env: dict, run_dir: Path,
+                result_path: Path) -> Tuple[bool, dict]:
+    """(crashed, what the stand-in reported). A crash is a non-zero exit, a
+    timeout, or a result that is missing or not ok."""
+    try:
+        with (run_dir / "standin.log").open("w") as log:
+            proc = subprocess.run(shlex.split(setup["harness_command"]), cwd=clone, env=env,
+                                  stdout=log, stderr=subprocess.STDOUT,
+                                  timeout=STANDIN_TIMEOUT_S)
+        crashed = proc.returncode != 0
+    except (OSError, subprocess.TimeoutExpired):
+        crashed = True
+    reported = read_standin_result(result_path)
+    return crashed or not reported or reported.get("ok") is not True, reported or {}
 
 
 def bench_run(case: dict, setup: dict, out: Path, limits: Limits, run_agent: Callable,
@@ -231,17 +246,7 @@ def bench_run(case: dict, setup: dict, out: Path, limits: Limits, run_agent: Cal
         env = standin_env(step_env, ticket, result_path, setup["model"], limits.build_cap_usd)
 
         began = time.monotonic()
-        try:
-            with (run_dir / "standin.log").open("w") as log:
-                proc = subprocess.run(shlex.split(setup["harness_command"]), cwd=clone, env=env,
-                                      stdout=log, stderr=subprocess.STDOUT,
-                                      timeout=STANDIN_TIMEOUT_S)
-            crashed = proc.returncode != 0
-        except (OSError, subprocess.TimeoutExpired):
-            crashed = True
-        reported = read_standin_result(result_path)
-        crashed = crashed or not reported or reported.get("ok") is not True
-        reported = reported or {}
+        crashed, reported = run_standin(setup, clone, env, run_dir, result_path)
         cost = reported.get("cost_usd")
         build_cost = float(cost) if isinstance(cost, (int, float)) else limits.build_cap_usd
 
@@ -258,7 +263,8 @@ def bench_run(case: dict, setup: dict, out: Path, limits: Limits, run_agent: Cal
             "model": setup["model"], "budget": limits.build_cap_usd,
             "build_cost_usd": build_cost, "review_cost_usd": review_cost,
             "turns": reported.get("num_turns"),
-            "duration_ms": reported.get("duration_ms") or int((time.monotonic() - began) * 1000),
+            "duration_ms": (reported["duration_ms"] if reported.get("duration_ms") is not None
+                            else int((time.monotonic() - began) * 1000)),
             "input_tokens": reported.get("input_tokens"),
             "output_tokens": reported.get("output_tokens"),
             "cache_creation_input_tokens": reported.get("cache_creation_input_tokens"),
@@ -289,9 +295,6 @@ def main(argv: Optional[List[str]] = None, run_agent: Optional[Callable] = None)
     p.add_argument("--case", required=True, help="the Bench case's JSON file")
     p.add_argument("--setup-id", required=True)
     p.add_argument("--harness-command", required=True)
-    p.add_argument("--model", choices=claude.MODELS, default="sonnet")
-    p.add_argument("--review-model", choices=claude.MODELS, default="sonnet")
-    p.add_argument("--repeat", type=int, default=1)
     p.add_argument("--review-answer", help="a recorded Review answer to replay")
     p.add_argument("--out", default="bench-runs")
     p.add_argument("--monthly-cap-usd", type=float, default=Limits.monthly_cap_usd)
@@ -305,7 +308,7 @@ def main(argv: Optional[List[str]] = None, run_agent: Optional[Callable] = None)
         run_agent = canned_agent(Path(args.review_answer))
     case = json.loads(Path(args.case).read_text())
     setup = {"setup_id": args.setup_id, "harness_command": args.harness_command,
-             "model": args.model, "review_model": args.review_model, "repeat": args.repeat}
+             "model": "sonnet", "review_model": "sonnet", "repeat": 1}
     limits = Limits(args.monthly_cap_usd, args.build_cap_usd, args.review_cap_usd)
     try:
         row = bench_run(case, setup, Path(args.out), limits, run_agent,
