@@ -6,14 +6,14 @@ The twist is that the lab mostly runs itself. AI agents find ideas, plan them an
 
 ## What we're experimenting with
 
-- **A software factory on GitHub Actions.** A labeled GitHub issue (a Ticket) becomes a **draft PR** built by Claude Code. An independent read-only agent reviews it for Spec and Standards. Up to two automatic rework rounds follow, and a human merges. See [the factory](docs/factory/README.md).
-- **Agents that find and plan their own work.** Two scheduled bots feed the factory:
+- **A software factory on GitHub Actions.** A labelled GitHub issue (a Ticket) becomes a **draft PR** built by Claude Code. An independent read-only agent reviews it for Spec and Standards. Up to two automatic rework rounds follow, and a human merges. See [the factory](docs/factory/README.md).
+- **Agents that find and plan their own work.** Two scheduled Grok bots, configured outside this repo, feed the factory:
   - a **Scout** that reads what practitioners are shipping in AI engineering and files concrete `Goal:` issues;
   - a **Builder** that grills each Goal with [Matt Pocock's skills](https://github.com/mattpocock/skills) (`grill-with-docs`, `to-spec`, `to-tickets`), answers its own questions from the repo's docs, and publishes a spec and tickets.
 
-  See [the skill chain](docs/factory/skill-chain.md).
+  The chain they run is in [the skill chain](docs/factory/skill-chain.md). [Goal #108](https://github.com/travism26/harness-lab/issues/108) is a real example: the Goal, its four grill rounds, the test-seam answer and the ticket breakdown are all comments on that issue.
 - **Labels as the state machine.** The bots never talk to each other. Each one reads a GitHub label, does its part, sets the next label and stops. That makes every step visible, resumable and auditable.
-- **Guardrails for autonomous coding agents.** The setup uses:
+- **Brakes for autonomous coding agents.** The factory uses:
   - draft PRs only, and the factory can't merge;
   - one Ticket at a time;
   - daily run caps and a dollar cap on every agent run;
@@ -34,14 +34,13 @@ Scout ──Goal issue──► Builder ──spec──► human approves ─�
 |---|---|
 | [harness](projects/harness/) | A small agent harness built in public, one blog post per episode. |
 | [agent-identity](projects/agent-identity/) | Giving an AI agent its own SPIFFE identity. The Model only proposes, a Warden decides from fixed rules, and a Broker holds the model key so the Agent never does. Runs offline with `cd projects/agent-identity && go run ./cmd/demo tour`. None of it is production security. |
-| [ai-gateway](projects/ai-gateway/) | A loopback gateway between Claude Code and the Anthropic API. It writes one audit record per model call and holds no credential. |
+| [ai-gateway](projects/ai-gateway/) | A loopback gateway between Claude Code and the Anthropic API. It appends one Call record per Call and holds no credential. |
 
 Most of this code was written by the factory from Tickets. Browse the [closed issues](https://github.com/travism26/harness-lab/issues?q=is%3Aissue+is%3Aclosed) and [merged PRs](https://github.com/travism26/harness-lab/pulls?q=is%3Apr+is%3Amerged) to follow the full idea → spec → ticket → PR history, including the agents' grill rounds and review reports.
 
 ## Reading map
 
-- [The factory](docs/factory/README.md): how a Ticket becomes a draft PR, the labels, and the brakes. The owner's [setup guide](docs/factory/setup.md) wires its credentials.
-- [Skill chain](docs/factory/skill-chain.md): the planning chain the Builder runs.
+- The owner's [setup guide](docs/factory/setup.md): how the factory's credentials are wired.
 - [Glossary map](GLOSSARY-MAP.md), the lab [glossary](GLOSSARY.md) and [decision records](docs/adr/): the terms used here and the hard-to-reverse choices.
 - [Software-factory research](docs/software-factory/README.md): notes consolidated from [claude-code-adw](https://github.com/travism26/claude-code-adw) at `b2e37ed`.
 
