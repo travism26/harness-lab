@@ -188,7 +188,6 @@ factory's Claude Code.
 | Rework round | `.github/workflows/rework.yml`, `factory/ticket.py` (`revise`, `build`, `publish`) |
 | Live check | `.github/workflows/factory-check.yml`, `factory/check.py` |
 | Claude Code login | `factory/claude.py`, `factory/switch_rule.py` |
-| Bench run (local, no model or GitHub call; `docs/adr/0009-bench-spends-on-a-metered-api-key.md`) | `factory/bench.py` |
 | CI check | `.github/workflows/ci.yml`, `factory/ci_projects.py` (see [CI](#ci)) |
 
 ## CI

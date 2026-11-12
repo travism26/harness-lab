@@ -1,4 +1,4 @@
-"""The Bench tracer: one Bench run on a fixture, no model call, no GitHub call."""
+"""The Bench tracer: one Bench run on a Bench case, no model call, no GitHub call."""
 
 import json
 import os
@@ -30,8 +30,8 @@ def git(*args, cwd):
 
 
 @pytest.fixture
-def fixture(tmp_path):
-    repo = tmp_path / "fixture"
+def bench_case(tmp_path):
+    repo = tmp_path / "case-repo"
     repo.mkdir()
     git("init", "-q", cwd=repo)
     (repo / "check.py").write_text("import sys, pathlib\n"
@@ -79,8 +79,8 @@ def run(case, tmp_path, command, answer=PASS_ANSWER, calls=None, limits=None, ou
                            agent(answer, calls), SOURCE, step_env=env or {})
 
 
-def test_tracer_pass_line(fixture, tmp_path):
-    row = run(fixture, tmp_path, standin(tmp_path, GOOD))
+def test_tracer_pass_line(bench_case, tmp_path):
+    row = run(bench_case, tmp_path, standin(tmp_path, GOOD))
     assert row["outcome"] == "pass" and row["workflow"] == "bench" and row["pr"] is None
     assert row["schema"] == 1 and row["login"] == "anthropic-api"
     assert row["cost_note"] == "client-estimate" and row["check"] == "pass"
@@ -90,44 +90,44 @@ def test_tracer_pass_line(fixture, tmp_path):
     assert not (tmp_path / "out" / "ledger.lock").exists()
 
 
-def test_tracer_standards_notes_keep_pass(fixture, tmp_path):
-    assert run(fixture, tmp_path, standin(tmp_path, GOOD), NOTES_ANSWER)["outcome"] == "pass"
+def test_tracer_standards_notes_keep_pass(bench_case, tmp_path):
+    assert run(bench_case, tmp_path, standin(tmp_path, GOOD), NOTES_ANSWER)["outcome"] == "pass"
 
 
-def test_tracer_noop_standin_fails_on_missing_requirement(fixture, tmp_path):
-    row = run(fixture, tmp_path, standin(tmp_path, NOOP), BLOCK_ANSWER)
+def test_tracer_noop_standin_fails_on_missing_requirement(bench_case, tmp_path):
+    row = run(bench_case, tmp_path, standin(tmp_path, NOOP), BLOCK_ANSWER)
     assert row["outcome"] == "fail" and row["review"] == "BLOCKER"
 
 
-def test_tracer_noop_standin_fails_check(fixture, tmp_path):
-    row = run(fixture, tmp_path, standin(tmp_path, NOOP))
+def test_tracer_noop_standin_fails_check(bench_case, tmp_path):
+    row = run(bench_case, tmp_path, standin(tmp_path, NOOP))
     assert row["check"] == "fail" and row["outcome"] == "fail"
 
 
-def test_tracer_tampered_check_not_executed(fixture, tmp_path):
+def test_tracer_tampered_check_not_executed(bench_case, tmp_path):
     marker = tmp_path / "ran"
     evil = f"import pathlib; pathlib.Path({str(marker)!r}).write_text('x')"
     script = f"pathlib.Path('check.py').write_text({evil!r})\n"
     calls = []
-    row = run(fixture, tmp_path, standin(tmp_path, script + GOOD), calls=calls)
+    row = run(bench_case, tmp_path, standin(tmp_path, script + GOOD), calls=calls)
     assert row["check"] == "tampered" and row["outcome"] == "fail"
     assert not marker.exists() and len(calls) == 1
 
 
-def test_tracer_crash_skips_review(fixture, tmp_path):
+def test_tracer_crash_skips_review(bench_case, tmp_path):
     calls = []
-    row = run(fixture, tmp_path, standin(tmp_path, "raise SystemExit(3)\n"), calls=calls)
+    row = run(bench_case, tmp_path, standin(tmp_path, "raise SystemExit(3)\n"), calls=calls)
     assert row["outcome"] == "fail" and row["review"] is None and calls == []
     assert row["build_cost_usd"] == 2.0
 
 
-def test_tracer_unparseable_review_is_error_and_not_retried(fixture, tmp_path):
+def test_tracer_unparseable_review_is_error_and_not_retried(bench_case, tmp_path):
     calls = []
-    row = run(fixture, tmp_path, standin(tmp_path, GOOD), "not json", calls=calls)
+    row = run(bench_case, tmp_path, standin(tmp_path, GOOD), "not json", calls=calls)
     assert row["review"] == "error" and row["outcome"] == "fail" and len(calls) == 1
 
 
-def test_tracer_standin_env_and_scratch_clone(fixture, tmp_path):
+def test_tracer_standin_env_and_scratch_clone(bench_case, tmp_path):
     seen = tmp_path / "seen.json"
     script = f"""
 import subprocess
@@ -142,7 +142,7 @@ pathlib.Path({str(seen)!r}).write_text(json.dumps(d))
                                          "OPENROUTER_API_KEY", "FACTORY_OPENROUTER_KEY",
                                          "ANTHROPIC_API_KEY")}
     env["PATH"] = os.environ["PATH"]
-    run(fixture, tmp_path, standin(tmp_path, script + GOOD), env=env)
+    run(bench_case, tmp_path, standin(tmp_path, script + GOOD), env=env)
     d = json.loads(seen.read_text())
     for k in ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENROUTER_API_KEY",
               "FACTORY_OPENROUTER_KEY", "ANTHROPIC_API_KEY"):
@@ -154,22 +154,22 @@ pathlib.Path({str(seen)!r}).write_text(json.dumps(d))
     assert not clone.is_relative_to(SOURCE) and not clone.exists()
 
 
-def test_tracer_ledger_refuses_second_run(fixture, tmp_path):
+def test_tracer_ledger_refuses_second_run(bench_case, tmp_path):
     limits = bench.Limits(monthly_cap_usd=0.30, build_cap_usd=0.02, review_cap_usd=0.01)
     null_cost = standin(tmp_path, "pathlib.Path('done.txt').write_text('x')\n"
                         + WRITE_RESULT % "None")
-    row = run(fixture, tmp_path, null_cost, limits=limits)
+    row = run(bench_case, tmp_path, null_cost, limits=limits)
     assert row["build_cost_usd"] == 0.02 and row["review_cost_usd"] == 0.25
     out = tmp_path / "out"
     before = (out / "ledger.jsonl").read_text()
     with pytest.raises(bench.LedgerRefused):
-        run(fixture, tmp_path, null_cost, limits=limits)
+        run(bench_case, tmp_path, null_cost, limits=limits)
     assert (out / "ledger.jsonl").read_text() == before
 
 
-def test_tracer_cli_exit_codes(fixture, tmp_path):
+def test_tracer_cli_exit_codes(bench_case, tmp_path):
     case = tmp_path / "case.json"
-    case.write_text(json.dumps(fixture))
+    case.write_text(json.dumps(bench_case))
     answer = tmp_path / "answer.txt"
     answer.write_text(BLOCK_ANSWER)
     argv = ["--case", str(case), "--setup-id", "s", "--harness-command",
@@ -184,25 +184,25 @@ def test_tracer_cli_exit_codes(fixture, tmp_path):
     assert len((tmp_path / "o" / "ledger.jsonl").read_text().splitlines()) == 2
 
 
-def test_tracer_dead_lock_holder_releases_reservation(fixture, tmp_path):
+def test_tracer_dead_lock_holder_releases_reservation(bench_case, tmp_path):
     out = tmp_path / "out"
     out.mkdir()
     dead = subprocess.Popen([sys.executable, "-c", "pass"])
     dead.wait()
     (out / "ledger.lock").write_text(json.dumps({"pid": dead.pid, "reservation_usd": 3.0}))
     limits = bench.Limits(monthly_cap_usd=3.0)
-    assert run(fixture, tmp_path, standin(tmp_path, GOOD), limits=limits)["outcome"] == "pass"
+    assert run(bench_case, tmp_path, standin(tmp_path, GOOD), limits=limits)["outcome"] == "pass"
 
 
-def test_tracer_live_lock_holder_refuses(fixture, tmp_path):
+def test_tracer_live_lock_holder_refuses(bench_case, tmp_path):
     out = tmp_path / "out"
     out.mkdir()
     (out / "ledger.lock").write_text(json.dumps({"pid": os.getpid()}))
     with pytest.raises(bench.LedgerRefused):
-        run(fixture, tmp_path, standin(tmp_path, GOOD))
+        run(bench_case, tmp_path, standin(tmp_path, GOOD))
 
 
-def test_tracer_secrets_scrubbed(fixture, tmp_path):
+def test_tracer_secrets_scrubbed(bench_case, tmp_path):
     script = "print(os.environ.get('BENCH_MODEL'))\nprint('leak', 'hunter2hunter2')\n" + GOOD
-    run(fixture, tmp_path, standin(tmp_path, script), env={"GH_TOKEN": "hunter2hunter2"})
+    run(bench_case, tmp_path, standin(tmp_path, script), env={"GH_TOKEN": "hunter2hunter2"})
     assert "hunter2hunter2" not in (tmp_path / "out" / "runs").rglob("standin.log").__next__().read_text()

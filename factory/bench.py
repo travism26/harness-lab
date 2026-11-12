@@ -4,7 +4,7 @@
   uv run python -m factory.bench --case CASE.json --setup-id ID \\
       --harness-command "CMD" --review-answer ANSWER.txt
 
-CASE.json names the fixture: {"repo": PATH, "start_commit": SHA, "ticket": PATH,
+CASE.json names the Bench case: {"repo": PATH, "start_commit": SHA, "ticket": PATH,
 "check_command": CMD, "check_files": {PATH: BLOB_SHA}, "issue": N, "project": NAME|null}.
 
 The run clones the start commit into a fresh directory outside the source
@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, List, Mapping, Optional
+from typing import Callable, List, Mapping, Optional, Tuple
 
 from factory import claude, review_pr
 
@@ -60,6 +60,7 @@ class Limits:
 # ---- ledger ----------------------------------------------------------------
 
 def month_of(ts: str) -> str:
+    """The UTC month of an ISO timestamp written by this module."""
     return ts[:7]
 
 
@@ -87,12 +88,16 @@ def _alive(pid: int) -> bool:
 
 
 def acquire(out: Path, limits: Limits, now: datetime) -> Path:
-    """Take the one lock, holding a reservation. A lock whose process is gone is
-    released, with its reservation. Raises LedgerRefused."""
+    """Take the one lock, then check the remaining dollars against the reservation
+    for this run. The check is at each start, so a run that spends the cap is
+    reported and the next start is refused. A lock whose process is gone is
+    released. Raises LedgerRefused."""
     lock = out / "ledger.lock"
     for _ in range(2):
+        tmp = out / f"ledger.lock.{os.getpid()}"
+        tmp.write_text(json.dumps({"pid": os.getpid()}))
         try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.link(tmp, lock)  # atomic: the lock never exists empty
         except FileExistsError:
             try:
                 pid = int(json.loads(lock.read_text()).get("pid", 0))
@@ -102,12 +107,12 @@ def acquire(out: Path, limits: Limits, now: datetime) -> Path:
                 raise LedgerRefused(f"another Bench run (pid {pid}) holds the lock")
             lock.unlink(missing_ok=True)
             continue
-        with os.fdopen(fd, "w") as f:
-            json.dump({"pid": os.getpid(), "reservation_usd": limits.reservation_usd}, f)
+        finally:
+            tmp.unlink(missing_ok=True)
         break
     else:
         raise LedgerRefused("could not take the ledger lock")
-    remaining = limits.monthly_cap_usd - spent_usd(out / "ledger.jsonl", now.strftime("%Y-%m"))
+    remaining = limits.monthly_cap_usd - spent_usd(out / "ledger.jsonl", month_of(now.isoformat()))
     if remaining < limits.reservation_usd:
         lock.unlink(missing_ok=True)
         raise LedgerRefused(f"${remaining:.2f} remains this month, below the "
@@ -117,19 +122,20 @@ def acquire(out: Path, limits: Limits, now: datetime) -> Path:
 
 # ---- the run ---------------------------------------------------------------
 
+def _is_secret_name(name: str) -> bool:
+    return name in _DROPPED or name.startswith("ANTHROPIC_") or "OPENROUTER" in name
+
+
 def standin_env(step_env: Mapping[str, str], ticket: Path, result: Path, model: str,
                 budget: float) -> dict:
-    env = {k: v for k, v in step_env.items()
-           if k not in _DROPPED and not k.startswith("ANTHROPIC_") and "OPENROUTER" not in k}
+    env = {k: v for k, v in step_env.items() if not _is_secret_name(k)}
     env.update({"BENCH_TICKET": str(ticket), "BENCH_RESULT": str(result),
                 "BENCH_MODEL": model, "BENCH_BUDGET": f"{budget:g}"})
     return env
 
 
 def secrets(step_env: Mapping[str, str]) -> List[str]:
-    return [v for k, v in step_env.items()
-            if len(v or "") >= 8 and (k in _DROPPED or k.startswith("ANTHROPIC_")
-                                      or "OPENROUTER" in k)]
+    return [v for k, v in step_env.items() if len(v or "") >= 8 and _is_secret_name(k)]
 
 
 def _git(*args: str, cwd: Path) -> str:
@@ -179,12 +185,12 @@ def score_check(clone: Path, case: dict, env: dict) -> str:
 
 
 def review_case(case: dict, clone: Path, run_dir: Path, start: str, setup: dict,
-                limits: Limits, run_agent: Callable) -> tuple:
+                limits: Limits, run_agent: Callable) -> Tuple[str, float]:
     """(verdict, cost). The verdict is PASS, BLOCKER or error; an unparseable
     answer is not retried."""
     _git("add", "-A", cwd=clone)
     (run_dir / "diff.patch").write_text(_git("diff", "--cached", "--no-color", start, cwd=clone) + "\n")
-    ctx = {"repo": "bench", "pr": setup["setup_id"], "base_sha": start,
+    ctx = {"repo": "bench", "pr": None, "base_sha": start,
            "head_sha": _git("rev-parse", "HEAD", cwd=clone), "code_dir": str(clone),
            "ticket": case.get("issue")}
     try:
@@ -242,8 +248,8 @@ def bench_run(case: dict, setup: dict, out: Path, limits: Limits, run_agent: Cal
         check = "skipped"
         verdict, review_cost = None, 0.0
         if not crashed:
-            verdict, review_cost = review_case(case, clone, run_dir, start, setup, limits, run_agent)
             check = score_check(clone, case, env)
+            verdict, review_cost = review_case(case, clone, run_dir, start, setup, limits, run_agent)
         row = {
             "schema": SCHEMA, "ts": now.isoformat(), "workflow": "bench", "pr": None,
             "outcome": "pass" if check == "pass" and verdict == PASS else "fail",
@@ -308,6 +314,10 @@ def main(argv: Optional[List[str]] = None, run_agent: Optional[Callable] = None)
         print(f"bench: the ledger refuses: {e}", file=sys.stderr)
         return 1
     print(json.dumps(row))
+    left = limits.monthly_cap_usd - spent_usd(Path(args.out) / "ledger.jsonl", month_of(row["ts"]))
+    if left < limits.reservation_usd:
+        print(f"bench: ${left:.2f} remains, below the ${limits.reservation_usd:.2f} "
+              "reservation; the next run will be refused", file=sys.stderr)
     return 0
 
 
