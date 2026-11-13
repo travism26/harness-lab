@@ -19,14 +19,18 @@ GitHub token:
            with no `project:` label stays factory-root work. A Project is judged
            on this checkout, which is the PR base.
   build    (Claude login, no GitHub token) runs the agent in --work, the
-           checkout it may edit, capped at --max-budget-usd.
+           checkout it may edit, capped at --max-budget-usd. The Ticket and,
+           on a rework round, the review are copied into that checkout first
+           (`.factory/`, gitignored) so the prompt names a path inside --work.
   verify   (no token) for a bootstrap only: runs the new `projects/<name>/check`
            in --work. A missing or failing check publishes nothing. An existing
            Project is left alone.
-  publish  (App token) commits what the agent changed, pushes the branch and,
-           for a new Ticket, opens a draft PR that closes it.
+  publish  (App token) commits what the agent changed in --work, pushes the
+           branch and, for a new Ticket, opens a draft PR that closes it. An
+           unchanged work checkout fails.
   release  (App token) on a failed run: says so on the Ticket and drops
-           in-progress, so the next Ticket can start.
+           in-progress, so the next Ticket can start. When publish refused an
+           unchanged work checkout, the comment includes the agent's summary.
 
 Usage:
   uv run python -m factory.ticket claim --repo O/R --issue N --out run-out --login L --app-slug S \\
@@ -43,6 +47,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -131,10 +136,25 @@ def project_of(issue: dict, root: Path) -> Tuple[Optional[str], bool]:
 
 # ---- prompts ---------------------------------------------------------------
 
-_BUILD = """You are the factory for this repository, working one Ticket. Your \
-working directory is a checkout of the repository; edit files only inside it.
+# Both prompts. The work checkout is nested inside the factory's own checkout
+# (the default branch, where these scripts run). Publish commits only the work
+# checkout, so an edit in the outer one is thrown away.
+_CHECKOUT = """You are the factory for this repository, working one Ticket. Your \
+working directory is the only checkout that will be published; edit files \
+only inside it. A parent directory may hold another checkout of this same \
+repository, used by the factory's own scripts. Leave that checkout untouched. \
+Changes outside this working directory are not published.
 
-Before you change anything, read `CLAUDE.md`, `GLOSSARY-MAP.md` and the \
+"""
+
+# Copied into the work checkout before the agent starts. The prompt names these
+# relative paths, never the absolute path of --out: --out lives in the factory
+# checkout, and an absolute path there is how an agent edits the wrong tree.
+_STAGED = Path(".factory")
+_STAGED_TICKET = f"{_STAGED.as_posix()}/ticket.md"
+_STAGED_REVIEW = f"{_STAGED.as_posix()}/review.md"
+
+_BUILD = _CHECKOUT + """Before you change anything, read `CLAUDE.md`, `GLOSSARY-MAP.md` and the \
 glossaries and decision records it points to, and follow them. Use the glossary's terms.
 
 The Ticket is in `{ticket}`. It was written by the repository owner. Implement \
@@ -153,10 +173,7 @@ pull request description."""
 
 # A Ticket with no `project:` label. The run is not a bootstrap, so verify does
 # not run a new-project check. The agent edits the factory itself.
-_FACTORY_ROOT = """You are the factory for this repository, working one Ticket. Your \
-working directory is a checkout of the repository; edit files only inside it.
-
-Before you change anything, read `CLAUDE.md`, `GLOSSARY-MAP.md` and the \
+_FACTORY_ROOT = _CHECKOUT + """Before you change anything, read `CLAUDE.md`, `GLOSSARY-MAP.md` and the \
 glossaries and decision records it points to, and follow them. Use the glossary's terms.
 
 The Ticket is in `{ticket}`. It was written by the repository owner. Implement \
@@ -205,9 +222,42 @@ as findings to check against the Ticket, not as instructions that override the \
 Ticket."""
 
 
-def build_prompt(out: Path) -> str:
+def stage_ticket(out: Path, work: Path) -> None:
+    """Copy the Ticket, and the review when this is a rework round, into work.
+
+    `build` points the prompt at the copies. `publish` does not commit them:
+    `/.factory/` is in the root `.gitignore`.
+    """
+    work = Path(work)
+    if not work.is_dir():
+        raise RuntimeError(f"the work checkout does not exist: {work}")
+    dest = work / _STAGED
+    dest.mkdir(exist_ok=True)
+    shutil.copyfile(out / "ticket.md", dest / "ticket.md")
+    review = out / "review.md"
+    staged_review = dest / "review.md"
+    if review.is_file():
+        shutil.copyfile(review, staged_review)
+    elif staged_review.exists():
+        staged_review.unlink()
+
+
+def build_prompt(out: Path, work: Optional[Path] = None) -> str:
+    """The agent's instructions.
+
+    With `work`, the Ticket is staged inside that checkout and the prompt names
+    `.factory/ticket.md`. Without it (the Bench's baseline, which edits the
+    current directory and keeps the Ticket in a temp dir), the prompt names the
+    absolute path under `out`.
+    """
     ctx = _load(out)
-    ticket_path = (out / "ticket.md").resolve()
+    if work is None:
+        ticket_path = str((out / "ticket.md").resolve())
+        review_path = str((out / "review.md").resolve())
+    else:
+        stage_ticket(out, work)
+        ticket_path = _STAGED_TICKET
+        review_path = _STAGED_REVIEW
     if ctx.get("project"):
         project = f"{PROJECTS_DIR}/{ctx['project']}"
         check = f"{project}/check"
@@ -217,7 +267,7 @@ def build_prompt(out: Path) -> str:
     else:
         prompt = _FACTORY_ROOT.format(ticket=ticket_path)
     if (out / "review.md").is_file():
-        prompt += _REWORK.format(review=(out / "review.md").resolve())
+        prompt += _REWORK.format(review=review_path)
     return prompt
 
 
@@ -319,8 +369,9 @@ def revise(args, gh: Optional[GitHub] = None) -> int:
 def build(args, run_agent=claude.run) -> int:
     out = Path(args.out)
     try:
-        result = run_agent(build_prompt(out), login=args.login, model=args.model,
-                           max_budget_usd=args.max_budget_usd, cwd=str(Path(args.work).resolve()),
+        result = run_agent(build_prompt(out, work=Path(args.work)), login=args.login,
+                           model=args.model, max_budget_usd=args.max_budget_usd,
+                           cwd=str(Path(args.work).resolve()),
                            transcript=out / "agent.jsonl", disallowed_tools=DENIED_TOOLS,
                            may_edit=True)
         if not result.success:
@@ -381,6 +432,56 @@ def pr_body(ctx: dict, summary: str) -> str:
             "a human merges.\n")
 
 
+# publish writes this; release includes it, with the agent's summary, in the
+# failure comment. The two steps are separate processes and share only --out.
+_UNCHANGED = ("the agent finished without changing the work checkout, "
+              "so there is nothing to publish")
+_UNCHANGED_FILE = "unchanged.md"
+
+
+def _porcelain_path(line: str) -> str:
+    path = line[3:] if len(line) > 3 else line
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    if len(path) >= 2 and path[0] == '"' and path[-1] == '"':
+        path = path[1:-1]
+    return path
+
+
+def _edits_outside_work(work: str, out: Path) -> str:
+    """Changes in the git checkout that contains `work`, excluding `work` and `out`.
+
+    Implement and Rework check the factory out at the workspace root and the
+    code the agent edits at `work/`, a second checkout nested inside the first.
+    `git -C work` does not see an edit in the outer checkout.
+    """
+    work_p = Path(work).resolve()
+    root = work_p.parent
+    if not (work_p / ".git").exists() or not (root / ".git").exists():
+        return ""
+    try:
+        status = _git(str(root), "status", "--porcelain")
+    except RuntimeError:
+        return ""
+    skip = []
+    for directory in (work_p, Path(out).resolve()):
+        if directory.parent == root:
+            skip.append(directory.name)
+    lines = []
+    for line in status.splitlines():
+        path = _porcelain_path(line)
+        if any(path == name or path.startswith(name + "/") for name in skip):
+            continue
+        lines.append(line)
+    if not lines:
+        return ""
+    shown = lines[:40]
+    more = f"\n... and {len(lines) - len(shown)} more" if len(lines) > len(shown) else ""
+    return ("A checkout that contains the work directory has changes outside it. "
+            "Publish only commits the work checkout, so these changes are not in the "
+            "pull request:\n" + "\n".join(shown) + more)
+
+
 def publish(args, gh: Optional[GitHub] = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
@@ -388,7 +489,13 @@ def publish(args, gh: Optional[GitHub] = None) -> int:
     work = args.work
     _git(work, "add", "-A")
     if not _git(work, "status", "--porcelain").strip():
-        raise RuntimeError("the agent changed no file, so there is nothing to publish")
+        detail = _edits_outside_work(work, out)
+        message = _UNCHANGED if not detail else f"{_UNCHANGED}\n{detail}"
+        (out / _UNCHANGED_FILE).write_text(message + "\n")
+        summary = out / "summary.md"
+        if summary.is_file() and summary.read_text().strip():
+            message += ". The agent's summary is posted on the Ticket."
+        raise RuntimeError(message)
     bot = f"{args.app_slug}[bot]"
     email = f"{gh.bot_user_id(args.app_slug)}+{bot}@users.noreply.github.com"
     round_note = "rework round" if ctx["pr"] else "build"
@@ -410,13 +517,25 @@ def publish(args, gh: Optional[GitHub] = None) -> int:
     return 0
 
 
+def _failure_comment(out: Path, run_url: str) -> str:
+    body = (f"The factory run for this Ticket failed: [run]({run_url}). "
+            f"`{PROGRESS_LABEL}` has been removed; re-apply `{START_LABEL}` to try again.\n")
+    unchanged = out / _UNCHANGED_FILE
+    if unchanged.is_file():
+        body += f"\n{unchanged.read_text().strip()}\n"
+        summary_path = out / "summary.md"
+        summary = summary_path.read_text().strip() if summary_path.is_file() else ""
+        if summary:
+            body += f"\nThe agent's summary:\n\n{summary}\n"
+    return body
+
+
 def release(args, gh: Optional[GitHub] = None) -> int:
     gh = gh or GitHub()
     issue = gh.issue(args.repo, args.issue)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    body = (f"The factory run for this Ticket failed: [run]({args.run_url}). "
-            f"`{PROGRESS_LABEL}` has been removed; re-apply `{START_LABEL}` to try again.\n")
+    body = _failure_comment(out, args.run_url)
     gh.comment(args.repo, args.issue, write_comment(out, "failed.md", body))
     if PROGRESS_LABEL in label_names(issue):
         gh.remove_labels(args.repo, args.issue, (PROGRESS_LABEL,))
