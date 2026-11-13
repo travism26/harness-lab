@@ -2,6 +2,8 @@
 
 > Draft. Items marked **[unsettled]** may change. Replace `<owner>/<repo>` and `<notes-repo>`, then paste each half into its own Grok Bot as the description. The two bots never talk to each other directly. GitHub labels carry the hand-off: the Scout files a Goal issue and labels it `ready-for-builder`, and the Builder picks it up from there.
 
+> In the lab's terms: a Goal issue and a Spec issue are planning issues, not Tickets. Only the issues the Builder cuts with `to-tickets` are Tickets, and only a `ready-for-factory` label from the owner's account starts the Factory. The Builder's GitHub connector acts as the owner, so its labels count as the owner's. See `docs/factory/README.md` and `GLOSSARY.md`.
+
 ---
 
 # Part 1: Scout bot
