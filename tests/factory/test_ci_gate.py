@@ -182,8 +182,7 @@ def test_green_ci_after_pass_clears_in_progress():
     decision = decide(event(conclusion="success", failed_jobs=()))
     assert decision.action == "settle"
     assert decision.clear_in_progress and decision.issue == 114
-    assert "in-progress" in decision.comment
-    assert "factory:settled" in decision.comment
+    assert decision.comment == ""
     assert decision.add == () and decision.remove == ()
 
 
@@ -208,15 +207,16 @@ def test_green_ci_for_someone_else_is_ignored():
     assert decision.action == "ignore"
 
 
-def test_a_settled_head_is_not_commented_again():
-    from factory.review_pr import settled_marker
-    comments = (_pass(), {"id": 2, "body": settled_marker(SHA) + "\ndone\n"})
-    decision = decide(event(conclusion="success", failed_jobs=(), comments=comments,
-                            issue_labels=()))
-    assert decision.action == "ignore"
-    still = decide(event(conclusion="success", failed_jobs=(), comments=comments,
-                         issue_labels=("in-progress",)))
-    assert still.action == "settle" and still.comment == "" and still.clear_in_progress
+def test_review_pass_after_green_ci_settles_on_pull_request_target():
+    decision = decide(event(event="pull_request_target", conclusion="success",
+                            failed_jobs=(), comments=(_pass(),)))
+    assert decision.action == "settle" and decision.clear_in_progress
+    assert decision.comment == ""
+
+
+def test_a_head_with_in_progress_already_off_is_left_alone():
+    decision = decide(event(conclusion="success", failed_jobs=(), issue_labels=()))
+    assert decision.action == "ignore" and decision.comment == ""
 
 
 def test_excerpt_is_bounded_and_secret_free():
@@ -330,15 +330,21 @@ def test_a_missing_ci_run_stops_waiting_once_review_is_ready():
     assert clock["t"] == 30
 
 
-def test_wait_loop_times_out_and_lets_rework_continue():
+def test_wait_cannot_block_forever_when_inputs_never_become_ready():
+    sleeps = []
     clock = {"t": 0.0}
 
     def sleep(seconds):
+        sleeps.append(seconds)
         clock["t"] += seconds
 
-    status = wait_for_inputs(lambda: (None, None, []), sleep, lambda: clock["t"],
-                             timeout=30, interval=15, head_sha=SHA)
+    status = wait_for_inputs(lambda: ({"conclusion": ""}, None, []), sleep,
+                             lambda: clock["t"], timeout=30, interval=15, head_sha=SHA)
     assert status == "timeout"
+    assert clock["t"] == 30 and sleeps == [15, 15]
+    assert wait_for_inputs(lambda: ({"conclusion": ""}, None, []),
+                           lambda seconds: (_ for _ in ()).throw(AssertionError(seconds)),
+                           lambda: 0.0, timeout=30, interval=0, head_sha=SHA) == "timeout"
 
 
 class FakeGitHub:

@@ -34,9 +34,9 @@ from typing import Callable, List, Optional, Sequence, Tuple
 from factory import claude
 from factory.github import GitHub, GitHubError, author, label_names, write_comment
 from factory.review_pr import (
-    HUMAN_LABEL, MARKER, MAX_REWORK, REWORK_LABEL, Moves, already_settled, charge_won,
+    HUMAN_LABEL, MARKER, MAX_REWORK, REWORK_LABEL, Moves, charge_won,
     drop_in_progress, gate_line, head_charged, label_moves, linked_ticket, mark_for_run,
-    move_labels, parse_gate, review_passed, rework_round, settled_comment,
+    move_labels, parse_gate, review_passed, rework_round,
 )
 
 CI_WORKFLOW = "ci.yml"
@@ -150,8 +150,10 @@ def _fence(text: str) -> str:
 
 
 def _ignore_reason(event: GateEvent) -> Optional[str]:
-    if event.event != "pull_request":
-        return f"CI event is {event.event or 'unset'}, not pull_request"
+    # CI completes on pull_request. Review completes on pull_request_target.
+    # Both are same-repo pull-request events; the workflow `if` admits both.
+    if event.event not in ("pull_request", "pull_request_target"):
+        return f"CI event is {event.event or 'unset'}, not a pull request"
     if event.head_repo != event.repo:
         return "CI ran for a fork"
     if event.pr is None:
@@ -241,13 +243,9 @@ def _decide_success(event: GateEvent) -> Decision:
     if head_charged(event.comments, event.head_sha) and REWORK_LABEL in event.labels:
         return Decision("ignore", "a rework round for this head is still open")
     issue = linked_ticket(event.body, event.repo)
-    if already_settled(event.comments, event.head_sha):
-        if "in-progress" not in event.issue_labels:
-            return Decision("ignore", "already settled")
-        return Decision("settle", "in-progress is still on a settled head",
-                        clear_in_progress=True, issue=issue)
+    if "in-progress" not in event.issue_labels:
+        return Decision("ignore", "in-progress is already off")
     return Decision("settle", "review passed and CI is green",
-                    comment=settled_comment(event.head_sha, issue),
                     clear_in_progress=True, issue=issue)
 
 
@@ -354,7 +352,7 @@ def wait_for_inputs(fetch: Callable, sleep: Callable, monotonic: Callable, timeo
                 return "ready"
         else:
             missing_since = None
-        if monotonic() - start >= timeout:
+        if monotonic() - start >= timeout or interval <= 0:
             return "timeout"
         sleep(interval)
 
@@ -464,9 +462,7 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
         return 0
     move_labels(gh, event.repo, event.pr, decision.add, decision.remove)
     if decision.clear_in_progress and decision.issue:
-        if drop_in_progress(gh, event.repo, decision.issue):
-            note = decision.comment or settled_comment(event.head_sha, decision.issue)
-            gh.comment(event.repo, decision.issue, write_comment(out, "settled-issue.md", note))
+        drop_in_progress(gh, event.repo, decision.issue)
     print(f"CI gate {decision.action}: {decision.reason}")
     return 0
 

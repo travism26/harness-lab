@@ -236,23 +236,6 @@ def review_passed(comments: Sequence, head_sha: str) -> bool:
     return False
 
 
-def settled_marker(head_sha: str) -> str:
-    return f"<!-- factory:settled head={head_sha} -->"
-
-
-def already_settled(comments: Sequence, head_sha: str) -> bool:
-    marker = settled_marker(head_sha)
-    return any(marker in body for body in _bodies(comments))
-
-
-def settled_comment(head_sha: str, issue: Optional[int]) -> str:
-    where = f"Ticket #{issue}" if issue else "the Ticket"
-    return (f"{settled_marker(head_sha)}\n"
-            f"Review passed and CI is green for `{head_sha[:12]}`. "
-            f"`in-progress` has been removed from {where}. "
-            "The draft PR waits for a human to merge.\n")
-
-
 def review_input(comments: List[dict], head_sha: str = "") -> Optional[str]:
     """What revise hands the rework agent.
 

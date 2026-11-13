@@ -54,15 +54,17 @@ fails with a message naming what is missing. It never goes green without doing a
      If CI charged first, Review's Spec blocker joins the same way. One head, one round.
    - Rework waits until CI for that head has finished. A failure is included once the gate's
      comment names that run, so the agent sees the excerpt. `timed_out`, `cancelled` and `skipped`
-     count as finished and do not wait for a comment. If no CI run exists for the head and Review
+     count as finished and do not wait for a comment. The wait itself stops at its timeout
+     (two minutes for a failure with no comment or no CI run; twenty minutes at the outside)
+     and Rework continues. If no CI run exists for the head and Review
      is already ready, or CI has failed and the comment never arrives (the gate ignores a non-draft,
      a fork, or `ready-for-human`), Rework gives it two minutes and then continues. A repeated
      delivery of the same CI run does not open another round. If two charges land together, the
      later comment is rewritten so it does not claim the round.
    - A **green** CI run does nothing by itself. The gate runs again when Review finishes. If CI
      for that head is already green and the new Review comment is PASS, and the head is not
-     already in an open rework round, the gate removes `in-progress` from the Ticket and
-     comments on the pull request and the Ticket. It does this even if the pull request is no
+     already in an open rework round, the gate removes `in-progress` from the Ticket. It does
+     not post a separate comment for that. It does this even if the pull request is no
      longer a draft: the factory's work on that head is done either way. The pull request stays a
      draft unless a human has already marked it ready. A human merges it. No other step asks the
      owner to act. The gate's preflight checks the App and the daily cap. It does not require the
