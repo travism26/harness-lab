@@ -1,0 +1,10 @@
+{
+  "repo": ".",
+  "start_commit": "0cad2cd64fab12b191dfc98dde306c6b80ad7eae",
+  "ticket": "ticket-8.md",
+  "check_command": "projects/harness/check",
+  "check_files": {"projects/harness/check": "5d15da0aa44619f0a283683445cbb9c5ef016b06"},
+  "issue": 8,
+  "project": "harness",
+  "bootstrap": false
+}

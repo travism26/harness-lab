@@ -227,6 +227,8 @@ factory's Claude Code.
 
 The owner runs one Bench tracer, no model call and no GitHub call: `uv run python -m factory.bench --case CASE.json --setup-id ID --harness-command CMD --review-answer-file tests/factory/review-answer.json`.
 
+The owner replays the two committed Bench cases (Tickets 8 and 9, `factory/bench_cases/`) with `uv run python -m factory.bench --replay`: three Bench runs of each, one at a time, under the Setup `claude-code-sonnet`, then a report (passed out of 3, unstable, cost min, median and max; no ranking). Its first line says the run is not comparable while a newer checkout of this repo is readable. It names four owner steps: the API key (`ANTHROPIC_API_KEY`), a provider-side monthly limit if the console has one, Claude Code `2.1.319` on `PATH`, and a machine that cannot read a newer checkout. Without the key, or with another `claude --version`, the command refuses before any clone and prints the install line (`npm install -g @anthropic-ai/claude-code@2.1.319`) without running it. The first live run is an owner step; the tests call no model.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every PR and on every push to `main`, with no secrets and

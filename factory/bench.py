@@ -1,6 +1,13 @@
 """The Bench's tracer: one Bench run scores one Bench case and stops at the ledger
 (GLOSSARY.md, docs/adr/0009-bench-spends-on-a-metered-api-key.md).
 
+  uv run python -m factory.bench --replay
+
+--replay runs the two committed Bench cases (factory/bench_cases/, Tickets 8 and
+9) three times each under the baseline Setup `claude-code-sonnet`, one Bench run
+at a time, and prints a report. It refuses before any clone when ANTHROPIC_API_KEY
+is unset or `claude --version` is not 2.1.319, and installs nothing.
+
   uv run python -m factory.bench --case CASE.json --setup-id ID --harness-command CMD --review-answer-file tests/factory/review-answer.json
 
 CASE.json names the Bench case: {"repo": PATH, "start_commit": SHA, "ticket": PATH,
@@ -39,7 +46,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, List, Mapping, Optional, Tuple
 
-from factory import claude, review_pr
+from factory import claude, review_pr, ticket as ticket_mod
 
 SCHEMA = 1
 LOGIN = "anthropic-api"
@@ -47,6 +54,26 @@ COST_NOTE = "client-estimate"
 PASS = "PASS"
 # Never in the stand-in's environment (docs/adr/0009-bench-spends-on-a-metered-api-key.md).
 _DROPPED = claude._DROPPED + ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY")
+
+
+BASELINE_ID = "claude-code-sonnet"
+CLAUDE_VERSION = "2.1.319"
+INSTALL_LINE = f"npm install -g @anthropic-ai/claude-code@{CLAUDE_VERSION}"
+KEY_VAR = "ANTHROPIC_API_KEY"
+CASES_DIR = Path(__file__).resolve().parent / "bench_cases"
+REPEATS = 3
+NOT_COMPARABLE = ("This run is not comparable: a newer checkout of this repo is readable "
+                  "on this machine.")
+OWNER_STEPS = (
+    "an Anthropic API key in ANTHROPIC_API_KEY",
+    "a provider-side monthly limit, if the console has one",
+    f"Claude Code {CLAUDE_VERSION} on PATH",
+    "a machine that cannot read a newer checkout of this repo",
+)
+
+
+class Refused(RuntimeError):
+    """A live invocation lacks what it needs; nothing was cloned."""
 
 
 class LedgerRefused(RuntimeError):
@@ -136,8 +163,10 @@ def acquire(out: Path, limits: Limits, now: datetime) -> Path:
 # ---- the run ---------------------------------------------------------------
 
 def standin_env(step_env: Mapping[str, str], ticket: Path, result: Path, model: str,
-                budget: float) -> dict:
-    env = {k: v for k, v in step_env.items() if k not in _DROPPED}
+                budget: float, keep: Tuple[str, ...] = ()) -> dict:
+    """`keep` names credentials the harness command needs after all; the baseline
+    Setup keeps the Bench's own API key and nothing else."""
+    env = {k: v for k, v in step_env.items() if k not in _DROPPED or k in keep}
     env.update({"BENCH_TICKET": str(ticket), "BENCH_RESULT": str(result),
                 "BENCH_MODEL": model, "BENCH_BUDGET": f"{budget:g}"})
     return env
@@ -238,7 +267,7 @@ def run_standin(setup: dict, clone: Path, env: dict, run_dir: Path,
 
 def bench_run(case: dict, setup: dict, out: Path, limits: Limits, run_agent: Callable,
               source_root: Path, step_env: Optional[Mapping[str, str]] = None,
-              now: Optional[datetime] = None) -> dict:
+              now: Optional[datetime] = None, keep_env: Tuple[str, ...] = ()) -> dict:
     """One Bench run. Raises LedgerRefused before anything starts."""
     step_env = os.environ if step_env is None else step_env
     now = now or datetime.now(timezone.utc)
@@ -253,7 +282,8 @@ def bench_run(case: dict, setup: dict, out: Path, limits: Limits, run_agent: Cal
         ticket.write_text(Path(case["ticket"]).read_text())
         result_path = run_dir / "result.json"
         clone = scratch_clone(case["repo"], start, source_root)
-        env = standin_env(step_env, ticket, result_path, setup["model"], limits.build_cap_usd)
+        env = standin_env(step_env, ticket, result_path, setup["model"], limits.build_cap_usd,
+                         keep_env)
 
         began = time.monotonic()
         crashed, reported = run_standin(setup, clone, env, run_dir, result_path)
@@ -293,6 +323,150 @@ def bench_run(case: dict, setup: dict, out: Path, limits: Limits, run_agent: Cal
         lock.unlink(missing_ok=True)
 
 
+# ---- replay ----------------------------------------------------------------
+
+def baseline_arguments(build_cap_usd: float, model: str = "sonnet") -> List[str]:
+    """The `claude` arguments of the baseline Setup: the factory's editing-agent
+    command (print mode, stream-json, verbose, model, budget, project setting
+    sources, the factory's denied tools, the edit permission mode). No --bare."""
+    return claude.command(model, build_cap_usd, None, ticket_mod.DENIED_TOOLS, may_edit=True)
+
+
+def baseline_setup(source_root: Path, repeat: int = 1) -> dict:
+    cmd = (f"env PYTHONPATH={shlex.quote(str(source_root))} {shlex.quote(sys.executable)} "
+           f"{shlex.quote(str(source_root / 'factory' / 'bench.py'))} --baseline-standin")
+    return {"setup_id": BASELINE_ID, "harness_command": cmd, "model": "sonnet",
+            "review_model": "sonnet", "repeat": repeat}
+
+
+def _api_env(step_env: Mapping[str, str]) -> dict:
+    """The environment of a `claude` call on the Bench's key: no other credential."""
+    env = {k: v for k, v in step_env.items() if k not in _DROPPED and not k.startswith("ANTHROPIC_")}
+    env[KEY_VAR] = step_env[KEY_VAR]
+    return env
+
+
+def baseline_standin(step_env: Optional[Mapping[str, str]] = None) -> int:
+    """The baseline harness command: build the Ticket in the current directory
+    with the factory's build prompt (Project harness, bootstrap off), then write
+    the result file the Bench reads."""
+    step_env = os.environ if step_env is None else step_env
+    ticket_path = Path(step_env["BENCH_TICKET"])
+    budget = float(step_env["BENCH_BUDGET"])
+    with tempfile.TemporaryDirectory(prefix="bench-prompt-") as tmp:
+        out = Path(tmp)
+        (out / "ticket.md").write_text(ticket_path.read_text())
+        (out / "context.json").write_text(json.dumps({"project": "harness", "bootstrap": False}))
+        prompt = ticket_mod.build_prompt(out)
+    transcript = ticket_path.parent / "build.jsonl"
+    began = time.monotonic()
+    with transcript.open("w") as f:
+        proc = subprocess.run(baseline_arguments(budget, step_env["BENCH_MODEL"]), input=prompt,
+                              stdout=f, stderr=subprocess.PIPE, text=True, env=_api_env(step_env))
+    msg = claude.result_message(transcript.read_text(errors="replace"))
+    usage = msg.get("usage") or {}
+    ok = proc.returncode == 0 and msg.get("subtype") == "success" and not msg.get("is_error")
+    reported = {"ok": ok, "summary": msg.get("result") or "", "model": step_env["BENCH_MODEL"],
+                "cost_usd": msg.get("total_cost_usd"), "num_turns": msg.get("num_turns"),
+                "duration_ms": msg.get("duration_ms") or int((time.monotonic() - began) * 1000)}
+    for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+              "cache_read_input_tokens"):
+        reported[k] = usage.get(k)
+    Path(step_env["BENCH_RESULT"]).write_text(json.dumps(reported))
+    return 0 if ok else 1
+
+
+def live_review(step_env: Optional[Mapping[str, str]] = None) -> Callable:
+    """Review's agent for a live replay: `claude` on the Bench's API key."""
+    step_env = os.environ if step_env is None else step_env
+
+    def run_agent(prompt, login, model, max_budget_usd, cwd, transcript, disallowed_tools,
+                  allowed_tools=None, **_):
+        cmd = claude.command(model, max_budget_usd, allowed_tools, disallowed_tools, False)
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        with transcript.open("w") as f:
+            proc = subprocess.run(cmd, input=prompt, stdout=f, stderr=subprocess.PIPE, text=True,
+                                  cwd=cwd, env=_api_env(step_env))
+        msg = claude.result_message(transcript.read_text(errors="replace"))
+        ok = proc.returncode == 0 and msg.get("subtype") == "success" and not msg.get("is_error")
+        return claude.Result(ok, msg.get("result") or proc.stderr.strip(),
+                             msg.get("subtype", ""), float(msg.get("total_cost_usd") or 0))
+    return run_agent
+
+
+def installed_version() -> Optional[str]:
+    try:
+        p = subprocess.run(["claude", "--version"], capture_output=True, text=True)
+    except OSError:
+        return None
+    words = p.stdout.split()
+    return words[0] if p.returncode == 0 and words else None
+
+
+def preflight(step_env: Mapping[str, str], version_fn: Callable[[], Optional[str]]) -> None:
+    """Refuse a live invocation before any clone. Installs nothing."""
+    if not (step_env.get(KEY_VAR) or "").strip():
+        raise Refused(f"{KEY_VAR} is not set; the Bench spends on a metered API key")
+    version = version_fn()
+    if version != CLAUDE_VERSION:
+        raise Refused(f"Claude Code {CLAUDE_VERSION} is required, found {version or 'none'}. "
+                      f"Install it yourself: {INSTALL_LINE}")
+
+
+def load_case(path: Path, source_root: Path) -> dict:
+    """A committed Bench case; its repo and Ticket paths resolve from the case file."""
+    case = json.loads(path.read_text())
+    case["repo"] = str((source_root / case["repo"]).resolve())
+    case["ticket"] = str((path.parent / case["ticket"]).resolve())
+    return case
+
+
+def committed_cases(cases_dir: Path = CASES_DIR) -> List[Tuple[str, Path]]:
+    """Ticket 8, then Ticket 9."""
+    return sorted(((p.stem, p) for p in cases_dir.glob("ticket-*.json")),
+                  key=lambda c: int(c[0].split("-")[1]))
+
+
+def replay(cases: List[Tuple[str, dict]], setup: dict, out: Path, limits: Limits,
+           run_agent: Callable, source_root: Path, step_env: Mapping[str, str],
+           repeats: int = REPEATS, keep_env: Tuple[str, ...] = ()
+           ) -> Tuple[List[Tuple[str, List[dict]]], Optional[str]]:
+    """Every case `repeats` times, one Bench run at a time, in order. Stops at the
+    first ledger refusal and returns (rows per case, the refusal or None)."""
+    results = [(name, []) for name, _ in cases]
+    for (name, case), (_, rows) in zip(cases, results):
+        for repeat in range(1, repeats + 1):
+            try:
+                rows.append(bench_run(case, dict(setup, repeat=repeat), out, limits, run_agent,
+                                      source_root, step_env, keep_env=keep_env))
+            except LedgerRefused as e:
+                return results, str(e)
+    return results, None
+
+
+def _median(values: List[float]) -> float:
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    return ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
+
+
+def report(setup_id: str, results: List[Tuple[str, List[dict]]], repeats: int = REPEATS) -> str:
+    """The report. It makes no ranking."""
+    lines = [NOT_COMPARABLE, "Owner steps before a comparable run:"]
+    lines += [f"  {i}. {step}" for i, step in enumerate(OWNER_STEPS, 1)]
+    lines.append(f"Setup {setup_id}")
+    for name, rows in results:
+        if not rows:
+            lines.append(f"{name}: no runs")
+            continue
+        passed = sum(1 for r in rows if r["outcome"] == "pass")
+        unstable = len({r["check"] for r in rows}) > 1 or len({r["review"] for r in rows}) > 1
+        costs = [float(r["build_cost_usd"] or 0) + float(r["review_cost_usd"] or 0) for r in rows]
+        lines.append(f"{name}: passed {passed} of {repeats}, unstable {'yes' if unstable else 'no'}, "
+                     f"cost min ${min(costs):.2f} median ${_median(costs):.2f} max ${max(costs):.2f}")
+    return "\n".join(lines)
+
+
 def recorded_review(text: str) -> Callable:
     """The owner's Review agent: a recorded answer, and no model call."""
     def run_agent(prompt, **_):
@@ -300,11 +474,43 @@ def recorded_review(text: str) -> Callable:
     return run_agent
 
 
-def main(argv: Optional[List[str]] = None, run_agent: Optional[Callable] = None) -> int:
+def main_replay(args, run_agent: Optional[Callable], step_env: Mapping[str, str],
+                version_fn: Callable[[], Optional[str]]) -> int:
+    """Replay the committed cases three times each and print the report. A live
+    invocation refuses before any clone when the key or the version is wrong."""
+    source_root = Path(__file__).resolve().parent.parent
+    try:
+        preflight(step_env, version_fn)
+    except Refused as e:
+        print(f"bench: refused: {e}", file=sys.stderr)
+        return 2
+    setup = baseline_setup(source_root)
+    if args.harness_command:
+        setup["harness_command"] = args.harness_command
+    cases_dir = Path(args.cases_dir) if args.cases_dir else CASES_DIR
+    cases = [(name, load_case(path, source_root)) for name, path in committed_cases(cases_dir)]
+    limits = Limits(args.monthly_cap_usd, args.build_cap_usd, args.review_cap_usd)
+    results, refusal = replay(cases, setup, Path(args.out), limits,
+                              run_agent or live_review(step_env), source_root, step_env,
+                              keep_env=(KEY_VAR,))
+    print(report(setup["setup_id"], results))
+    if refusal:
+        print(f"bench: the ledger refuses: {refusal}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv: Optional[List[str]] = None, run_agent: Optional[Callable] = None,
+         step_env: Optional[Mapping[str, str]] = None,
+         version_fn: Callable[[], Optional[str]] = installed_version) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--case", required=True, help="the Bench case's JSON file")
-    p.add_argument("--setup-id", required=True)
-    p.add_argument("--harness-command", required=True)
+    p.add_argument("--replay", action="store_true",
+                   help="replay the committed Bench cases three times each and print the report")
+    p.add_argument("--baseline-standin", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--cases-dir", help="replay: a directory of case files instead of the committed ones")
+    p.add_argument("--case", help="the Bench case's JSON file")
+    p.add_argument("--setup-id")
+    p.add_argument("--harness-command")
     p.add_argument("--review-answer-file",
                    help="a recorded Review answer; the command calls no model")
     p.add_argument("--out", default="bench-runs")
@@ -312,6 +518,13 @@ def main(argv: Optional[List[str]] = None, run_agent: Optional[Callable] = None)
     p.add_argument("--build-cap-usd", type=float, default=Limits.build_cap_usd)
     p.add_argument("--review-cap-usd", type=float, default=Limits.review_cap_usd)
     args = p.parse_args(argv)
+    step_env = os.environ if step_env is None else step_env
+    if args.baseline_standin:
+        return baseline_standin(step_env)
+    if args.replay:
+        return main_replay(args, run_agent, step_env, version_fn)
+    if not (args.case and args.setup_id and args.harness_command):
+        p.error("--case, --setup-id and --harness-command are required without --replay")
     if run_agent is None:
         if not args.review_answer_file:
             print("bench: pass --review-answer-file, or inject Review's agent; "

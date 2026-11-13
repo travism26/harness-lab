@@ -1,5 +1,6 @@
 """The Bench tracer: one Bench run on a Bench case, no model call, no GitHub call."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from factory import bench, claude
+from factory import bench, claude, ticket
 
 SOURCE = Path(bench.__file__).resolve().parent.parent
 REVIEW_ANSWER = Path(__file__).with_name("review-answer.json")
@@ -244,3 +245,149 @@ def test_tracer_reported_zero_duration_is_kept(bench_case, tmp_path):
     script = GOOD.replace('"duration_ms": 5', '"duration_ms": 0')
     row = run(bench_case, tmp_path, standin(tmp_path, script))
     assert row["duration_ms"] == 0
+
+
+# ---- replay ----------------------------------------------------------------
+
+KEY_ENV = {"ANTHROPIC_API_KEY": "sk-test-key-value", "PATH": os.environ["PATH"]}
+TICKET_8 = ("0cad2cd64fab12b191dfc98dde306c6b80ad7eae",
+            "a7fdffb5ce4571fefa002c7690c746e0e7aec2094b732120d3004997b9078bb2")
+TICKET_9 = ("7a0d2be0fd3c3e7ee310c5e03a020af1e54f56fd",
+            "7d552b820c83c37610671d607616a46d6e17453e98b152f31670c1577c828fc5")
+
+
+def fake_cases(bench_case, tmp_path):
+    """Two case files on the fixture repo, in a cases directory."""
+    d = tmp_path / "cases"
+    d.mkdir()
+    for n in (8, 9):
+        (d / f"ticket-{n}.md").write_text(f"# t{n}\n\nbody\n")
+        case = dict(bench_case, repo=bench_case["repo"], ticket=f"ticket-{n}.md", issue=n)
+        (d / f"ticket-{n}.json").write_text(json.dumps(case))
+    return d
+
+
+def replay_argv(tmp_path, cases, command, *extra):
+    return ["--replay", "--cases-dir", str(cases), "--harness-command", command,
+            "--out", str(tmp_path / "o"), *extra]
+
+
+def test_replay_committed_cases_match_the_record():
+    cases = dict(bench.committed_cases())
+    assert list(cases) == ["ticket-8", "ticket-9"]
+    for name, (start, digest) in (("ticket-8", TICKET_8), ("ticket-9", TICKET_9)):
+        case = bench.load_case(cases[name], SOURCE)
+        assert case["start_commit"] == start
+        text = Path(case["ticket"]).read_bytes()
+        assert hashlib.sha256(text).hexdigest() == digest
+        assert text.startswith(b"# ") and text.endswith(b"\n")
+        assert case["check_command"] == "projects/harness/check"
+        assert case["check_files"] == {"projects/harness/check":
+                                       "5d15da0aa44619f0a283683445cbb9c5ef016b06"}
+        assert case["project"] == "harness" and case["bootstrap"] is False
+        assert Path(case["repo"]) == SOURCE
+
+
+def test_replay_three_repeats_six_lines_and_report(bench_case, tmp_path, capsys):
+    cases = fake_cases(bench_case, tmp_path)
+    code = bench.main(replay_argv(tmp_path, cases, standin(tmp_path, GOOD)),
+                      run_agent=agent(PASS_ANSWER), step_env=KEY_ENV,
+                      version_fn=lambda: "2.1.319")
+    assert code == 0
+    rows = [json.loads(l) for l in (tmp_path / "o" / "ledger.jsonl").read_text().splitlines()]
+    assert len(rows) == 6
+    assert [r["issue"] for r in rows] == [8, 8, 8, 9, 9, 9]
+    assert [r["repeat"] for r in rows] == [1, 2, 3, 1, 2, 3]
+    assert {r["setup_id"] for r in rows} == {"claude-code-sonnet"}
+    lines = capsys.readouterr().out.splitlines()
+    assert "not comparable" in lines[0] and "newer checkout" in lines[0]
+    text = "\n".join(lines)
+    for step in ("ANTHROPIC_API_KEY", "monthly limit", "2.1.319", "cannot read a newer checkout"):
+        assert step in text
+    assert "ticket-8: passed 3 of 3, unstable no, cost min $0.75 median $0.75 max $0.75" in text
+    assert "ticket-9: passed 3 of 3" in text
+
+
+def test_replay_report_unstable_and_cost_statistics():
+    def row(outcome, check, review, build, rev):
+        return {"outcome": outcome, "check": check, "review": review,
+                "build_cost_usd": build, "review_cost_usd": rev}
+    stable = [row("pass", "pass", "PASS", 1.0, 0.5), row("pass", "pass", "PASS", 3.0, 0.5),
+              row("pass", "pass", "PASS", 2.0, 0.5)]
+    by_check = [row("pass", "pass", "PASS", 1, 0), row("fail", "fail", "PASS", 2, 0),
+                row("pass", "pass", "PASS", 3, 0)]
+    by_review = [row("pass", "pass", "PASS", 1, 0), row("fail", "pass", "BLOCKED", 1, 0),
+                 row("fail", "pass", "BLOCKED", 1, 0)]
+    text = bench.report("s", [("a", stable), ("b", by_check), ("c", by_review)])
+    assert "a: passed 3 of 3, unstable no, cost min $1.50 median $2.50 max $3.50" in text
+    assert "b: passed 2 of 3, unstable yes, cost min $1.00 median $2.00 max $3.00" in text
+    assert "c: passed 1 of 3, unstable yes" in text
+    assert "rank" not in text.lower()
+
+
+def test_replay_missing_key_refuses_before_clone(bench_case, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(bench, "scratch_clone", lambda *a: pytest.fail("cloned"))
+    cases = fake_cases(bench_case, tmp_path)
+    code = bench.main(replay_argv(tmp_path, cases, "true"), step_env={"PATH": "/usr/bin"},
+                      version_fn=lambda: "2.1.319")
+    assert code != 0 and "ANTHROPIC_API_KEY" in capsys.readouterr().err
+    assert not (tmp_path / "o").exists()
+
+
+def test_replay_wrong_version_refuses_with_install_line(bench_case, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(bench, "scratch_clone", lambda *a: pytest.fail("cloned"))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("ran a command"))
+    cases = fake_cases(bench_case, tmp_path)
+    for found in ("2.1.320", None):
+        code = bench.main(replay_argv(tmp_path, cases, "true"), step_env=KEY_ENV,
+                          version_fn=lambda: found)
+        err = capsys.readouterr().err
+        assert code != 0 and "npm install -g @anthropic-ai/claude-code@2.1.319" in err
+    assert not (tmp_path / "o").exists()
+
+
+def test_replay_baseline_arguments_match_the_factory_command():
+    args = bench.baseline_arguments(2.0)
+    assert args == claude.command("sonnet", 2.0, None, ticket.DENIED_TOOLS, True)
+    assert "--bare" not in args
+    for flag in ("-p", "--verbose", "--setting-sources", "--disallowedTools", "--permission-mode"):
+        assert flag in args
+    assert args[args.index("--output-format") + 1] == "stream-json"
+    assert args[args.index("--model") + 1] == "sonnet"
+    setup = bench.baseline_setup(SOURCE)
+    assert setup["setup_id"] == "claude-code-sonnet"
+    assert setup["model"] == "sonnet" and setup["review_model"] == "sonnet"
+
+
+def test_replay_defaults_hold_six_reservations():
+    limits = bench.Limits()
+    assert limits.monthly_cap_usd == 100 and limits.reservation_usd == 3
+    assert limits.monthly_cap_usd // limits.reservation_usd >= 6
+
+
+def test_replay_cap_of_five_reservations_writes_five_lines(bench_case, tmp_path, capsys):
+    cases = fake_cases(bench_case, tmp_path)
+    spend = standin(tmp_path, "pathlib.Path('done.txt').write_text('x')\n"
+                    + WRITE_RESULT % "2.0")
+    code = bench.main(replay_argv(tmp_path, cases, spend, "--monthly-cap-usd", "15"),
+                      run_agent=lambda prompt, **_: claude.Result(True, PASS_ANSWER, "success", 1.0),
+                      step_env=KEY_ENV, version_fn=lambda: "2.1.319")
+    assert code != 0
+    lines = (tmp_path / "o" / "ledger.jsonl").read_text().splitlines()
+    assert len(lines) == 5
+    assert [json.loads(l)["repeat"] for l in lines] == [1, 2, 3, 1, 2]
+    assert "ticket-9: passed 2 of 3" in capsys.readouterr().out
+
+
+def test_replay_gives_the_harness_only_the_bench_key(bench_case, tmp_path):
+    seen = tmp_path / "seen.json"
+    script = (f"pathlib.Path({str(seen)!r}).write_text(json.dumps("
+              "{k: os.environ.get(k) for k in ('ANTHROPIC_API_KEY','GH_TOKEN')}))\n") + GOOD
+    cases = fake_cases(bench_case, tmp_path)
+    env = dict(KEY_ENV, GH_TOKEN="ghtoken-value")
+    bench.main(replay_argv(tmp_path, cases, standin(tmp_path, script)),
+               run_agent=agent(PASS_ANSWER), step_env=env, version_fn=lambda: "2.1.319")
+    assert json.loads(seen.read_text()) == {"ANTHROPIC_API_KEY": "sk-test-key-value",
+                                            "GH_TOKEN": None}
+    assert "sk-test-key-value" not in "".join(
+        p.read_text(errors="replace") for p in (tmp_path / "o").rglob("*") if p.is_file())
