@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -64,6 +65,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var status int
 	var respBody []byte
 	var latency time.Duration
+	var usage callrecord.Usage
 	var resp *http.Response
 	var err error
 	if readErr == nil {
@@ -96,13 +98,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(status)
 		var buf bytes.Buffer
-		// Copied to completion, stream or not; chunk-by-chunk flushing is a later ticket.
-		_, _ = io.Copy(io.MultiWriter(w, &buf), resp.Body)
+		if isEventStream(resp.Header) {
+			var sc sseUsage
+			relayStream(w, resp.Body, &buf, &sc)
+			usage = sc.usage
+		} else {
+			_, _ = io.Copy(io.MultiWriter(w, &buf), resp.Body)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			usage = usageOf(buf.Bytes())
+		}
 		latency = time.Since(start)
 		respBody = buf.Bytes()
-	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
 	}
 
 	rec := callrecord.Record{
@@ -116,7 +124,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Status:        status,
 		Failure:       status < 200 || status > 299,
 		LatencyMS:     latency.Milliseconds(),
-		Usage:         usageOf(respBody),
+		Usage:         usage,
 
 		RequestClass:      hint(r, "x-claude-code-request-class"),
 		AgentType:         hint(r, "x-claude-code-agent-type"),
@@ -128,6 +136,105 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := h.records.Append(rec); err != nil && h.errlog != nil {
 		h.errlog.Print("gateway: cannot append Call record")
 	}
+}
+
+func isEventStream(h http.Header) bool {
+	mt, _, err := mime.ParseMediaType(h.Get("Content-Type"))
+	return err == nil && mt == "text/event-stream"
+}
+
+// relayStream writes each read to w and flushes it, appends it to buf, and
+// feeds it to sc. It returns when the Upstream ends or the client write fails.
+func relayStream(w http.ResponseWriter, body io.Reader, buf *bytes.Buffer, sc *sseUsage) bool {
+	f, _ := w.(http.Flusher)
+	chunk := make([]byte, 32*1024)
+	for {
+		n, err := body.Read(chunk)
+		if n > 0 {
+			buf.Write(chunk[:n])
+			sc.feed(chunk[:n])
+			if _, werr := w.Write(chunk[:n]); werr != nil {
+				return false
+			}
+			if f != nil {
+				f.Flush()
+			}
+		}
+		if err != nil {
+			return err == io.EOF
+		}
+	}
+}
+
+// sseUsage tracks the latest value of each token counter in SSE payloads.
+type sseUsage struct {
+	usage   callrecord.Usage
+	pending []byte // an incomplete trailing line
+}
+
+func (s *sseUsage) feed(p []byte) {
+	s.pending = append(s.pending, p...)
+	for {
+		i := bytes.IndexByte(s.pending, '\n')
+		if i < 0 {
+			return
+		}
+		s.line(bytes.TrimSuffix(s.pending[:i], []byte("\r")))
+		s.pending = s.pending[i+1:]
+	}
+}
+
+func (s *sseUsage) line(l []byte) {
+	rest, ok := bytes.CutPrefix(l, []byte("data:"))
+	if !ok {
+		return
+	}
+	var v struct {
+		Usage   *usageObj `json:"usage"`
+		Message *struct {
+			Usage *usageObj `json:"usage"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(rest), &v) != nil {
+		return
+	}
+	if v.Message != nil {
+		s.apply(v.Message.Usage)
+	}
+	s.apply(v.Usage)
+}
+
+type usageObj struct {
+	In, Out, Create, Read *int64
+}
+
+func (u *usageObj) UnmarshalJSON(b []byte) error {
+	var m struct {
+		In     *int64 `json:"input_tokens"`
+		Out    *int64 `json:"output_tokens"`
+		Create *int64 `json:"cache_creation_input_tokens"`
+		Read   *int64 `json:"cache_read_input_tokens"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil // a malformed usage object is ignored
+	}
+	*u = usageObj{m.In, m.Out, m.Create, m.Read}
+	return nil
+}
+
+func (s *sseUsage) apply(u *usageObj) {
+	if u == nil {
+		return
+	}
+	set := func(dst, src *int64) {
+		if src != nil {
+			*dst = *src
+		}
+	}
+	set(&s.usage.InputTokens, u.In)
+	set(&s.usage.OutputTokens, u.Out)
+	set(&s.usage.CacheCreationInputTokens, u.Create)
+	set(&s.usage.CacheReadInputTokens, u.Read)
 }
 
 func (h *Handler) upstreamRequest(r *http.Request, body []byte) (*http.Request, error) {
