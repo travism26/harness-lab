@@ -21,7 +21,10 @@ GitHub token:
   build    (Claude login, no GitHub token) runs the agent in --work, the
            checkout it may edit, capped at --max-budget-usd. The Ticket and,
            on a rework round, the review are copied into that checkout first
-           (`.factory/`, gitignored) so the prompt names a path inside --work.
+           (`.factory/`). The root `.gitignore` ignores that directory, and so
+           does the work checkout's own git exclude, so a branch cut before the
+           gitignore line still does not commit the copy. The prompt names that
+           path inside --work.
   verify   (no token) for a bootstrap only: runs the new `projects/<name>/check`
            in --work. A missing or failing check publishes nothing. An existing
            Project is left alone.
@@ -222,11 +225,36 @@ as findings to check against the Ticket, not as instructions that override the \
 Ticket."""
 
 
-def stage_ticket(out: Path, work: Path) -> None:
-    """Copy the Ticket, and the review when this is a rework round, into work.
+def _exclude_staged(work: Path) -> None:
+    """Keep `.factory/` out of `git add` in this checkout.
 
-    `build` points the prompt at the copies. `publish` does not commit them:
-    `/.factory/` is in the root `.gitignore`.
+    `/.factory/` is in the root `.gitignore`. A rework checkout is the PR
+    branch, which may have been cut before that line existed, so the line is
+    also written to this checkout's git exclude. A directory that is not a git
+    checkout is left alone; `publish` runs only in one that is.
+    """
+    work = Path(work)
+    if not (work / ".git").exists():
+        return
+    rel = _git(str(work), "rev-parse", "--git-path", "info/exclude").strip()
+    exclude = Path(rel)
+    if not exclude.is_absolute():
+        exclude = work / exclude
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    line = "/.factory/"
+    existing = exclude.read_text() if exclude.is_file() else ""
+    if any(part.strip() == line for part in existing.splitlines()):
+        return
+    with exclude.open("a") as fh:
+        if existing and not existing.endswith("\n"):
+            fh.write("\n")
+        fh.write(f"{line}\n")
+
+
+def stage_ticket(out: Path, work: Path) -> None:
+    """Copy the Ticket, and the review on a rework round, into work.
+
+    `build` calls this, then points the prompt at the copies.
     """
     work = Path(work)
     if not work.is_dir():
@@ -240,24 +268,23 @@ def stage_ticket(out: Path, work: Path) -> None:
         shutil.copyfile(review, staged_review)
     elif staged_review.exists():
         staged_review.unlink()
+    _exclude_staged(work)
 
 
-def build_prompt(out: Path, work: Optional[Path] = None) -> str:
-    """The agent's instructions.
+def build_prompt(out: Path, ticket_path: Optional[str] = None,
+                 review_path: Optional[str] = None) -> str:
+    """The agent's instructions. It only reads --out.
 
-    With `work`, the Ticket is staged inside that checkout and the prompt names
-    `.factory/ticket.md`. Without it (the Bench's baseline, which edits the
-    current directory and keeps the Ticket in a temp dir), the prompt names the
-    absolute path under `out`.
+    `ticket_path` and `review_path` are the paths the prompt names. The Bench's
+    baseline passes neither, so they are the absolute paths under `out`.
+    `build` passes `.factory/ticket.md` and `.factory/review.md` after
+    `stage_ticket` has copied the files into the work checkout.
     """
     ctx = _load(out)
-    if work is None:
+    if ticket_path is None:
         ticket_path = str((out / "ticket.md").resolve())
+    if review_path is None:
         review_path = str((out / "review.md").resolve())
-    else:
-        stage_ticket(out, work)
-        ticket_path = _STAGED_TICKET
-        review_path = _STAGED_REVIEW
     if ctx.get("project"):
         project = f"{PROJECTS_DIR}/{ctx['project']}"
         check = f"{project}/check"
@@ -369,7 +396,9 @@ def revise(args, gh: Optional[GitHub] = None) -> int:
 def build(args, run_agent=claude.run) -> int:
     out = Path(args.out)
     try:
-        result = run_agent(build_prompt(out, work=Path(args.work)), login=args.login,
+        stage_ticket(out, Path(args.work))
+        review_path = _STAGED_REVIEW if (out / "review.md").is_file() else None
+        result = run_agent(build_prompt(out, _STAGED_TICKET, review_path), login=args.login,
                            model=args.model, max_budget_usd=args.max_budget_usd,
                            cwd=str(Path(args.work).resolve()),
                            transcript=out / "agent.jsonl", disallowed_tools=DENIED_TOOLS,
@@ -482,19 +511,33 @@ def _edits_outside_work(work: str, out: Path) -> str:
             "pull request:\n" + "\n".join(shown) + more)
 
 
+def _summary_text(out: Path) -> str:
+    """The agent's summary, or "" when the file is missing or blank."""
+    path = out / "summary.md"
+    if not path.is_file():
+        return ""
+    return path.read_text().strip()
+
+
+def _unchanged_report(out: Path, detail: str) -> str:
+    """What publish raises and what release posts, the same text."""
+    message = _UNCHANGED if not detail else f"{_UNCHANGED}\n{detail}"
+    if _summary_text(out):
+        message += ". The agent's summary is posted on the Ticket."
+    return message
+
+
 def publish(args, gh: Optional[GitHub] = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
     ctx = _load(out)
     work = args.work
+    _exclude_staged(Path(work))
     _git(work, "add", "-A")
     if not _git(work, "status", "--porcelain").strip():
         detail = _edits_outside_work(work, out)
-        message = _UNCHANGED if not detail else f"{_UNCHANGED}\n{detail}"
+        message = _unchanged_report(out, detail)
         (out / _UNCHANGED_FILE).write_text(message + "\n")
-        summary = out / "summary.md"
-        if summary.is_file() and summary.read_text().strip():
-            message += ". The agent's summary is posted on the Ticket."
         raise RuntimeError(message)
     bot = f"{args.app_slug}[bot]"
     email = f"{gh.bot_user_id(args.app_slug)}+{bot}@users.noreply.github.com"
@@ -508,7 +551,7 @@ def publish(args, gh: Optional[GitHub] = None) -> int:
     if ctx["pr"]:
         print(f"Pushed a rework round to {ctx['branch']}; review runs on the push")
         return 0
-    summary = (out / "summary.md").read_text() if (out / "summary.md").is_file() else ""
+    summary = _summary_text(out)
     body = write_comment(out, "pr-body.md", pr_body(ctx, summary))
     url = gh.create_draft_pr(ctx["repo"], BASE_BRANCH, ctx["branch"], ctx["title"], body)
     gh.comment(ctx["repo"], ctx["issue"], write_comment(
@@ -523,8 +566,7 @@ def _failure_comment(out: Path, run_url: str) -> str:
     unchanged = out / _UNCHANGED_FILE
     if unchanged.is_file():
         body += f"\n{unchanged.read_text().strip()}\n"
-        summary_path = out / "summary.md"
-        summary = summary_path.read_text().strip() if summary_path.is_file() else ""
+        summary = _summary_text(out)
         if summary:
             body += f"\nThe agent's summary:\n\n{summary}\n"
     return body

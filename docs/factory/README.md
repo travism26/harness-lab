@@ -27,17 +27,19 @@ fails with a message naming what is missing. It never goes green without doing a
    `in-progress` and comments with a link to the run. Claude Code builds the change in a fresh
    checkout under `work/`. The factory's own scripts stay in the checkout at the workspace root,
    which is a second copy of the repository, and publish commits only `work/`. Before the agent
-   starts, the Ticket is copied to `work/.factory/ticket.md` (gitignored; a rework round also
-   copies the review to `work/.factory/review.md`) and the prompt names those paths. An absolute
-   path under `run-out/` points at the factory's own checkout, and an agent that follows it edits
-   that checkout, which publish never commits. For a Project Ticket the prompt names
+   starts, the Ticket is copied to `work/.factory/ticket.md` (a rework round also copies the
+   review to `work/.factory/review.md`) and the prompt names those paths. `/.factory/` is in the
+   root `.gitignore`, and the factory writes the same line into the work checkout's
+   `.git/info/exclude`, so a branch cut before the gitignore line still does not commit the copy.
+   An absolute path under `run-out/` points at the factory's own checkout, and an agent that follows
+   it edits that checkout, which publish never commits. For a Project Ticket the prompt names
    `projects/<name>/` and tells it to run `projects/<name>/check` until it passes, and to read that
    Project's glossary and decision records. For factory-root work the prompt tells the agent to run
    `uv run pytest tests/factory` until it passes, and to limit edits to the factory package, its
    tests, the factory doc, the lab glossary, the glossary map, the lab decision records and the root
-   gitignore. It does not name a
-   Project folder or a `projects/<name>/check`, and the run is not a bootstrap, so the factory does
-   not run a new-project check. A Project with a `go.mod` already on the branch gets Go first, at
+   gitignore. It does not name a Project folder or a `projects/<name>/check`, and the run is not a
+   bootstrap, so the factory does not run a new-project check. A Project with a `go.mod` already on
+   the branch gets Go first, at
    the version its `go.mod` names (Rework does the same). Rework of a factory-root Ticket uses the
    same prompt.
    The factory then commits it to `factory/issue-<N>`, pushes, and opens a **draft** PR

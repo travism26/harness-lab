@@ -552,8 +552,9 @@ def test_an_unchanged_work_tree_posts_the_agent_summary(tmp_path, capsys):
     assert ignored.returncode == 0
     gh = FakeGitHub(issue=_issue(labels=("in-progress",)))
     args = _args(tmp_path, out=str(out), work=str(work))
-    with pytest.raises(RuntimeError, match="nothing to publish"):
+    with pytest.raises(RuntimeError, match="nothing to publish") as raised:
         ticket.publish(args, gh)
+    assert (out / "unchanged.md").read_text().strip() == str(raised.value)
     assert gh.posted == []
     assert "changes outside" not in (out / "unchanged.md").read_text()
     code = ticket.main(["publish", "--out", str(out), "--work", str(work),
@@ -569,7 +570,7 @@ def test_an_unchanged_work_tree_posts_the_agent_summary(tmp_path, capsys):
     assert "I edited the other checkout." in body
     assert "The agent's summary:" in body
     assert "nothing to publish" in body
-    assert "posted on the Ticket" not in body
+    assert "posted on the Ticket" in body
     assert "https://run" in body
     log = subprocess.run(["git", "log", "--oneline"], cwd=work, capture_output=True, text=True, check=True)
     assert "factory:" not in log.stdout
@@ -630,6 +631,42 @@ def test_publish_commits_when_the_work_tree_changed(tmp_path, monkeypatch, capsy
     assert any("commit" in c for c in calls)
     assert not (out / "unchanged.md").exists()
     assert "https://github.com/travism26/harness-lab/pull/9" in capsys.readouterr().out
+
+
+def test_build_prompt_does_not_stage_files(tmp_path):
+    out = tmp_path / "out"
+    work = tmp_path / "work"
+    work.mkdir()
+    out.mkdir()
+    (out / "ticket.md").write_text("# t\n")
+    (out / "review.md").write_text("fix\n")
+    (out / "context.json").write_text(json.dumps({"project": "harness"}))
+    prompt = ticket.build_prompt(out, ".factory/ticket.md", ".factory/review.md")
+    assert "`.factory/ticket.md`" in prompt and "`.factory/review.md`" in prompt
+    assert list(work.iterdir()) == []
+
+
+def test_a_branch_without_the_gitignore_line_does_not_commit_the_staged_ticket(tmp_path):
+    work = tmp_path / "work"
+    out = tmp_path / "out"
+    _commit(work, {"README.md": "work\n"})
+    _publish_out(out, "I edited gateway.go.\n")
+    ticket.stage_ticket(out, work)
+    ticket._exclude_staged(work)
+    ignored = subprocess.run(["git", "check-ignore", "-v", ".factory/ticket.md"], cwd=work,
+                             capture_output=True, text=True)
+    assert ignored.returncode == 0
+    assert "info/exclude" in ignored.stdout
+    exclude = (work / ".git" / "info" / "exclude").read_text().splitlines()
+    assert exclude.count("/.factory/") == 1
+    gh = FakeGitHub(issue=_issue(labels=("in-progress",)))
+    with pytest.raises(RuntimeError, match="nothing to publish") as raised:
+        ticket.publish(_args(tmp_path, out=str(out), work=str(work)), gh)
+    assert (out / "unchanged.md").read_text().strip() == str(raised.value)
+    log = subprocess.run(["git", "log", "--oneline"], cwd=work, capture_output=True, text=True, check=True)
+    assert "factory:" not in log.stdout
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=work, capture_output=True, text=True, check=True)
+    assert status.stdout.strip() == ""
 
 
 def test_porcelain_path_takes_the_destination_of_a_rename():
