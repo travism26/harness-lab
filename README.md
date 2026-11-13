@@ -7,7 +7,7 @@ The twist is that the lab mostly runs itself. AI agents find ideas, plan them an
 ## What we're experimenting with
 
 - **A software factory on GitHub Actions.** A labelled GitHub issue (a Ticket) becomes a **draft PR** built by Claude Code. An independent read-only agent reviews it for Spec and Standards. Up to two automatic rework rounds follow, and a human merges. See [the factory](docs/factory/README.md).
-- **Agents that find and plan their own work.** Two scheduled Grok bots, configured outside this repo, feed the factory:
+- **Agents that find and plan their own work.** Two scheduled Grok bots feed the factory. Their setup prompts are in [docs/factory/grok-bots.md](docs/factory/grok-bots.md):
   - a **Scout** that reads what practitioners are shipping in AI engineering and files concrete `Goal:` issues;
   - a **Builder** that grills each Goal with [Matt Pocock's skills](https://github.com/mattpocock/skills) (`grill-with-docs`, `to-spec`, `to-tickets`), answers its own questions from the repo's docs, and publishes a spec and tickets.
 
