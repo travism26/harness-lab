@@ -85,6 +85,10 @@ def test_tracer_pass_line(bench_case, tmp_path):
     assert row["schema"] == 1 and row["login"] == "anthropic-api"
     assert row["cost_note"] == "client-estimate" and row["check"] == "pass"
     assert row["review"] == "PASS" and row["build_cost_usd"] == 0.5 and row["turns"] == 3
+    assert row["model"] == "sonnet" and row["setup_id"] == "s1" and row["repeat"] == 1
+    assert row["budget"] == 2 and row["issue"] == 7 and row["duration_ms"] == 5
+    assert row["start_commit"] == bench_case["start_commit"] and row["head_sha"]
+    assert row["input_tokens"] == 1 and row["output_tokens"] == 2
     lines = (tmp_path / "out" / "ledger.jsonl").read_text().splitlines()
     assert len(lines) == 1 and json.loads(lines[0]) == row
     assert not (tmp_path / "out" / "ledger.lock").exists()
@@ -117,8 +121,8 @@ def test_tracer_tampered_check_not_executed(bench_case, tmp_path):
 def test_tracer_crash_skips_review(bench_case, tmp_path):
     calls = []
     row = run(bench_case, tmp_path, standin(tmp_path, "raise SystemExit(3)\n"), calls=calls)
-    assert row["outcome"] == "fail" and row["review"] is None and calls == []
-    assert row["build_cost_usd"] == 2.0
+    assert row["outcome"] == "fail" and row["check"] == "skipped" and row["review"] is None
+    assert calls == [] and row["build_cost_usd"] == 2.0
 
 
 def test_tracer_unparseable_review_is_error_and_not_retried(bench_case, tmp_path):
@@ -170,28 +174,38 @@ def test_tracer_ledger_refuses_second_run(bench_case, tmp_path):
 def test_tracer_cli_exit_codes(bench_case, tmp_path):
     case = tmp_path / "case.json"
     case.write_text(json.dumps(bench_case))
-    answer = tmp_path / "answer.txt"
-    answer.write_text(BLOCK_ANSWER)
+    out = tmp_path / "o"
     argv = ["--case", str(case), "--setup-id", "s", "--harness-command",
-            standin(tmp_path, NOOP), "--review-answer", str(answer), "--out", str(tmp_path / "o"),
+            standin(tmp_path, NOOP), "--out", str(out),
             "--monthly-cap-usd", "3", "--build-cap-usd", "2", "--review-cap-usd", "1"]
-    assert bench.main(argv) == 0  # a failed case still exits 0
-    assert json.loads((tmp_path / "o" / "ledger.jsonl").read_text())["outcome"] == "fail"
+
+    def review(prompt, **_kw):
+        return claude.Result(True, BLOCK_ANSWER, "success", 0.0)
+
+    assert bench.main(argv) == 2  # no injected agent, and no recorded answer to replay
+    assert not (out / "ledger.jsonl").exists()
+    assert bench.main(argv, run_agent=review) == 0  # a failed case still exits 0
+    assert json.loads((out / "ledger.jsonl").read_text())["outcome"] == "fail"
     argv[argv.index("3")] = "3.5"
     # 0.5 spent of 3.5 leaves 3.0: still enough; then 1.0 spent leaves 2.5: refused
-    assert bench.main(argv) == 0
-    assert bench.main(argv) == 1
-    assert len((tmp_path / "o" / "ledger.jsonl").read_text().splitlines()) == 2
+    assert bench.main(argv, run_agent=review) == 0
+    assert bench.main(argv, run_agent=review) == 1
+    assert len((out / "ledger.jsonl").read_text().splitlines()) == 2
 
 
 def test_tracer_dead_lock_holder_releases_reservation(bench_case, tmp_path):
+    """The cap equals one reservation and nothing is spent. The run starts only
+    because the dead holder's lock was released; leaving that lock held refuses."""
     out = tmp_path / "out"
     out.mkdir()
     dead = subprocess.Popen([sys.executable, "-c", "pass"])
     dead.wait()
-    (out / "ledger.lock").write_text(json.dumps({"pid": dead.pid, "reservation_usd": 3.0}))
+    (out / "ledger.lock").write_text(json.dumps({"pid": dead.pid}))
     limits = bench.Limits(monthly_cap_usd=3.0)
-    assert run(bench_case, tmp_path, standin(tmp_path, GOOD), limits=limits)["outcome"] == "pass"
+    row = run(bench_case, tmp_path, standin(tmp_path, GOOD), limits=limits)
+    assert row["outcome"] == "pass"
+    assert not (out / "ledger.lock").exists()
+    assert len((out / "ledger.jsonl").read_text().splitlines()) == 1
 
 
 def test_tracer_live_lock_holder_refuses(bench_case, tmp_path):
@@ -206,14 +220,6 @@ def test_tracer_secrets_scrubbed(bench_case, tmp_path):
     script = "print(os.environ.get('BENCH_MODEL'))\nprint('leak', 'hunter2hunter2')\n" + GOOD
     run(bench_case, tmp_path, standin(tmp_path, script), env={"GH_TOKEN": "hunter2hunter2"})
     assert "hunter2hunter2" not in next((tmp_path / "out" / "runs").rglob("standin.log")).read_text()
-
-
-def test_tracer_lock_records_open_reservation(tmp_path):
-    from datetime import datetime, timezone
-    limits = bench.Limits(monthly_cap_usd=10.0)
-    lock = bench.acquire(tmp_path, limits, datetime.now(timezone.utc))
-    assert json.loads(lock.read_text())["reservation_usd"] == limits.reservation_usd
-    lock.unlink()
 
 
 def test_tracer_reported_zero_duration_is_kept(bench_case, tmp_path):

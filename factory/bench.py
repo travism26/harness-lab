@@ -1,8 +1,8 @@
 """The Bench's tracer: one Bench run scores one Bench case and stops at the ledger
-(GLOSSARY.md, docs/adr/0009).
+(GLOSSARY.md, docs/adr/0009-bench-spends-on-a-metered-api-key.md).
 
   uv run python -m factory.bench --case CASE.json --setup-id ID \\
-      --harness-command "CMD" --review-answer ANSWER.txt
+      --harness-command "CMD"
 
 CASE.json names the Bench case: {"repo": PATH, "start_commit": SHA, "ticket": PATH,
 "check_command": CMD, "check_files": {PATH: BLOB_SHA}, "issue": N, "project": NAME|null}.
@@ -10,9 +10,20 @@ CASE.json names the Bench case: {"repo": PATH, "start_commit": SHA, "ticket": PA
 The run clones the start commit into a fresh directory outside the source
 checkout, removes the remote, runs the harness command (the stand-in) there,
 scores the check, runs Review through factory.review_pr.parse_findings with an
-injected agent, and appends one JSON line to <out>/ledger.jsonl. No model call,
-no GitHub call. It exits 0 when the line is written, even for a failed case, and
-non-zero when the ledger refuses to start the run.
+injected agent, and appends one JSON line to <out>/ledger.jsonl. No model call
+and no GitHub call. The command does not replay a recorded Review answer: the
+caller injects the agent, and without one it exits 2.
+
+This ticket is one Bench run, so the line records model sonnet and repeat 1.
+The Setup id and the harness command are the arguments. The month is UTC, read
+from the line's ts. A crashed stand-in records the case as fail and check as
+skipped, and does not call Review.
+
+The lock file is the open reservation: one run at a time, holding only the
+holder's pid. A live holder blocks the next start. A holder whose process is
+gone is released, and that reservation is not kept. The dollar check runs at
+each start against the lines already written. The command exits 0 when the line
+is written, even for a failed case, and non-zero when the ledger refuses.
 """
 
 import argparse
@@ -35,10 +46,8 @@ SCHEMA = 1
 LOGIN = "anthropic-api"
 COST_NOTE = "client-estimate"
 PASS = "PASS"
-# Never in the stand-in's environment (docs/adr/0009).
+# Never in the stand-in's environment (docs/adr/0009-bench-spends-on-a-metered-api-key.md).
 _DROPPED = claude._DROPPED + ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY")
-STANDIN_TIMEOUT_S = 1800
-CHECK_TIMEOUT_S = 600
 
 
 class LedgerRefused(RuntimeError):
@@ -88,16 +97,19 @@ def _alive(pid: int) -> bool:
 
 
 def acquire(out: Path, limits: Limits, now: datetime) -> Path:
-    """Take the one lock, then check the remaining dollars against the reservation
-    for this run. The lock file records the open reservation while the run is
-    live; a holder that is gone drops it with the lock. The check is at each start, so a run that spends the cap is
-    reported and the next start is refused. A lock whose process is gone is
-    released. Raises LedgerRefused."""
+    """Take the one-run lock, then refuse when this month's remainder is below
+    the reservation.
+
+    The lock is the open reservation and records the holder's pid. A live holder
+    blocks the next start. A holder whose process is gone is released, so the
+    reservation is not kept. The dollar check runs at each start against lines
+    already written, so a run that spends the cap still writes its line and the
+    next start is refused. Raises LedgerRefused.
+    """
     lock = out / "ledger.lock"
     for _ in range(2):
         tmp = out / f"ledger.lock.{os.getpid()}"
-        tmp.write_text(json.dumps({"pid": os.getpid(),
-                                   "reservation_usd": limits.reservation_usd}))
+        tmp.write_text(json.dumps({"pid": os.getpid()}))
         try:
             os.link(tmp, lock)  # atomic: the lock never exists empty
         except FileExistsError:
@@ -176,8 +188,8 @@ def score_check(clone: Path, case: dict, env: dict) -> str:
             return "tampered"
     try:
         p = subprocess.run(shlex.split(case["check_command"]), cwd=clone, env=env,
-                           capture_output=True, text=True, timeout=CHECK_TIMEOUT_S)
-    except (OSError, subprocess.TimeoutExpired):
+                           capture_output=True, text=True)
+    except OSError:
         return "fail"
     return "pass" if p.returncode == 0 else "fail"
 
@@ -212,15 +224,14 @@ def review_case(case: dict, clone: Path, run_dir: Path, start: str, setup: dict,
 
 def run_standin(setup: dict, clone: Path, env: dict, run_dir: Path,
                 result_path: Path) -> Tuple[bool, dict]:
-    """(crashed, what the stand-in reported). A crash is a non-zero exit, a
-    timeout, or a result that is missing or not ok."""
+    """(crashed, what the stand-in reported). A crash is a non-zero exit, or a
+    result that is missing or not ok."""
     try:
         with (run_dir / "standin.log").open("w") as log:
             proc = subprocess.run(shlex.split(setup["harness_command"]), cwd=clone, env=env,
-                                  stdout=log, stderr=subprocess.STDOUT,
-                                  timeout=STANDIN_TIMEOUT_S)
+                                  stdout=log, stderr=subprocess.STDOUT)
         crashed = proc.returncode != 0
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError:
         crashed = True
     reported = read_standin_result(result_path)
     return crashed or not reported or reported.get("ok") is not True, reported or {}
@@ -283,30 +294,23 @@ def bench_run(case: dict, setup: dict, out: Path, limits: Limits, run_agent: Cal
         lock.unlink(missing_ok=True)
 
 
-def canned_agent(answer: Path) -> Callable:
-    """The command line's Review agent: replays a recorded answer, calls no model."""
-    def run_agent(prompt, **_):
-        return claude.Result(True, answer.read_text(), "success", 0.0)
-    return run_agent
-
-
 def main(argv: Optional[List[str]] = None, run_agent: Optional[Callable] = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--case", required=True, help="the Bench case's JSON file")
     p.add_argument("--setup-id", required=True)
     p.add_argument("--harness-command", required=True)
-    p.add_argument("--review-answer", help="a recorded Review answer to replay")
     p.add_argument("--out", default="bench-runs")
     p.add_argument("--monthly-cap-usd", type=float, default=Limits.monthly_cap_usd)
     p.add_argument("--build-cap-usd", type=float, default=Limits.build_cap_usd)
     p.add_argument("--review-cap-usd", type=float, default=Limits.review_cap_usd)
     args = p.parse_args(argv)
     if run_agent is None:
-        if not args.review_answer:
-            print("bench: no Review agent; pass --review-answer", file=sys.stderr)
-            return 2
-        run_agent = canned_agent(Path(args.review_answer))
+        print("bench: Review's agent is injected by the caller; "
+              "this command does not call a model", file=sys.stderr)
+        return 2
     case = json.loads(Path(args.case).read_text())
+    # One Bench run records model sonnet and repeat 1. The Setup id and the
+    # harness command are the arguments above.
     setup = {"setup_id": args.setup_id, "harness_command": args.harness_command,
              "model": "sonnet", "review_model": "sonnet", "repeat": 1}
     limits = Limits(args.monthly_cap_usd, args.build_cap_usd, args.review_cap_usd)
