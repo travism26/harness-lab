@@ -267,9 +267,9 @@ def fake_cases(bench_case, tmp_path):
     return d
 
 
-def replay_argv(tmp_path, cases, command, *extra):
-    return ["--replay", "--cases-dir", str(cases), "--harness-command", command,
-            "--out", str(tmp_path / "o"), *extra]
+def replay_main(tmp_path, cases, command, *extra, **kw):
+    return bench.main(["--replay", "--out", str(tmp_path / "o"), *extra],
+                      cases_dir=cases, harness_command=command, **kw)
 
 
 def test_replay_committed_cases_match_the_record():
@@ -288,9 +288,20 @@ def test_replay_committed_cases_match_the_record():
         assert Path(case["repo"]) == SOURCE
 
 
+def test_replay_frozen_check_blob_is_the_start_commits_file():
+    for name in ("ticket-8", "ticket-9"):
+        case = bench.load_case(dict(bench.committed_cases())[name], SOURCE)
+        got = subprocess.run(["git", "-C", str(SOURCE), "rev-parse",
+                              f"{case['start_commit']}:projects/harness/check"],
+                             capture_output=True, text=True)
+        if got.returncode:
+            pytest.skip("the start commit is not in this checkout")
+        assert got.stdout.strip() == case["check_files"]["projects/harness/check"]
+
+
 def test_replay_three_repeats_six_lines_and_report(bench_case, tmp_path, capsys):
     cases = fake_cases(bench_case, tmp_path)
-    code = bench.main(replay_argv(tmp_path, cases, standin(tmp_path, GOOD)),
+    code = replay_main(tmp_path, cases, standin(tmp_path, GOOD),
                       run_agent=agent(PASS_ANSWER), step_env=KEY_ENV,
                       version_fn=lambda: "2.1.319")
     assert code == 0
@@ -328,7 +339,7 @@ def test_replay_report_unstable_and_cost_statistics():
 def test_replay_missing_key_refuses_before_clone(bench_case, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(bench, "scratch_clone", lambda *a: pytest.fail("cloned"))
     cases = fake_cases(bench_case, tmp_path)
-    code = bench.main(replay_argv(tmp_path, cases, "true"), step_env={"PATH": "/usr/bin"},
+    code = replay_main(tmp_path, cases, "true", step_env={"PATH": "/usr/bin"},
                       version_fn=lambda: "2.1.319")
     assert code != 0 and "ANTHROPIC_API_KEY" in capsys.readouterr().err
     assert not (tmp_path / "o").exists()
@@ -339,7 +350,7 @@ def test_replay_wrong_version_refuses_with_install_line(bench_case, tmp_path, mo
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("ran a command"))
     cases = fake_cases(bench_case, tmp_path)
     for found in ("2.1.320", None):
-        code = bench.main(replay_argv(tmp_path, cases, "true"), step_env=KEY_ENV,
+        code = replay_main(tmp_path, cases, "true", step_env=KEY_ENV,
                           version_fn=lambda: found)
         err = capsys.readouterr().err
         assert code != 0 and "npm install -g @anthropic-ai/claude-code@2.1.319" in err
@@ -369,7 +380,7 @@ def test_replay_cap_of_five_reservations_writes_five_lines(bench_case, tmp_path,
     cases = fake_cases(bench_case, tmp_path)
     spend = standin(tmp_path, "pathlib.Path('done.txt').write_text('x')\n"
                     + WRITE_RESULT % "2.0")
-    code = bench.main(replay_argv(tmp_path, cases, spend, "--monthly-cap-usd", "15"),
+    code = replay_main(tmp_path, cases, spend, "--monthly-cap-usd", "15",
                       run_agent=lambda prompt, **_: claude.Result(True, PASS_ANSWER, "success", 1.0),
                       step_env=KEY_ENV, version_fn=lambda: "2.1.319")
     assert code != 0
@@ -385,7 +396,7 @@ def test_replay_gives_the_harness_only_the_bench_key(bench_case, tmp_path):
               "{k: os.environ.get(k) for k in ('ANTHROPIC_API_KEY','GH_TOKEN')}))\n") + GOOD
     cases = fake_cases(bench_case, tmp_path)
     env = dict(KEY_ENV, GH_TOKEN="ghtoken-value")
-    bench.main(replay_argv(tmp_path, cases, standin(tmp_path, script)),
+    replay_main(tmp_path, cases, standin(tmp_path, script),
                run_agent=agent(PASS_ANSWER), step_env=env, version_fn=lambda: "2.1.319")
     assert json.loads(seen.read_text()) == {"ANTHROPIC_API_KEY": "sk-test-key-value",
                                             "GH_TOKEN": None}

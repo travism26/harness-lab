@@ -475,7 +475,8 @@ def recorded_review(text: str) -> Callable:
 
 
 def main_replay(args, run_agent: Optional[Callable], step_env: Mapping[str, str],
-                version_fn: Callable[[], Optional[str]]) -> int:
+                version_fn: Callable[[], Optional[str]], cases_dir: Path = CASES_DIR,
+                harness_command: Optional[str] = None) -> int:
     """Replay the committed cases three times each and print the report. A live
     invocation refuses before any clone when the key or the version is wrong."""
     source_root = Path(__file__).resolve().parent.parent
@@ -485,9 +486,8 @@ def main_replay(args, run_agent: Optional[Callable], step_env: Mapping[str, str]
         print(f"bench: refused: {e}", file=sys.stderr)
         return 2
     setup = baseline_setup(source_root)
-    if args.harness_command:
-        setup["harness_command"] = args.harness_command
-    cases_dir = Path(args.cases_dir) if args.cases_dir else CASES_DIR
+    if harness_command:  # injected by tests; not a command-line option
+        setup["harness_command"] = harness_command
     cases = [(name, load_case(path, source_root)) for name, path in committed_cases(cases_dir)]
     limits = Limits(args.monthly_cap_usd, args.build_cap_usd, args.review_cap_usd)
     results, refusal = replay(cases, setup, Path(args.out), limits,
@@ -502,12 +502,14 @@ def main_replay(args, run_agent: Optional[Callable], step_env: Mapping[str, str]
 
 def main(argv: Optional[List[str]] = None, run_agent: Optional[Callable] = None,
          step_env: Optional[Mapping[str, str]] = None,
-         version_fn: Callable[[], Optional[str]] = installed_version) -> int:
+         version_fn: Callable[[], Optional[str]] = installed_version,
+         cases_dir: Path = CASES_DIR, harness_command: Optional[str] = None) -> int:
+    """`cases_dir` and `harness_command` are for tests to inject; --replay has no
+    option for either."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--replay", action="store_true",
                    help="replay the committed Bench cases three times each and print the report")
     p.add_argument("--baseline-standin", action="store_true", help=argparse.SUPPRESS)
-    p.add_argument("--cases-dir", help="replay: a directory of case files instead of the committed ones")
     p.add_argument("--case", help="the Bench case's JSON file")
     p.add_argument("--setup-id")
     p.add_argument("--harness-command")
@@ -522,7 +524,7 @@ def main(argv: Optional[List[str]] = None, run_agent: Optional[Callable] = None,
     if args.baseline_standin:
         return baseline_standin(step_env)
     if args.replay:
-        return main_replay(args, run_agent, step_env, version_fn)
+        return main_replay(args, run_agent, step_env, version_fn, cases_dir, harness_command)
     if not (args.case and args.setup_id and args.harness_command):
         p.error("--case, --setup-id and --harness-command are required without --replay")
     if run_agent is None:
