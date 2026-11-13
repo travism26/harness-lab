@@ -2,9 +2,13 @@ import json
 
 import pytest
 
+from factory.github import GitHubError
 from factory import review_pr
 from factory.claude import Result
-from factory.review_pr import Findings, Finding, Moves, label_moves, linked_ticket, parse_findings
+from factory.review_pr import (
+    Findings, Finding, Moves, charge_won, gate_line, label_moves, linked_ticket, parse_findings,
+    parse_gate, review_gate,
+)
 
 
 @pytest.mark.parametrize("labels,blocker,expected", [
@@ -56,18 +60,48 @@ def test_parse_findings_rejects_bad_answers(text):
 
 
 class FakeGitHub:
-    def __init__(self, pr, issue=None):
+    def __init__(self, pr, issue=None, comments=(), ci=None, plant=None):
         self._pr, self._issue = pr, issue
+        self.ci = ci
+        self.plant = plant
         self.comments, self.added, self.removed = [], [], []
+        self.updated = ""
+        self._reads = 0
+        self._thread, self._next = [], 1
+        for body in comments:
+            self._thread.append({"id": self._next, "body": body})
+            self._next += 1
 
     def pr(self, repo, number):
         return self._pr
 
     def issue(self, repo, number):
-        return self._issue
+        return self._issue or {"labels": []}
+
+    def pr_comments(self, repo, number):
+        self._reads += 1
+        thread = list(self._thread)
+        if self.plant and self._reads > 1:
+            return [{"id": 0, "body": self.plant}] + thread
+        return thread
+
+    def ci_conclusion(self, repo, sha):
+        return self.ci
 
     def comment(self, repo, number, path):
-        self.comments.append(path.read_text())
+        body = path.read_text()
+        self.comments.append(body)
+        comment_id = self._next
+        self._thread.append({"id": comment_id, "body": body})
+        self._next += 1
+        return comment_id
+
+    def update_comment(self, repo, comment_id, path):
+        body = path.read_text()
+        self.updated = body
+        for item in self._thread:
+            if item["id"] == comment_id:
+                item["body"] = body
 
     def add_labels(self, repo, number, labels):
         self.added += list(labels)
@@ -141,3 +175,107 @@ def test_apply_on_a_moved_head_changes_no_labels(tmp_path):
     gh = FakeGitHub(_pr(head="new"))
     review_pr.apply(_args(tmp_path), gh)
     assert gh.added == [] and gh.removed == [] and "moved on" in gh.comments[0]
+
+
+def test_gate_line_round_trips():
+    line = gate_line("ba2ea98635fd261912159e8bc8f4f54f1f5411d0", True, "ci", ci_run=99,
+                     nonce="abc", add=("rework", "rework:1"))
+    mark = parse_gate(line)
+    assert mark.charged and mark.source == "ci" and mark.ci_run == 99
+    assert mark.nonce == "abc" and mark.add == ("rework", "rework:1")
+
+
+def test_review_joins_a_head_ci_already_charged():
+    sha = "ba2ea98635fd261912159e8bc8f4f54f1f5411d0"
+    comment = {"id": 1, "body": gate_line(sha, True, "ci", ci_run=5, nonce="aa",
+                                          add=("rework", "rework:1"))}
+    moves = review_gate(["rework", "rework:1"], [comment], sha, True, "failure")
+    assert moves == Moves("same-round")
+
+
+def test_spec_pass_leaves_a_ci_failure_to_the_gate():
+    moves = review_gate(["rework", "rework:1"], [], "ba2ea98635fd", False, "failure")
+    assert moves == Moves("ci-blocked")
+
+
+def test_charge_won_is_the_earliest_nonce():
+    sha = "ba2ea98635fd"
+    earlier = {"id": 1, "body": gate_line(sha, True, "review", nonce="aa", add=("rework", "rework:1"))}
+    later = {"id": 2, "body": gate_line(sha, True, "ci", ci_run=3, nonce="bb",
+                                       add=("rework", "rework:1"))}
+    assert charge_won([earlier, later], sha, "aa")
+    assert not charge_won([earlier, later], sha, "bb")
+    assert charge_won([], sha, "aa")
+
+
+def test_ci_conclusion_writes_empty_on_malformed_json(tmp_path):
+    class BadJson:
+        def ci_conclusion(self, repo, sha):
+            raise json.JSONDecodeError("Expecting value", "x", 0)
+
+    args = _args(tmp_path, sha="abc123def456")
+    assert review_pr.ci_conclusion(args, BadJson()) == 0
+    assert (tmp_path / "ci-conclusion.txt").read_text() == ""
+
+    class BadValue:
+        def ci_conclusion(self, repo, sha):
+            raise ValueError("not a conclusion")
+
+    assert review_pr.ci_conclusion(args, BadValue()) == 0
+    assert (tmp_path / "ci-conclusion.txt").read_text() == ""
+
+
+def test_ci_conclusion_records_the_run_and_survives_a_failed_lookup(tmp_path):
+    gh = FakeGitHub(_pr(), ci="success")
+    args = _args(tmp_path, sha="abc123")
+    assert review_pr.ci_conclusion(args, gh) == 0
+    assert (tmp_path / "ci-conclusion.txt").read_text().strip() == "success"
+
+    class Boom:
+        def ci_conclusion(self, repo, sha):
+            raise GitHubError("no actions permission")
+
+    assert review_pr.ci_conclusion(args, Boom()) == 0
+    assert (tmp_path / "ci-conclusion.txt").read_text() == ""
+
+
+def test_apply_reads_the_recorded_ci_conclusion(tmp_path):
+    sha = "abc123"
+    (tmp_path / "context.json").write_text(json.dumps(
+        {"repo": "o/r", "pr": 3, "base_sha": "b", "head_sha": sha, "code_dir": "pr", "ticket": 7}))
+    from dataclasses import asdict
+    (tmp_path / "findings.json").write_text(json.dumps(asdict(Findings("ok", "ok", [], []))))
+    (tmp_path / "ci-conclusion.txt").write_text("failure\n")
+    gh = FakeGitHub(_pr(labels=("rework", "rework:1"), head=sha), ci="success")
+    review_pr.apply(_args(tmp_path, head_sha=sha), gh)
+    assert gh.removed == [] and gh.added == []
+    assert "CI failed" in gh.comments[0]
+
+
+def test_a_lost_charge_is_rewritten_and_moves_no_labels(tmp_path):
+    _write_review(tmp_path)
+    plant = gate_line("abc123", True, "ci", ci_run=9, nonce="aa", add=("rework", "rework:1"))
+    gh = FakeGitHub(_pr(labels=()), plant=plant)
+    review_pr.apply(_args(tmp_path), gh)
+    assert gh.added == [] and gh.removed == []
+    assert "charged=0" in gh.updated and "already in a rework round" in gh.updated
+    assert "Sent to rework:" not in gh.updated
+
+
+def test_apply_does_not_list_workflow_runs_or_clear_in_progress(tmp_path):
+    sha = "abc123"
+    (tmp_path / "context.json").write_text(json.dumps(
+        {"repo": "o/r", "pr": 3, "base_sha": "b", "head_sha": sha, "code_dir": "pr", "ticket": 7}))
+    from dataclasses import asdict
+    (tmp_path / "findings.json").write_text(json.dumps(asdict(Findings("ok", "ok", [], []))))
+    (tmp_path / "ci-conclusion.txt").write_text("success\n")
+
+    class NoActions(FakeGitHub):
+        def ci_conclusion(self, repo, sha):
+            raise AssertionError("apply must not call the Actions API")
+
+    gh = NoActions(_pr(labels=(), head=sha, body="Closes #7"),
+                   issue={"labels": [{"name": "in-progress"}]})
+    review_pr.apply(_args(tmp_path, head_sha=sha), gh)
+    assert "in-progress" not in gh.removed
+    assert not any("factory:settled" in comment for comment in gh.comments)

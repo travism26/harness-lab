@@ -1,0 +1,93 @@
+# When CI or Review finishes on a factory draft, enter the existing rework path
+# or clear `in-progress` (docs/factory/README.md). workflow_run, so this file and
+# factory/ come from the default branch. The job does not run for a fork, a
+# push to main, or any branch that is not factory/issue-<N>.
+#
+# .github/workflows/ci.yml stays free of secrets. This workflow may hold the
+# App key, and it only proceeds for a pull request whose head repository is
+# this one. It runs no agent, so it does not require the Claude Code login.
+# The `rework` label is added with the App token: a label added with
+# GITHUB_TOKEN would not start Rework.
+
+name: CI gate
+
+on:
+  workflow_run:
+    # Review as well as CI: a green CI run that finishes before Review posts
+    # PASS would otherwise never clear in-progress. A Review completion only
+    # settles; it does not start a rework round.
+    workflows: ["CI", "Review"]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  # One gate decision at a time per branch. A re-run of the same CI completion
+  # waits, then the decision treats it as a duplicate. Forks are a different
+  # group and the job below does not run for them.
+  group: >-
+    ci-gate-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # Same repository only, factory draft branches, and a real pass or fail.
+    # Cancelled and timed-out runs are not a rework signal. The Python step
+    # repeats these checks and also requires the factory App's pull request.
+    if: >-
+      (github.event.workflow_run.event == 'pull_request'
+        || github.event.workflow_run.event == 'pull_request_target')
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && startsWith(github.event.workflow_run.head_branch, 'factory/issue-')
+      && (github.event.workflow_run.conclusion == 'failure'
+          || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # job logs, and the daily cap
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Check out the factory (default branch)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Read the failed jobs (no App token)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          EVENT_NAME: ${{ github.event.workflow_run.event }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: >-
+          uv run --no-dev python -m factory.ci_gate collect
+          --repo "$REPO" --run-id "$RUN_ID" --run-url "$RUN_URL"
+          --conclusion "$CONCLUSION" --workflow "$WORKFLOW" --event "$EVENT_NAME"
+          --head-branch "$HEAD_BRANCH" --head-sha "$HEAD_SHA"
+          --head-repo "$HEAD_REPO" --out run-out
+
+      - name: Preflight (configuration, daily cap, App token)
+        id: preflight
+        uses: ./.github/actions/factory-preflight
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_KEY }}
+          require-login: false
+          daily-run-cap: ${{ vars.FACTORY_DAILY_RUN_CAP || '20' }}
+
+      - name: Post the finding and move the labels
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
+        run: >-
+          uv run --no-dev python -m factory.ci_gate apply
+          --out run-out --app-slug "$APP_SLUG"

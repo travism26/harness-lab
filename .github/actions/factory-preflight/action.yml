@@ -1,10 +1,10 @@
 name: Factory preflight
 description: >
   The first steps of every factory workflow. Stops the run, red and with a
-  message naming what is missing, unless the factory is configured for the
-  Claude Code login the switch rule chose; stops it once the workflow has
-  started its daily cap of runs; then mints the factory GitHub App's
-  installation token. See docs/factory/setup.md.
+  message naming what is missing, unless the factory App is configured and,
+  when require-login is true, the Claude Code login the switch rule chose;
+  stops it once the workflow has started its daily cap of runs; then mints
+  the factory GitHub App's installation token. See docs/factory/setup.md.
 
 inputs:
   client-id:
@@ -13,18 +13,27 @@ inputs:
   private-key:
     description: The factory App's private key (repository secret FACTORY_APP_KEY).
     required: true
+  require-login:
+    description: >
+      When false, this workflow runs no agent, so the Claude Code login and
+      its secret are not required. The App and the daily cap still are.
+    required: false
+    default: "true"
   login:
     description: >
       The Claude Code login (repository variable FACTORY_CLAUDE_LOGIN):
       subscription or openrouter. The switch rule in docs/factory/README.md
-      says which.
-    required: true
+      says which. Ignored when require-login is false.
+    required: false
+    default: ""
   subscription-token:
     description: Checked for presence only (repository secret CLAUDE_CODE_OAUTH_TOKEN).
-    required: true
+    required: false
+    default: ""
   openrouter-key:
     description: Checked for presence only (repository secret OPENROUTER_API_KEY).
-    required: true
+    required: false
+    default: ""
   daily-run-cap:
     description: >
       How many runs of the calling workflow may start per UTC day, this one
@@ -53,24 +62,31 @@ runs:
         HAVE_SUBSCRIPTION_TOKEN: ${{ inputs.subscription-token != '' }}
         HAVE_OPENROUTER_KEY: ${{ inputs.openrouter-key != '' }}
         LOGIN: ${{ inputs.login }}
+        REQUIRE_LOGIN: ${{ inputs.require-login }}
       run: |
         missing=()
         [ "$HAVE_CLIENT_ID" = true ] || missing+=("repository variable FACTORY_APP_CLIENT_ID")
         [ "$HAVE_APP_KEY" = true ] || missing+=("repository secret FACTORY_APP_KEY")
-        case "$LOGIN" in
-          subscription) [ "$HAVE_SUBSCRIPTION_TOKEN" = true ] || missing+=("repository secret CLAUDE_CODE_OAUTH_TOKEN (the login is subscription)") ;;
-          openrouter) [ "$HAVE_OPENROUTER_KEY" = true ] || missing+=("repository secret OPENROUTER_API_KEY (the login is openrouter)") ;;
-          *)
-            echo "::error title=Bad Claude Code login::FACTORY_CLAUDE_LOGIN is '$LOGIN'; it must be subscription or openrouter."
-            exit 1
-            ;;
-        esac
+        if [ "$REQUIRE_LOGIN" != "false" ]; then
+          case "$LOGIN" in
+            subscription) [ "$HAVE_SUBSCRIPTION_TOKEN" = true ] || missing+=("repository secret CLAUDE_CODE_OAUTH_TOKEN (the login is subscription)") ;;
+            openrouter) [ "$HAVE_OPENROUTER_KEY" = true ] || missing+=("repository secret OPENROUTER_API_KEY (the login is openrouter)") ;;
+            *)
+              echo "::error title=Bad Claude Code login::FACTORY_CLAUDE_LOGIN is '$LOGIN'; it must be subscription or openrouter."
+              exit 1
+              ;;
+          esac
+        fi
         if [ "${#missing[@]}" -gt 0 ]; then
           joined=$(printf '%s, ' "${missing[@]}")
           echo "::error title=Factory not configured::Missing ${joined%, }. The run stopped before doing any work. Set them up with docs/factory/setup.md."
           exit 1
         fi
-        echo "Factory configuration present. Claude Code login: $LOGIN."
+        if [ "$REQUIRE_LOGIN" = "false" ]; then
+          echo "Factory App configuration present. This workflow runs no agent."
+        else
+          echo "Factory configuration present. Claude Code login: $LOGIN."
+        fi
 
     - name: Enforce the daily run cap
       shell: bash
