@@ -43,3 +43,19 @@ _Avoid_: Smoke test, ping
 **Switch rule**:
 The condition under which the factory's Claude Code moves from the owner's subscription token to an OpenRouter key.
 _Avoid_: Fallback, migration
+
+**Bench**:
+A fixed set of Bench cases used to compare Setups by the factory's own check and Review.
+_Avoid_: Eval, suite, experiment
+
+**Setup**:
+The build model, the review model, the factory build prompt, and the harness command a Bench run uses.
+_Avoid_: Config, profile, agent
+
+**Bench case**:
+One past Ticket recorded as a start commit, the Ticket text from that run, the check command, and the check files whose bytes must still match the start commit.
+_Avoid_: Example, fixture, task, Pin
+
+**Bench run**:
+One execution of one Bench case under one Setup, in a scratch checkout, which opens no pull request.
+_Avoid_: Run, session, job
