@@ -305,17 +305,62 @@ func TestUnreachableUpstream(t *testing.T) {
 	}
 }
 
-func TestEventStreamCopiedToCompletion(t *testing.T) {
+func TestEventStreamFlushesWhileUpstreamSends(t *testing.T) {
+	release := make(chan struct{})
+	first := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":11,\"cache_read_input_tokens\":7,\"server_tool_use\":{\"x\":1}}}}\n\n: ping\n\n"
+	second := "event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":5}}\n\n"
 	r := newRig(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Write([]byte("event: x\ndata: {\"usage\":{\"input_tokens\":9}}\n\n"))
+		w.Write([]byte(first))
+		w.(http.Flusher).Flush()
+		<-release
+		w.Write([]byte(second))
+	})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	resp := post(t, r.gw.URL+"/v1/messages", "{}", nil)
+	defer resp.Body.Close()
+	got := make([]byte, len(first))
+	done := make(chan error, 1)
+	go func() { _, err := io.ReadFull(resp.Body, got); done <- err }()
+	select {
+	case err := <-done:
+		if err != nil || string(got) != first {
+			t.Fatalf("first chunk %q, %v", got, err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first chunk not seen while the Stand-in service is still sending")
+	}
+	if b, _ := os.ReadFile(r.audit); len(b) != 0 {
+		t.Fatal("Call record written before the stream ended")
+	}
+	unblock()
+	rest, _ := io.ReadAll(resp.Body)
+	if string(rest) != second {
+		t.Fatalf("rest %q", rest)
+	}
+	m := r.records(t)[0]
+	if m["response_body"] != first+second {
+		t.Fatalf("response_body %v", m["response_body"])
+	}
+	u := m["usage"].(map[string]any)
+	if u["input_tokens"] != 11.0 || u["cache_read_input_tokens"] != 7.0 || u["output_tokens"] != 5.0 || u["cache_creation_input_tokens"] != 0.0 {
+		t.Fatalf("usage %v", u)
+	}
+}
+
+func TestEventStreamLatestCounterWins(t *testing.T) {
+	r := newRig(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.Write([]byte("data: {\"usage\":{\"input_tokens\":9,\"output_tokens\":1}}\n\ndata: {\"usage\":{\"output_tokens\":4}}\n\ndata: not json\n\n"))
 	})
 	resp := post(t, r.gw.URL+"/v1/messages", "{}", nil)
-	b, _ := io.ReadAll(resp.Body)
+	io.ReadAll(resp.Body)
 	resp.Body.Close()
-	m := r.records(t)[0]
-	if m["response_body"] != string(b) || m["usage"].(map[string]any)["input_tokens"] != 0.0 {
-		t.Fatalf("record %v", m)
+	u := r.records(t)[0]["usage"].(map[string]any)
+	if u["input_tokens"] != 9.0 || u["output_tokens"] != 4.0 {
+		t.Fatalf("usage %v", u)
 	}
 }
 
