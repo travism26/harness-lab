@@ -196,6 +196,34 @@ def _pr(labels=("rework", "rework:1"), branch="factory/issue-4"):
             "labels": [{"name": n} for n in labels]}
 
 
+def test_revise_includes_every_blocker_on_this_head(tmp_path):
+    _root(tmp_path)
+    sha = "ba2ea98635fd261912159e8bc8f4f54f1f5411d0"
+    from factory.review_pr import gate_line
+
+    def comment(source, verdict, head=sha):
+        charged = verdict == "BLOCKED" and source == "ci"
+        return (f"{MARKER}\n{gate_line(head, charged, source)}\n"
+                f"## Factory review: {verdict}\n\n{source} {verdict}\n")
+
+    comments = [
+        {"body": comment("review", "PASS")},
+        {"body": comment("review", "BLOCKED")},
+        {"body": "a human wrote this"},
+        {"body": comment("ci", "BLOCKED")},
+        {"body": comment("review", "BLOCKED", head="0000000000000000000000000000000000000000")},
+    ]
+    pr = _pr()
+    pr["headRefOid"] = sha
+    gh = FakeGitHub(issue=_issue(), pr=pr, comments=comments)
+    assert ticket.revise(_args(tmp_path), gh) == 0
+    text = (tmp_path / "out" / "review.md").read_text()
+    assert "review BLOCKED" in text and "ci BLOCKED" in text
+    assert "review PASS" not in text
+    assert "0000000000000000000000000000000000000000" not in text
+    assert "CI failure" in ticket.build_prompt(tmp_path / "out")
+
+
 def test_revise_takes_the_latest_factory_review(tmp_path):
     _root(tmp_path)
     comments = [{"body": f"{MARKER}\nold"}, {"body": "human chat"}, {"body": f"{MARKER}\nnew"}]

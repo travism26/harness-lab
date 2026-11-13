@@ -4,7 +4,9 @@
 # a branch of this repository, draft or not. It posts its report on the PR. On
 # a Spec blocker it labels the PR `rework` and counts the round with
 # `rework:1`..`rework:2`; the blocker after rework:2 labels it ready-for-human
-# and the factory stops. It never approves and never merges.
+# and the factory stops. A CI failure on the same head shares that counter
+# (.github/workflows/ci-gate.yml): this step does not open a second round for it. It never
+# approves and never merges.
 #
 # PRs from forks are never reviewed here: this workflow holds secrets, and fork
 # PRs never get them (docs/adr/0005). CI still runs their tests without secrets.
@@ -113,6 +115,16 @@ jobs:
         run: >-
           uv run --no-dev python -m factory.review_pr review --out review-out
           --login "$LOGIN" --model "$MODEL" --max-budget-usd "$BUDGET_USD"
+
+      # GITHUB_TOKEN has actions: read. The App token used to post the report does not.
+      - name: Read CI for this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          uv run --no-dev python -m factory.review_pr ci-conclusion
+          --repo "$REPO" --sha "$SHA" --out review-out
 
       - name: Post the report and move the labels
         env:

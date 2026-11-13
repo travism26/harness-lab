@@ -1,9 +1,10 @@
 # The factory's rework round (docs/factory/README.md).
 #
-# Review labels a blocked factory PR `rework` with the App's token, and that
-# label event starts this workflow (a label added with GITHUB_TOKEN would start
-# nothing). The agent fixes what the review named on the PR's branch, the push
-# starts Review again, and Review counts the rounds: after two, the next
+# Review, or .github/workflows/ci-gate.yml, labels a blocked factory PR `rework` with the App's
+# token, and that label event starts this workflow (a label added with
+# GITHUB_TOKEN would start nothing). The agent fixes what the review named on
+# the PR's branch, including a CI failure in that comment. The push starts
+# Review again. The same counter covers both: after two rounds, the next
 # blocker hands the PR to a human.
 #
 # pull_request_target, so this file and the factory's scripts come from the
@@ -51,7 +52,9 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      actions: read # the daily run cap counts this workflow's runs
+      actions: read # the daily run cap, and the wait below, read workflow runs
+      issues: read # the wait reads the PR comments with this token, not the App token
+      pull-requests: read
     steps:
       - name: Check out the factory (base branch)
         uses: actions/checkout@v7
@@ -72,7 +75,19 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.3.3
 
-      - name: Read the PR, its Ticket and the latest review
+      # Review may have charged this round before CI finished. Wait so revise
+      # reads a CI failure posted for this head, instead of starting a second round.
+      - name: Wait for CI on this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          uv run --no-dev python -m factory.ci_gate wait --repo "$REPO" --pr "$PR"
+          --sha "$SHA" --timeout 1200 --interval 15 --failure-grace 120
+
+      - name: Read the PR, its Ticket and the blockers for this head
         env:
           GH_TOKEN: ${{ steps.preflight.outputs.token }}
           REPO: ${{ github.repository }}
