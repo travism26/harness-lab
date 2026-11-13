@@ -12,6 +12,7 @@ import pytest
 from factory import bench, claude
 
 SOURCE = Path(bench.__file__).resolve().parent.parent
+REVIEW_ANSWER = Path(__file__).with_name("review-answer.json")
 PASS_ANSWER = json.dumps({"spec_summary": "ok", "standards_summary": "ok",
                           "spec_findings": [], "standards_findings": []})
 NOTES_ANSWER = json.dumps({"spec_summary": "ok", "standards_summary": "n",
@@ -191,6 +192,23 @@ def test_tracer_cli_exit_codes(bench_case, tmp_path):
     assert bench.main(argv, run_agent=review) == 0
     assert bench.main(argv, run_agent=review) == 1
     assert len((out / "ledger.jsonl").read_text().splitlines()) == 2
+
+
+def test_tracer_owner_command_writes_one_line(bench_case, tmp_path):
+    """The real command, with the shipped answer file and no injected agent."""
+    case = tmp_path / "case.json"
+    case.write_text(json.dumps(bench_case))
+    out = tmp_path / "o"
+    code = bench.main(["--case", str(case), "--setup-id", "owner",
+                       "--harness-command", standin(tmp_path, GOOD),
+                       "--review-answer-file", str(REVIEW_ANSWER),
+                       "--out", str(out)])
+    assert code == 0
+    lines = (out / "ledger.jsonl").read_text().splitlines()
+    assert len(lines) == 1
+    row = json.loads(lines[0])
+    assert row["outcome"] == "pass" and row["workflow"] == "bench" and row["pr"] is None
+    assert row["review"] == "PASS"
 
 
 def test_tracer_dead_lock_holder_releases_reservation(bench_case, tmp_path):

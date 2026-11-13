@@ -1,18 +1,17 @@
 """The Bench's tracer: one Bench run scores one Bench case and stops at the ledger
 (GLOSSARY.md, docs/adr/0009-bench-spends-on-a-metered-api-key.md).
 
-  uv run python -m factory.bench --case CASE.json --setup-id ID \\
-      --harness-command "CMD"
+  uv run python -m factory.bench --case CASE.json --setup-id ID --harness-command CMD --review-answer-file tests/factory/review-answer.json
 
 CASE.json names the Bench case: {"repo": PATH, "start_commit": SHA, "ticket": PATH,
 "check_command": CMD, "check_files": {PATH: BLOB_SHA}, "issue": N, "project": NAME|null}.
 
 The run clones the start commit into a fresh directory outside the source
 checkout, removes the remote, runs the harness command (the stand-in) there,
-scores the check, runs Review through factory.review_pr.parse_findings with an
-injected agent, and appends one JSON line to <out>/ledger.jsonl. No model call
-and no GitHub call. The command does not replay a recorded Review answer: the
-caller injects the agent, and without one it exits 2.
+scores the check, runs Review through factory.review_pr.parse_findings, and
+appends one JSON line to <out>/ledger.jsonl. No model call and no GitHub call.
+`--review-answer-file` is the recorded Review answer. Tests may inject an agent
+instead. With neither, the command exits 2 and writes no line.
 
 This ticket is one Bench run, so the line records model sonnet and repeat 1.
 The Setup id and the harness command are the arguments. The month is UTC, read
@@ -294,20 +293,37 @@ def bench_run(case: dict, setup: dict, out: Path, limits: Limits, run_agent: Cal
         lock.unlink(missing_ok=True)
 
 
+def recorded_review(text: str) -> Callable:
+    """The owner's Review agent: a recorded answer, and no model call."""
+    def run_agent(prompt, **_):
+        return claude.Result(True, text, "success", 0.0)
+    return run_agent
+
+
 def main(argv: Optional[List[str]] = None, run_agent: Optional[Callable] = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--case", required=True, help="the Bench case's JSON file")
     p.add_argument("--setup-id", required=True)
     p.add_argument("--harness-command", required=True)
+    p.add_argument("--review-answer-file",
+                   help="a recorded Review answer; the command calls no model")
     p.add_argument("--out", default="bench-runs")
     p.add_argument("--monthly-cap-usd", type=float, default=Limits.monthly_cap_usd)
     p.add_argument("--build-cap-usd", type=float, default=Limits.build_cap_usd)
     p.add_argument("--review-cap-usd", type=float, default=Limits.review_cap_usd)
     args = p.parse_args(argv)
     if run_agent is None:
-        print("bench: Review's agent is injected by the caller; "
-              "this command does not call a model", file=sys.stderr)
-        return 2
+        if not args.review_answer_file:
+            print("bench: pass --review-answer-file, or inject Review's agent; "
+                  "this command does not call a model", file=sys.stderr)
+            return 2
+        answer = Path(args.review_answer_file)
+        try:
+            text = answer.read_text()
+        except OSError as e:
+            print(f"bench: cannot read {answer}: {e}", file=sys.stderr)
+            return 2
+        run_agent = recorded_review(text)
     case = json.loads(Path(args.case).read_text())
     # One Bench run records model sonnet and repeat 1. The Setup id and the
     # harness command are the arguments above.

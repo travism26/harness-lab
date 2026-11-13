@@ -225,6 +225,8 @@ factory's Claude Code.
 | Claude Code login | `factory/claude.py`, `factory/switch_rule.py` |
 | CI check | `.github/workflows/ci.yml`, `factory/ci_projects.py` (see [CI](#ci)) |
 
+The owner runs one Bench tracer, no model call and no GitHub call: `uv run python -m factory.bench --case CASE.json --setup-id ID --harness-command CMD --review-answer-file tests/factory/review-answer.json`.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every PR and on every push to `main`, with no secrets and
