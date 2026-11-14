@@ -4,6 +4,8 @@ A public, for-fun lab for experimenting with **AI-assisted software engineering*
 
 The twist is that the lab mostly runs itself. AI agents find ideas, plan them and build them, and a human approves the spec and merges the PR.
 
+The story behind it: [Two Grok Bots, One Software Factory: How My Lab Finds and Builds Its Own Work](https://dev.to/rickjms/two-grok-bots-one-software-factory-how-my-lab-finds-and-builds-its-own-work-2n0h).
+
 ## What we're experimenting with
 
 - **A software factory on GitHub Actions.** A labelled GitHub issue (a Ticket) becomes a **draft PR** built by Claude Code. An independent read-only agent reviews it for Spec and Standards. Up to two automatic rework rounds follow, and a human merges. See [the factory](docs/factory/README.md).
@@ -61,6 +63,6 @@ Each runs gofmt, vet, staticcheck, trustlint and the race-enabled tests.
 
 ## Contributing
 
-This is a personal learning lab, and work enters through the owner's labels. Opening an issue or PR doesn't start the factory, and fork PRs get CI only. Questions and ideas are welcome, but expect a slow, hobby-paced reply.
+This is a personal learning lab, and work enters through the owner's labels. Opening an issue or PR doesn't start the factory. Issues, comments and PRs are limited to collaborators, so outsiders can't post them. For questions or ideas, comment on [the blog post](https://dev.to/rickjms/two-grok-bots-one-software-factory-how-my-lab-finds-and-builds-its-own-work-2n0h). Expect a slow, hobby-paced reply.
 
 Licensed under the [MIT License](LICENSE).
