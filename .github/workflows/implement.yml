@@ -174,10 +174,13 @@ jobs:
           ATTEMPT: ${{ github.run_attempt }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PROJECT: ${{ steps.project.outputs.name }}
+          # Set here, not read from the job's env: a step that can write $GITHUB_ENV
+          # could change the job's value before this step runs.
+          LOGIN: ${{ vars.FACTORY_CLAUDE_LOGIN || 'subscription' }}
           MODEL: ${{ vars.FACTORY_BUILD_MODEL || 'sonnet' }}
           BUDGET_USD: ${{ vars.FACTORY_BUILD_BUDGET_USD || '5' }}
           JOB_STATUS: ${{ job.status }}
-          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          AGENT_OUTCOME: ${{ steps.build.outcome }}
           VERIFY_OUTCOME: ${{ steps.verify.outcome }}
           PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
         run: >-
@@ -186,7 +189,7 @@ jobs:
           --issue "$ISSUE" --project "$PROJECT" --login "$LOGIN" --model "$MODEL"
           --budget "$BUDGET_USD" --claude-code-version "$CLAUDE_CODE_VERSION"
           --app-slug "$APP_SLUG" --run-url "$RUN_URL" --job-status "$JOB_STATUS"
-          --build-outcome "$BUILD_OUTCOME" --verify-outcome "$VERIFY_OUTCOME"
+          --agent-outcome "$AGENT_OUTCOME" --verify-outcome "$VERIFY_OUTCOME"
           --publish-outcome "$PUBLISH_OUTCOME"
 
       - name: Keep the run's files

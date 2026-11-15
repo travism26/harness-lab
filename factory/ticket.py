@@ -57,7 +57,8 @@ from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
 from factory import claude
-from factory.github import GitHub, GitHubError, author, label_names, write_comment
+from factory.github import (GitHub, GitHubError, author, label_names, neutralize_comments,
+                            write_comment)
 from factory.review_pr import HUMAN_LABEL, REWORK_LABEL, linked_ticket, review_input
 from factory.switch_rule import LOGINS, refusal
 from factory.sync_labels import load_labels
@@ -464,10 +465,9 @@ def pr_body(ctx: dict, summary: str) -> str:
 
 # publish writes this; release includes it, with the agent's summary, in the
 # failure comment. The two steps are separate processes and share only --out.
-_UNCHANGED = ("the agent finished without changing the work checkout, "
-              "so there is nothing to publish")
-_UNCHANGED_FILE = "unchanged.md"
-UNCHANGED_FILE = _UNCHANGED_FILE
+UNCHANGED = ("the agent finished without changing the work checkout, "
+             "so there is nothing to publish")
+UNCHANGED_FILE = "unchanged.md"
 # The start of the comments publish and release post. `factory.run_record` finds
 # the run's comment by these, so a file in --out never picks which comment is edited.
 OPENED_PREFIX = "The factory opened a draft PR: "
@@ -530,7 +530,7 @@ def _summary_text(out: Path) -> str:
 
 def _unchanged_report(out: Path, detail: str) -> str:
     """What publish raises and what release posts, the same text."""
-    message = _UNCHANGED if not detail else f"{_UNCHANGED}\n{detail}"
+    message = UNCHANGED if not detail else f"{UNCHANGED}\n{detail}"
     if _summary_text(out):
         message += ". The agent's summary is posted on the Ticket."
     return message
@@ -546,7 +546,7 @@ def publish(args, gh: Optional[GitHub] = None) -> int:
     if not _git(work, "status", "--porcelain").strip():
         detail = _edits_outside_work(work, out)
         message = _unchanged_report(out, detail)
-        (out / _UNCHANGED_FILE).write_text(message + "\n")
+        (out / UNCHANGED_FILE).write_text(message + "\n")
         raise RuntimeError(message)
     bot = f"{args.app_slug}[bot]"
     email = f"{gh.bot_user_id(args.app_slug)}+{bot}@users.noreply.github.com"
@@ -572,12 +572,14 @@ def publish(args, gh: Optional[GitHub] = None) -> int:
 def _failure_comment(out: Path, run_url: str) -> str:
     body = (f"{failed_prefix(run_url)}. "
             f"`{PROGRESS_LABEL}` has been removed; re-apply `{START_LABEL}` to try again.\n")
-    unchanged = out / _UNCHANGED_FILE
+    unchanged = out / UNCHANGED_FILE
     if unchanged.is_file():
-        body += f"\n{unchanged.read_text().strip()}\n"
+        # The file holds paths from the checkout and the summary is the agent's own text:
+        # neither may form a hidden marker in the bot's comment.
+        body += f"\n{neutralize_comments(unchanged.read_text().strip())}\n"
         summary = _summary_text(out)
         if summary:
-            body += f"\nThe agent's summary:\n\n{summary}\n"
+            body += f"\nThe agent's summary:\n\n{neutralize_comments(summary)}\n"
     return body
 
 

@@ -5,7 +5,7 @@
 The Run record (docs/factory/README.md, "Run records") only exists for runs after it
 shipped. This lists the Implement, Rework and Review runs through `gh`, downloads each
 run's artifact into a scratch directory outside the repo, builds the record with
-`factory.run_record.build_record`, and writes one JSONL file, ordered by run id then
+`factory.record.build_record`, and writes one JSONL file, ordered by run id then
 attempt, so a second run gives the same bytes. Every record carries `backfilled: true`.
 
 Old artifacts predate `result.json`, so the numbers come from the transcript's closing
@@ -16,70 +16,75 @@ A run with no artifact still gets a record, with null numbers. A run that starte
 agent gets none. Old comments are not edited.
 """
 import argparse
+import functools
 import json
 import re
 import shutil
 import sys
 import tempfile
 from contextlib import redirect_stdout
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import List, Optional
 
 from factory import claude, review_pr
-from factory import run_record as rr
-from factory import run_record_review as rrr
 from factory.github import GitHub, GitHubError
-from factory.ticket import OPENED_PREFIX
+from factory.record import (BACKFILL_FILE, MAX_FILE, UNSAFE_RE, WORKFLOWS, Outcomes, RunContext,
+                            bot_comments, build_record, failure_reason, opened_pr, read_numbers)
+from factory.run_record_review import find_report, gate_of, reports
+from factory.switch_rule import default_app_slug
+from factory.ticket import OPENED_PREFIX, UNCHANGED, failed_prefix
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_OUT = Path(__file__).resolve().parent / "run-records-backfill.jsonl"
-WORKFLOWS = ("implement", "rework", "review")
-# The first words of each workflow's agent step.
+# The first words of each workflow's agent step, and of the steps that explain a failure.
 _AGENT_STEP = {"implement": "Build (agent", "rework": "Rework (agent",
                "review": "Review (fresh context"}
+_CHECK_STEP = "Run the new Project check"
+_PUBLISH_STEP = {"implement": "Commit, push and open", "rework": "Commit and push the round",
+                 "review": "Post the report"}
 _BRANCH_RE = re.compile(r"^factory/issue-([0-9]+)$")
-_MAX_CONTEXT = 200_000
+_ISSUE_URL_RE = re.compile(r"/issues/([0-9]+)$")
 
 
-class BackfillGitHub(GitHub):
-    """The extra `gh` calls the backfill makes. Tests pass a fake with the same methods."""
+@dataclass
+class RunAttempt:
+    """What describes one attempt of one run: the listing, its jobs, and what its artifact held."""
+    workflow: str
+    run: dict
+    attempt: int
+    jobs: List[dict] = field(default_factory=list)
+    numbers: dict = field(default_factory=dict)
+    context: dict = field(default_factory=dict)
+    artifact: Optional[str] = None
 
-    def workflow_runs(self, repo: str, workflow: str) -> List[dict]:
-        out = self._gh(["api", "--paginate", "--slurp",
-                        f"repos/{repo}/actions/workflows/{workflow}.yml/runs?per_page=100"])
-        return [r for page in json.loads(out) for r in page.get("workflow_runs", [])]
+    @property
+    def run_url_tail(self) -> str:
+        return f"/actions/runs/{self.run['id']}"
 
-    def attempt_run(self, repo: str, run_id: int, attempt: int) -> dict:
-        return json.loads(self._gh(["api", f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}"]))
-
-    def attempt_jobs(self, repo: str, run_id: int, attempt: int) -> List[dict]:
-        out = self._gh(["api", f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs"
-                               "?per_page=100", "--jq", ".jobs"])
-        return json.loads(out)
-
-    def run_artifacts(self, repo: str, run_id: int) -> List[dict]:
-        out = self._gh(["api", f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100",
-                        "--jq", ".artifacts"])
-        return json.loads(out)
-
-    def download_artifact(self, repo: str, run_id: int, name: str, dest: Path) -> None:
-        self._gh(["run", "download", str(run_id), "-R", repo, "-n", name, "-D", str(dest)])
+    @property
+    def window(self) -> tuple:
+        """(start, end) of the attempt, as GitHub's timestamps."""
+        return (self.run.get("run_started_at") or self.run.get("created_at") or "",
+                self.run.get("updated_at") or "")
 
 
 def _agent_started(jobs: List[dict], workflow: str) -> bool:
+    return _step_conclusion(jobs, _AGENT_STEP[workflow]) not in ("", "skipped")
+
+
+def _step_conclusion(jobs: List[dict], prefix: str) -> str:
     for job in jobs:
         for step in job.get("steps") or []:
-            if (str(step.get("name", "")).startswith(_AGENT_STEP[workflow])
-                    and step.get("conclusion") not in (None, "skipped")):
-                return True
-    return False
+            if str(step.get("name", "")).startswith(prefix):
+                return step.get("conclusion") or ""
+    return ""
 
 
 def _read_json(path: Path) -> dict:
     try:
-        if path.stat().st_size > _MAX_CONTEXT:
+        if path.stat().st_size > MAX_FILE:
             return {}
         data = json.loads(path.read_text())
     except (OSError, ValueError):
@@ -92,7 +97,7 @@ def _from_download(dest: Path):
     transcript is read; nothing else in it is kept."""
     numbers = {}
     for path in sorted(dest.rglob("result.json")):
-        numbers = rr.read_numbers(path.parent)
+        numbers = read_numbers(path.parent)
         if numbers:
             break
     if not numbers:
@@ -100,7 +105,7 @@ def _from_download(dest: Path):
             message = claude.result_message(path.read_text(errors="replace"))
             if message:
                 claude.save_numbers(dest, message)
-                numbers = rr.read_numbers(dest)
+                numbers = read_numbers(dest)
                 break
     contexts = sorted(dest.rglob("context.json"))
     return numbers, (_read_json(contexts[0]) if contexts else {})
@@ -119,30 +124,37 @@ def _name_number(name: Optional[str], key: str) -> Optional[int]:
     return int(found.group(1)) if found else None
 
 
-def _rework_round(comments: List[dict], slug: str, created: str) -> Optional[int]:
-    """The highest round the bot's charging comments had given when the run was created."""
-    bot = f"{slug}[bot]".lower()
-    rounds = []
-    for c in comments:
-        meta = review_pr.parse_gate(c.get("body") or "")
+def _round_in_force(comments: List[dict], slug: str, created: str) -> int:
+    """The highest round the bot's charging comments had given when the run was created; 0
+    when it had charged none."""
+    names: List[str] = []
+    for c in bot_comments(comments, slug, unrecorded=False):
+        meta = review_pr.parse_gate(c["body"])
         if not meta or not meta.charged:
-            continue
-        if str((c.get("user") or {}).get("login", "")).lower() != bot:
             continue
         if c.get("created_at") and created and c["created_at"] > created:
             continue
-        rounds += [int(x.split(":")[1]) for x in meta.add if re.fullmatch(r"rework:[0-9]+", x)]
-    return max(rounds, default=None)
+        names += meta.add
+    return review_pr.rework_round(names)
 
 
-def _review_round(body: str) -> Optional[int]:
-    meta = review_pr.parse_gate(body)
-    if not meta or not meta.charged:
-        return None
-    if review_pr.HUMAN_LABEL in meta.add:
-        return review_pr.MAX_REWORK
-    rounds = [int(x.split(":")[1]) for x in meta.add if re.fullmatch(r"rework:[0-9]+", x)]
-    return max(rounds, default=None)
+def _review_round(report: dict, comments: List[dict], slug: str, created: str) -> Optional[int]:
+    """The round a Review ran in: the one its report charged, or when it charged nothing,
+    the one in force when the run was created."""
+    meta = review_pr.parse_gate(report["body"])
+    if meta and meta.charged:
+        if review_pr.HUMAN_LABEL in meta.add:
+            return review_pr.MAX_REWORK
+        return review_pr.rework_round(list(meta.add)) or None
+    return _round_in_force(comments, slug, created)
+
+
+def _report_in_window(comments: List[dict], slug: str, window: tuple) -> Optional[dict]:
+    """The bot's newest report comment created while the run was going."""
+    start, end = window
+    found = [(c, meta) for c, meta in reports(comments, slug, unrecorded=False)
+             if start <= str(c.get("created_at") or "") <= end]
+    return max((c for c, _ in found), key=lambda c: c["id"]) if found else None
 
 
 def _safely(call, default):
@@ -153,55 +165,87 @@ def _safely(call, default):
         return default
 
 
-def _record(gh, args, workflow: str, run: dict, attempt: int, numbers: dict, context: dict,
-            artifact: Optional[str]) -> dict:
-    run_id = run["id"]
+def _issue_from_comments(repo_comments: List[dict], slug: str,
+                         attempt: RunAttempt) -> Optional[int]:
+    """The Ticket the bot's comment that links this run's URL is on."""
+    for c in bot_comments(repo_comments, slug, unrecorded=False):
+        if f"{attempt.run_url_tail})" in c["body"]:
+            found = _ISSUE_URL_RE.search(str(c.get("issue_url") or ""))
+            if found:
+                return int(found.group(1))
+    return None
+
+
+def _failed_unchanged(comments: List[dict], slug: str, attempt: RunAttempt, repo: str) -> bool:
+    """Whether the bot's failed comment for this run says nothing was changed."""
+    prefix = failed_prefix(f"https://github.com/{repo}{attempt.run_url_tail}")
+    start, end = attempt.window
+    for c in bot_comments(comments, slug, unrecorded=False):
+        made = str(c.get("created_at") or "")
+        if c["body"].startswith(prefix) and UNCHANGED in c["body"] and (
+                not made or start <= made <= end):
+            return True
+    return False
+
+
+def _record(gh, args, a: RunAttempt, repo_comments) -> dict:
+    run = a.run
     stamp = datetime.strptime(run["updated_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     conclusion = run.get("conclusion")
     ok = conclusion == "success"
     branch = _BRANCH_RE.match(run.get("head_branch") or "")
     pulls = run.get("pull_requests") or []
-    pr = context.get("pr") or _name_number(artifact, "pr") or (pulls[0].get("number") if pulls else None)
-    issue = (context.get("issue") or context.get("ticket") or _name_number(artifact, "issue")
-             or (int(branch.group(1)) if branch and workflow != "implement" else None))
-    head_sha = context.get("head_sha") if workflow == "review" else None
+    pr = (a.context.get("pr") or _name_number(a.artifact, "pr")
+          or (pulls[0].get("number") if pulls else None))
+    issue = (a.context.get("issue") or a.context.get("ticket") or _name_number(a.artifact, "issue")
+             or (int(branch.group(1)) if branch and a.workflow != "implement" else None))
+    head_sha = a.context.get("head_sha") if a.workflow == "review" else None
     verdict = gate = round_ = None
-    comments = _safely(lambda: gh.pr_comments(args.repo, pr), []) if pr and workflow != "implement" else []
-    if workflow == "implement":
+    comments = (_safely(lambda: gh.pr_comments(args.repo, pr), [])
+                if pr and a.workflow != "implement" else [])
+    ticket_comments = []
+    if a.workflow == "implement":
         round_ = 0
+        if not issue:
+            issue = _issue_from_comments(repo_comments(), args.app_slug, a)
+        if issue:
+            ticket_comments = _safely(lambda: gh.pr_comments(args.repo, issue), [])
         if ok and issue and not pr:
-            opened = [c for c in _safely(lambda: gh.pr_comments(args.repo, issue), [])
-                      if str((c.get("user") or {}).get("login", "")).lower() == f"{args.app_slug}[bot]".lower()
-                      and (c.get("body") or "").startswith(OPENED_PREFIX)]
-            found = re.match(re.escape(OPENED_PREFIX) + rr._PR_URL.format(repo=re.escape(args.repo)),
-                             max(opened, key=lambda c: c["id"])["body"]) if opened else None
-            pr = int(found.group(1)) if found else None
-    elif workflow == "rework":
-        round_ = _rework_round(comments, args.app_slug, run.get("created_at") or "")
+            opened = [c for c in bot_comments(ticket_comments, args.app_slug, unrecorded=False)
+                      if c["body"].startswith(OPENED_PREFIX)]
+            pr = (opened_pr(max(opened, key=lambda c: c["id"])["body"], args.repo, OPENED_PREFIX)
+                  if opened else None)
+    elif a.workflow == "rework":
+        round_ = _round_in_force(comments, args.app_slug, run.get("created_at") or "") or None
     else:
-        target = rrr._report(comments, args.app_slug, head_sha) if head_sha else None
-        if target:
-            verdict = review_pr.review_verdict(target["body"])
-            gate = rrr._gate_of(target["body"])
-            round_ = _review_round(target["body"])
-    if workflow == "review" and pr and not issue:
+        report = (find_report(comments, args.app_slug, head_sha, unrecorded=False) if head_sha
+                  else _report_in_window(comments, args.app_slug, a.window))
+        if report:
+            head_sha = head_sha or review_pr.parse_gate(report["body"]).head
+            verdict = review_pr.review_verdict(report["body"])
+            gate = gate_of(report["body"])
+            round_ = _review_round(report, comments, args.app_slug, run.get("created_at") or "")
+    if a.workflow == "review" and pr and not issue:
         body = (_safely(lambda: gh.pr(args.repo, pr), {}) or {}).get("body") or ""
         issue = review_pr.linked_ticket(body, args.repo)
     reason = None
     if not ok:
-        subtype = numbers.get("subtype")
-        if conclusion == "cancelled":
-            reason = "cancelled"
-        elif isinstance(subtype, str) and subtype != "success" and rr._SUBTYPE_RE.match(subtype):
-            reason = subtype
-        elif artifact and not numbers:
-            reason = "no-result"
-    ctx = {"repo": args.repo, "run_id": run_id, "attempt": attempt, "issue": issue,
-           "project": context.get("project")}
+        outcomes = Outcomes(conclusion or "", _step_conclusion(a.jobs, _AGENT_STEP[a.workflow]),
+                            _step_conclusion(a.jobs, _CHECK_STEP),
+                            _step_conclusion(a.jobs, _PUBLISH_STEP[a.workflow]))
+        if outcomes.publish in ("success", "skipped"):   # neither fails at its publish
+            outcomes = Outcomes(outcomes.job, outcomes.agent, outcomes.check, "")
+        unchanged = (outcomes.publish == "failure" and bool(ticket_comments)
+                     and _failed_unchanged(ticket_comments, args.app_slug, a, args.repo))
+        reason = failure_reason(outcomes, a.numbers, unchanged, review=a.workflow == "review")
+        if reason == "no-result" and not a.artifact:    # the result line went with the artifact
+            reason = None
+    ctx = RunContext(repo=args.repo, run_id=run["id"], attempt=a.attempt, issue=issue,
+                     project=a.context.get("project"))
     with redirect_stdout(StringIO()):      # null identity fields would each warn
-        record = rr.build_record(workflow, ctx, numbers, "ok" if ok else "fail", reason, pr=pr,
-                                 head_sha=head_sha, round_=round_, verdict=verdict, gate=gate,
-                                 now=stamp)
+        record = build_record(a.workflow, ctx, a.numbers, "ok" if ok else "fail", reason, pr=pr,
+                              head_sha=head_sha, round_=round_, verdict=verdict, gate=gate,
+                              now=stamp)
     record["backfilled"] = True
     return record
 
@@ -209,6 +253,8 @@ def _record(gh, args, workflow: str, run: dict, attempt: int, numbers: dict, con
 def collect(gh, args, scratch: Path):
     """(records, number of runs that started no agent)."""
     records, no_agent = [], 0
+    repo_comments = functools.lru_cache(maxsize=None)(
+        lambda: _safely(lambda: gh.repo_comments(args.repo), []))
     for workflow in WORKFLOWS:
         for listed in gh.workflow_runs(args.repo, workflow):
             for attempt in range(1, int(listed.get("run_attempt") or 1) + 1):
@@ -216,19 +262,21 @@ def collect(gh, args, scratch: Path):
                        else gh.attempt_run(args.repo, listed["id"], attempt))
                 if run.get("status") != "completed" or run.get("conclusion") == "skipped":
                     continue
-                if not _agent_started(gh.attempt_jobs(args.repo, run["id"], attempt), workflow):
+                jobs = gh.attempt_jobs(args.repo, run["id"], attempt)
+                if not _agent_started(jobs, workflow):
                     no_agent += 1
                     continue
-                numbers, context, name = {}, {}, _artifact(gh, args.repo, run["id"], attempt)
-                if name:
+                made = RunAttempt(workflow, run, attempt, jobs,
+                                  artifact=_artifact(gh, args.repo, run["id"], attempt))
+                if made.artifact:
                     dest = scratch / f"{run['id']}-{attempt}"
                     dest.mkdir(parents=True, exist_ok=True)
                     try:
-                        gh.download_artifact(args.repo, run["id"], name, dest)
-                        numbers, context = _from_download(dest)
+                        gh.download_artifact(args.repo, run["id"], made.artifact, dest)
+                        made.numbers, made.context = _from_download(dest)
                     finally:
                         shutil.rmtree(dest, ignore_errors=True)
-                records.append(_record(gh, args, workflow, run, attempt, numbers, context, name))
+                records.append(_record(gh, args, made, repo_comments))
     records.sort(key=lambda r: (r["run_id"], r["attempt"]))
     return records, no_agent
 
@@ -236,21 +284,22 @@ def collect(gh, args, scratch: Path):
 def main(argv: Optional[List[str]] = None, gh=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--out", default=str(DEFAULT_OUT))
+    parser.add_argument("--out", default=str(BACKFILL_FILE))
     parser.add_argument("--scratch", default=None,
                         help="where artifacts are downloaded; a fresh temp directory by default")
     parser.add_argument("--app-slug", dest="app_slug", default=None,
                         help="the factory App's slug; default OWNER-factory")
     args = parser.parse_args(argv)
-    args.app_slug = args.app_slug or f"{args.repo.split('/')[0]}-factory"
+    args.app_slug = args.app_slug or default_app_slug(args.repo)
     made = args.scratch is None
-    scratch = Path(tempfile.mkdtemp(prefix="factory-backfill-")) if made else Path(args.scratch).resolve()
+    scratch = (Path(tempfile.mkdtemp(prefix="factory-backfill-")) if made
+               else Path(args.scratch).resolve())
     if scratch == REPO_ROOT or REPO_ROOT in scratch.parents:
         print(f"error: the scratch directory {scratch} is inside the repo; "
               "a download holds transcripts", file=sys.stderr)
         return 2
     scratch.mkdir(parents=True, exist_ok=True)
-    gh = gh or BackfillGitHub()
+    gh = gh or GitHub()
     try:
         records, no_agent = collect(gh, args, scratch)
     except GitHubError as e:
@@ -260,7 +309,7 @@ def main(argv: Optional[List[str]] = None, gh=None) -> int:
         if made:
             shutil.rmtree(scratch, ignore_errors=True)
     lines = [json.dumps(r, separators=(",", ":")) for r in records]
-    if any(rr._UNSAFE_RE.search(line) for line in lines):
+    if any(UNSAFE_RE.search(line) for line in lines):
         print("error: a record holds a token-shaped string; nothing was written", file=sys.stderr)
         return 1
     out = Path(args.out)

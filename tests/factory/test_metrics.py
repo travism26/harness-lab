@@ -1,7 +1,6 @@
 """The metrics report (docs/factory/README.md, "Metrics report"), tested at its entry point:
 a fixtures directory in, a markdown table and an exit code out."""
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -69,7 +68,7 @@ def test_live_mode_reads_the_same_facts_through_gh(capsys, monkeypatch):
             issue = next(i for i in PRS if number in (i, PRS[i]))
             return load(issue, "issue-timeline.json" if number == issue else "pr-timeline.json", [])
 
-        def pull(self, repo, number):
+        def pull_api(self, repo, number):
             return load(next(i for i in PRS if PRS[i] == number), "pr.json", {})
 
         def pull_commits(self, repo, number):
@@ -84,7 +83,8 @@ def test_live_mode_reads_the_same_facts_through_gh(capsys, monkeypatch):
     PRS = {int(d.name.split("-")[1]): load(int(d.name.split("-")[1]), "pr.json", {}).get("number")
            for d in FIXTURES.glob("ticket-*")}
     monkeypatch.setattr(metrics, "GitHub", FakeGitHub)
-    code, out, err = _run(capsys, "--repo", "o/r", "--backfill", str(FIXTURES / "backfill.jsonl"))
+    code, out, err = _run(capsys, "--repo", "travism26/harness-lab",
+                          "--backfill", str(FIXTURES / "backfill.jsonl"))
     assert code == 0, err
     assert out == (FIXTURES / "golden.md").read_text()
 
@@ -126,11 +126,58 @@ def test_a_fixture_holding_a_token_shaped_string_is_rejected(tmp_path, capsys):
     assert "abc123" not in err
 
 
-def test_no_committed_fixture_holds_a_token_shaped_string():
-    pattern = re.compile(r"sk-ant-|sk-or-|\bgh[pousr]_[A-Za-z0-9]|github_pat_|xox[abposr]-|eyJ[A-Za-z0-9_-]{10,}")
-    for path in FIXTURES.rglob("*"):
-        if path.is_file():
-            assert not pattern.search(path.read_text()), path
+def test_a_marker_that_is_not_the_final_line_of_a_comment_is_ignored(tmp_path, capsys):
+    """Code review A1: a copy quoted in a report is not the factory's record, and `schema 2`
+    there does not make the whole report refuse."""
+    quoted = _marker(_record(run_id=2, pr=999, cost_usd=99.0))
+    fx = _fixtures(tmp_path,
+                   _comment(1, "opened\n" + _marker(_record(pr=9))),
+                   _comment(2, f"A finding quotes {quoted} and {_marker(_record(schema=2))}\nmore\n"),
+                   _comment(3, f"{quoted} then text\n"),
+                   _comment(4, f"text {_marker(_record(run_id=3, cost_usd=98.0))}\n"))
+    code, out, err = _run(capsys, "--fixtures", str(fx))
+    assert code == 0, err
+    assert "$0.50" in out and "99" not in out and "98" not in out
+
+
+def test_a_marker_followed_by_a_blank_line_is_still_the_final_line(tmp_path, capsys):
+    fx = _fixtures(tmp_path, _comment(1, "opened\n" + _marker(_record(pr=9)) + "\n\n"))
+    code, out, _ = _run(capsys, "--fixtures", str(fx))
+    assert code == 0 and "$0.50" in out
+
+
+def test_the_app_slug_is_derived_from_the_repo(tmp_path, capsys, monkeypatch):
+    class FakeGitHub:
+        def repo_comments(self, repo):
+            return [_comment(1, "opened\n" + _marker(_record(pr=9)), login="acme-factory[bot]"),
+                    _comment(2, _marker(_record(run_id=2, cost_usd=99.0)), login=BOT)]
+
+        def label_events(self, repo, number):
+            return []
+
+        def pull_api(self, repo, number):
+            return {}
+
+        def pull_commits(self, repo, number):
+            return []
+
+        def branch_runs(self, repo, branch):
+            return []
+
+        def main_subjects(self, repo):
+            return []
+
+    monkeypatch.setattr(metrics, "GitHub", FakeGitHub)
+    code, out, _ = _run(capsys, "--repo", "acme/widgets")
+    assert code == 0 and "$0.50" in out and "99" not in out
+
+
+def test_a_ticket_whose_records_name_no_login_prints_no_stray_comma(tmp_path, capsys):
+    """Code review B2."""
+    fx = _fixtures(tmp_path, _comment(1, "opened\n" + _marker(_record(pr=9, login=None))))
+    code, out, _ = _run(capsys, "--fixtures", str(fx))
+    assert code == 0
+    assert "$0.50 (est.)" in out and "(, est.)" not in out
 
 
 def test_a_ticket_with_no_draft_lowers_the_draft_rate(tmp_path, capsys):
@@ -247,12 +294,16 @@ def test_human_escalation_is_the_bot_adding_ready_for_human(tmp_path, capsys):
     assert row["Untouched merge"] == "no"
 
 
-def test_ready_for_human_added_by_hand_is_not_an_escalation(tmp_path, capsys):
+def test_ready_for_human_added_by_hand_is_not_an_escalation_but_is_not_untouched(tmp_path, capsys):
+    """Code review B1: the human label counts for the merge, from anyone; the escalation rate is
+    the bot's alone."""
     fx = _facts(tmp_path, commits=[BOT], pr_events=[
         _label("labeled", "ready-for-human", OWNER, "2026-11-13T10:20:00Z")])
-    row, _ = _cells(capsys, fx)
+    row, total = _cells(capsys, fx)
     assert row["Human escalation"] == "no"
-    assert row["Untouched merge"] == "yes"
+    assert total["Human escalation"] == "0/1 (0%)"
+    assert row["Untouched merge"] == "no"
+    assert total["Untouched merge"] == "0/1 (0%)"
 
 
 def test_an_open_pull_request_counts_toward_neither_side_of_merge_rate(tmp_path, capsys):
