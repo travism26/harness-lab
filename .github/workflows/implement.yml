@@ -102,6 +102,7 @@ jobs:
         run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
       - name: Build (agent, budget-capped, no GitHub token)
+        id: build
         env:
           # Only the secret the login needs reaches this step.
           FACTORY_SUBSCRIPTION_TOKEN: ${{ env.LOGIN == 'subscription' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
@@ -129,6 +130,7 @@ jobs:
       # fails the job: Publish does not run, and the failure step below drops
       # in-progress.
       - name: Run the new Project check
+        id: verify
         if: steps.project.outputs.bootstrap == 'true'
         env:
           GH_TOKEN: ""
@@ -139,6 +141,7 @@ jobs:
           uv run --no-dev python -m factory.ticket verify --out run-out --work work
 
       - name: Commit, push and open the draft PR
+        id: publish
         env:
           GH_TOKEN: ${{ steps.preflight.outputs.token }}
           APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
@@ -156,6 +159,35 @@ jobs:
         run: >-
           uv run --no-dev python -m factory.ticket release --repo "$REPO" --issue "$ISSUE"
           --out run-out --run-url "$RUN_URL"
+
+      # Runs after the agent step started, whatever happened, and holds the App token.
+      # It takes the run's identity from this workflow's context, never from run-out/,
+      # and runs only the factory's own scripts. It adds no secret and no model call.
+      - name: Leave the run record
+        if: always() && steps.build.conclusion != 'skipped'
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PROJECT: ${{ steps.project.outputs.name }}
+          MODEL: ${{ vars.FACTORY_BUILD_MODEL || 'sonnet' }}
+          BUDGET_USD: ${{ vars.FACTORY_BUILD_BUDGET_USD || '5' }}
+          JOB_STATUS: ${{ job.status }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+        run: >-
+          uv run --no-dev python -m factory.run_record write --workflow implement
+          --out run-out --repo "$REPO" --run-id "$RUN_ID" --attempt "$ATTEMPT"
+          --issue "$ISSUE" --project "$PROJECT" --login "$LOGIN" --model "$MODEL"
+          --budget "$BUDGET_USD" --claude-code-version "$CLAUDE_CODE_VERSION"
+          --app-slug "$APP_SLUG" --run-url "$RUN_URL" --job-status "$JOB_STATUS"
+          --build-outcome "$BUILD_OUTCOME" --verify-outcome "$VERIFY_OUTCOME"
+          --publish-outcome "$PUBLISH_OUTCOME"
 
       - name: Keep the run's files
         if: always()

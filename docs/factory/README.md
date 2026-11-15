@@ -234,11 +234,22 @@ factory's Claude Code.
 | CI failure and green settle | `.github/workflows/ci-gate.yml`, `factory/ci_gate.py` |
 | Live check | `.github/workflows/factory-check.yml`, `factory/check.py` |
 | Claude Code login | `factory/claude.py`, `factory/switch_rule.py` |
+| Run record (Implement only for now) | `factory/run_record.py` (`write`), the last step of `.github/workflows/implement.yml` |
 | CI check | `.github/workflows/ci.yml`, `factory/ci_projects.py` (see [CI](#ci)) |
 
 The owner runs one Bench tracer, no model call and no GitHub call: `uv run python -m factory.bench --case CASE.json --setup-id ID --harness-command CMD --review-answer-file tests/factory/review-answer.json`.
 
 The owner replays the two committed Bench cases (Tickets 8 and 9, `factory/bench_cases/`) with `uv run python -m factory.bench --replay`: three Bench runs of each, one at a time, under the Setup `claude-code-sonnet`, then a report (passed out of 3, unstable, cost min, median and max; no ranking). Its first line says the run is not comparable while a newer checkout of this repo is readable. It names four owner steps: the API key (`ANTHROPIC_API_KEY`), a provider-side monthly limit if the console has one, Claude Code `2.1.319` on `PATH`, and a machine that cannot read a newer checkout. Without the key, or with another `claude --version`, the command refuses before any clone and prints the install line (`npm install -g @anthropic-ai/claude-code@2.1.319`) without running it. The first live run is an owner step; the tests call no model.
+
+## Run records
+
+A Run record is the one small JSON object a Factory run leaves behind: what ran (workflow, run id, attempt), on which Ticket and pull request, with which login, model alias and budget cap, how it ended (`outcome` `ok` or `fail`, and for a failure a `reason` from a fixed list), and what it cost (dollars, turns, the four token counts, duration). It holds facts and numbers, never text from the model. The dollars are the CLI's own list-price estimate on every login, so the record marks them `client-estimate`.
+
+It lives in two places. The durable copy is a hidden `<!-- factory:run {...} -->` marker appended to the comment the run already posted on the Ticket (the "opened a draft PR" comment, or the "failed" comment), so it lasts as long as the Ticket. A cancelled run posts neither comment, so its record goes on one plain line the last step posts. The other copy is `run-out/run.json` in the run's uploaded files, which GitHub deletes after 90 days. The decision is in [ADR 0010](../adr/0010-run-records-live-in-comment-markers.md).
+
+`factory.ticket build` saves only the raw numbers from the CLI's result line to `run-out/result.json`. The last step of `implement.yml` (`factory.run_record write`) runs whenever the agent step started, holds the App token, and trusts nothing the agent step wrote: the run's identity comes from the workflow's context, it copies only known fields from `result.json`, checks each one's type, writes a field that fails its check as null with a workflow warning, and never puts `-->` or a token-shaped string in the marker. It finds its comment among the bot's own comments on the Ticket, never from a file. Only Implement writes a record today; Rework and Review follow.
+
+If a job hits `timeout-minutes`, GitHub cancels it, and GitHub's cancellation docs say a step whose condition is `always()` keeps running, within a five minute limit. No run of this repo has timed out yet, so a timed-out run leaving a record is documented but untested.
 
 ## CI
 
