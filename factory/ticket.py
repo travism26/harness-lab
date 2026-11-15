@@ -347,7 +347,7 @@ def claim(args, gh: Optional[GitHub] = None) -> int:
     gh.remove_labels(args.repo, args.issue, (START_LABEL,))
     gh.add_labels(args.repo, args.issue, (PROGRESS_LABEL,))
     gh.comment(args.repo, args.issue, write_comment(
-        out, "started.md", f"The factory started this Ticket. [Run]({args.run_url})\n"))
+        out, "started.md", f"{STARTED_PREFIX} [Run]({args.run_url})\n"))
     _write_ticket(out, issue)
     _save(out, {"repo": args.repo, "issue": args.issue, "title": issue.get("title", ""),
                 "branch": branch_for(args.issue), "pr": None, "project": project,
@@ -471,6 +471,7 @@ UNCHANGED_FILE = "unchanged.md"
 # The start of the comments publish and release post. `factory.run_record` finds
 # the run's comment by these, so a file in --out never picks which comment is edited.
 OPENED_PREFIX = "The factory opened a draft PR: "
+STARTED_PREFIX = "The factory started this Ticket."
 
 
 def failed_prefix(run_url: str) -> str:

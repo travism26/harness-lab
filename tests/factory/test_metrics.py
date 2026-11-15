@@ -392,3 +392,53 @@ def test_a_pull_request_the_bot_alone_wrote_and_never_escalated_is_untouched(tmp
     row, total = _cells(capsys, fx)
     assert row["Untouched merge"] == "yes"
     assert total["Untouched merge"] == "1/1 (100%)"
+
+
+# ---- which Tickets count: the bot claimed them, or a record names them ------------
+
+STARTED = "The factory started this Ticket. [Run](https://github.com/o/r/actions/runs/1)\n"
+
+
+def _claim(id, issue, body=STARTED, login=BOT):
+    comment = _comment(id, body, login)
+    comment["issue_url"] = f"https://api.github.com/repos/travism26/harness-lab/issues/{issue}"
+    return comment
+
+
+def _rows(out):
+    return [line for line in out.splitlines() if line.startswith("| #")]
+
+
+def test_a_ticket_the_bot_claimed_with_no_record_gets_a_row_and_counts_as_not_drafted(
+        tmp_path, capsys):
+    drafted = _comment(1, "The factory opened a draft PR: https://github.com/o/r/pull/6\n\n"
+                          + _marker(_record(issue=5, pr=6)))
+    code, out, err = _run(capsys, "--fixtures",
+                          str(_fixtures(tmp_path, drafted, _claim(2, 30))))
+    assert code == 0, err
+    row = next(r for r in _rows(out) if r.startswith("| #30 "))
+    assert row.split(" | ")[1] == "no"
+    assert "| Total (2) | 1/2 (50%) |" in out
+
+
+def test_the_started_comment_from_a_login_that_is_not_the_bot_adds_no_row(tmp_path, capsys):
+    code, out, err = _run(capsys, "--fixtures",
+                          str(_fixtures(tmp_path, _claim(2, 30, login="someone"))))
+    assert code == 0, err
+    assert _rows(out) == []
+
+
+def test_a_bot_comment_that_only_quotes_the_started_text_adds_no_row(tmp_path, capsys):
+    code, out, err = _run(capsys, "--fixtures", str(_fixtures(
+        tmp_path, _claim(2, 30, body="Earlier it said:\n> " + STARTED))))
+    assert code == 0, err
+    assert _rows(out) == []
+
+
+def test_a_ticket_with_both_the_started_comment_and_a_record_appears_once(tmp_path, capsys):
+    record = _comment(1, "The factory failed.\n\n" + _marker(_record(issue=30)))
+    code, out, err = _run(capsys, "--fixtures",
+                          str(_fixtures(tmp_path, _claim(2, 30), record)))
+    assert code == 0, err
+    assert len([r for r in _rows(out) if r.startswith("| #30 ")]) == 1
+    assert "| Total (1) |" in out

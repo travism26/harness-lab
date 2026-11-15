@@ -32,7 +32,7 @@ from factory.github import GitHub, GitHubError
 from factory.record import BACKFILL_FILE, SCHEMA, TOKEN_RE, record_text
 from factory.review_pr import HUMAN_LABEL, rework_round
 from factory.switch_rule import default_app_slug, is_factory_app
-from factory.ticket import START_LABEL
+from factory.ticket import START_LABEL, STARTED_PREFIX
 
 COMMENT_FILES = ("issue-comments.json", "pr-comments.json")
 # Tickets started before the rename (2026-11-08) used the old label.
@@ -67,6 +67,22 @@ def records_in(comments: List[dict], app_slug: str) -> List[dict]:
         if isinstance(record, dict):
             found.append(record)
     return found
+
+
+def claimed_issues(comments: List[dict], app_slug: str) -> List[int]:
+    """The Tickets the factory bot claimed: the issue of each comment the bot wrote that starts
+    with the claim's text. A comment names its issue in `issue_url`, which ends in `/issues/<N>`."""
+    found = set()
+    for comment in comments:
+        login = (comment.get("user") or {}).get("login") or ""
+        body = comment.get("body")
+        if not (isinstance(body, str) and body.startswith(STARTED_PREFIX)
+                and is_factory_app(login, app_slug)):
+            continue
+        number = re.search(r"/issues/(\d+)$", str(comment.get("issue_url") or ""))
+        if number:
+            found.add(int(number.group(1)))
+    return sorted(found)
 
 
 def read_backfill(path: Path) -> List[dict]:
@@ -279,11 +295,13 @@ class Ticket:
         return min(reviews, key=lambda r: (r.get("ts") or "", r.get("run_id") or 0))
 
 
-def tickets_from(records: List[dict]) -> List[Ticket]:
-    """A factory Ticket is one with an Implement record. Its records are those naming its issue,
-    or its pull request when the record names no issue."""
+def tickets_from(records: List[dict], claimed: List[int] = ()) -> List[Ticket]:
+    """A factory Ticket is one the factory bot claimed (`claimed`) or one an Implement record
+    names, since a record proves a claim. Its records are those naming its issue, or its pull
+    request when the record names no issue."""
     issues = sorted({r["issue"] for r in records
-                     if r.get("workflow") == "implement" and isinstance(r.get("issue"), int)})
+                     if r.get("workflow") == "implement" and isinstance(r.get("issue"), int)}
+                    | set(claimed))
     tickets = [Ticket(i, [r for r in records if r.get("issue") == i]) for i in issues]
     for ticket in tickets:
         ticket.records += [r for r in records if r.get("issue") is None and r.get("pr")
@@ -428,7 +446,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         live = records_in(comments, app_slug)
         old = read_backfill(backfill) if backfill else []
         check_schema(live + old)
-        tickets = tickets_from(merge(live, old))
+        tickets = tickets_from(merge(live, old), claimed_issues(comments, app_slug))
         attach_facts(tickets, source, app_slug)
         sys.stdout.write(render(tickets))
     except (MetricsError, GitHubError, OSError, ValueError) as e:

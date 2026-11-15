@@ -263,11 +263,11 @@ A failed run's `reason` comes from the jobs the command already fetches: a faile
 
 ### Metrics report
 
-`uv run python -m factory.metrics --repo travism26/harness-lab` prints a markdown table, one row per factory Ticket and a totals row. A factory Ticket is one with an Implement Run record. It reads every comment through `gh`, trusts a marker only as the final line of a comment the factory bot wrote (`--app-slug`, default `OWNER-factory` from `--repo`), keys records by run id plus attempt so every attempt's cost counts, refuses a record whose `schema` it does not know, and also reads `factory/run-records-backfill.jsonl` when that file exists. It makes no model call. The columns:
+`uv run python -m factory.metrics --repo travism26/harness-lab` prints a markdown table, one row per factory Ticket and a totals row. A factory Ticket is one the factory bot claimed, under either start label, or one an Implement Run record names (a record proves a claim). The claim is the bot's own comment on the Ticket that starts with "The factory started this Ticket." (a comment anyone else wrote, or one that only quotes that text, does not count), found among the comments the report already reads. A claimed Ticket whose run left no record gets a row with Draft `no`. It reads every comment through `gh`, trusts a marker only as the final line of a comment the factory bot wrote (`--app-slug`, default `OWNER-factory` from `--repo`), keys records by run id plus attempt so every attempt's cost counts, refuses a record whose `schema` it does not know, and also reads `factory/run-records-backfill.jsonl` when that file exists. It makes no model call. The columns:
 
 | Column | Definition |
 |---|---|
-| Draft | The Ticket's Implement record has a `pr`. The total is over all factory Tickets. |
+| Draft | The Ticket's Implement record has a `pr`. The total is over all factory Tickets, claimed or recorded. |
 | First-pass review | The `verdict` of the first Review record for the pull request. The total is the share of PASS over Tickets that opened a draft. |
 | Cost (estimate) | The sum of `cost_usd` across the Ticket's records, with the login, always an estimate. |
 | Agent time | The sum of `duration_ms` across the Ticket's records. |
@@ -282,7 +282,7 @@ A failed run's `reason` comes from the jobs the command already fetches: a faile
 
 Every rate in the columns from Rework rounds on is over factory Tickets that opened a draft, except Merge. A Ticket with no draft shows `-`. Labels, pull requests, commits and CI runs are read per draft through `gh`, because the CI gate can charge a rework round or hand a pull request to a human and it is not a Factory run. Commit subjects on `main` are read through the commits API for the `--repo` repository, not a local clone, which may be stale.
 
-`--fixtures DIR` reads a directory of `ticket-<N>/` (`issue-comments.json`, `pr-comments.json`, `issue-timeline.json`, `pr-timeline.json`, `pr.json`, `pr-commits.json`, `ci-runs.json`) and a top-level `main-subjects.json` instead of GitHub, and `--backfill FILE` reads a backfill file. A fixtures directory holding a token-shaped string is refused. `tests/factory/fixtures/metrics/` holds fixtures cut down from real API JSON (prose replaced by placeholders, markers built by `factory/record.py`) and the golden table `tests/factory/fixtures/metrics/golden.md`. `ticket-9001`, `ticket-9003` and `ticket-9005` are synthetic (see `tests/factory/fixtures/metrics/SYNTHETIC.md`).
+`--fixtures DIR` reads a directory of `ticket-<N>/` (`issue-comments.json`, `pr-comments.json`, `issue-timeline.json`, `pr-timeline.json`, `pr.json`, `pr-commits.json`, `ci-runs.json`) and a top-level `main-subjects.json` instead of GitHub, and `--backfill FILE` reads a backfill file. A fixtures directory holding a token-shaped string is refused. `tests/factory/fixtures/metrics/` holds fixtures cut down from real API JSON (prose replaced by placeholders, markers built by `factory/record.py`) and the golden table `tests/factory/fixtures/metrics/golden.md`. `ticket-9001`, `ticket-9003`, `ticket-9005` and `ticket-9007` are synthetic (see `tests/factory/fixtures/metrics/SYNTHETIC.md`).
 
 ## CI
 
