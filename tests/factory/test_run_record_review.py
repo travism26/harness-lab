@@ -199,7 +199,7 @@ def test_a_review_with_no_result_line_fails_as_no_result(tmp_path):
 
 def test_findings_that_do_not_parse_fail_as_unparsed_findings(tmp_path):
     record, line = _failed(tmp_path, text="I could not decide, sorry")
-    assert record["reason"] == "unparsed-findings" and record["turns"] == 5
+    assert record["reason"] == "unparsed-findings" and record["turns"] == 10  # both runs
     assert "could not decide" not in line and "could not decide" not in json.dumps(record)
 
 

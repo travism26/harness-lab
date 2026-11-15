@@ -155,6 +155,94 @@ def test_review_fails_loudly_at_the_budget_cap(tmp_path):
         review_pr.review(_args(tmp_path), run_agent=agent)
 
 
+def _message(cost, turns, tokens):
+    usage = {"input_tokens": tokens, "output_tokens": 2 * tokens,
+             "cache_creation_input_tokens": 0, "cache_read_input_tokens": tokens}
+    return {"subtype": "success", "is_error": False, "num_turns": turns, "duration_ms": 100 * turns,
+            "total_cost_usd": cost, "usage": usage, "result": "MODEL TEXT",
+            "modelUsage": {"sonnet": {"inputTokens": tokens, "outputTokens": 2 * tokens,
+                                      "cacheCreationInputTokens": 0, "cacheReadInputTokens": tokens}}}
+
+
+def _agent_that_answers(answers, calls):
+    """Each answer is (success, text, cost); the fake writes a transcript for each run."""
+    def agent(prompt, **kw):
+        n = len(calls)
+        calls.append(kw)
+        kw["transcript"].write_text(f"transcript {n}\n")
+        ok, text, cost = answers[n]
+        return Result(ok, text, "success" if ok else "error_max_budget_usd", cost,
+                      _message(cost, n + 1, 10 * (n + 1)))
+    return agent
+
+
+def _context(tmp_path):
+    (tmp_path / "context.json").write_text(json.dumps(
+        {"repo": "o/r", "pr": 3, "base_sha": "b", "head_sha": "h", "code_dir": "pr", "ticket": None}))
+
+
+def test_review_runs_again_once_when_the_answer_does_not_parse(tmp_path, capsys):
+    _context(tmp_path)
+    calls = []
+    agent = _agent_that_answers([(True, '{"spec_findings": []}"', 0.25), (True, ANSWER, 0.5)], calls)
+    assert review_pr.review(_args(tmp_path, max_budget_usd=1.0), run_agent=agent) == 0
+    assert len(calls) == 2 and calls[1]["max_budget_usd"] == pytest.approx(0.75)
+    assert calls[0]["max_budget_usd"] == 1.0
+    assert json.loads((tmp_path / "findings.json").read_text())["spec_findings"]
+    assert (tmp_path / "agent.jsonl").read_text() == "transcript 1\n"
+    assert (tmp_path / "agent-unparsed.jsonl").read_text() == "transcript 0\n"
+    saved = json.loads((tmp_path / "result.json").read_text())
+    assert saved["total_cost_usd"] == pytest.approx(0.75)
+    assert saved["num_turns"] == 3 and saved["duration_ms"] == 300
+    assert saved["usage"] == {"input_tokens": 30, "output_tokens": 60,
+                              "cache_creation_input_tokens": 0, "cache_read_input_tokens": 30}
+    assert saved["model_usage"]["sonnet"]["outputTokens"] == 60
+    assert "MODEL TEXT" not in (tmp_path / "result.json").read_text()
+    assert "$0.75" in capsys.readouterr().out
+
+
+def test_review_fails_when_the_answer_does_not_parse_twice(tmp_path):
+    _context(tmp_path)
+    calls = []
+    agent = _agent_that_answers([(True, "no json", 0.1), (True, "still no json", 0.1)], calls)
+    with pytest.raises(RuntimeError, match="twice"):
+        review_pr.review(_args(tmp_path), run_agent=agent)
+    assert len(calls) == 2
+    assert json.loads((tmp_path / "result.json").read_text())["total_cost_usd"] == pytest.approx(0.2)
+
+
+def test_review_does_not_retry_a_run_that_did_not_succeed(tmp_path):
+    _context(tmp_path)
+    calls = []
+    agent = _agent_that_answers([(False, "", 0.5), (True, ANSWER, 0.1)], calls)
+    with pytest.raises(RuntimeError, match="budget cap"):
+        review_pr.review(_args(tmp_path), run_agent=agent)
+    assert len(calls) == 1
+
+
+def test_review_does_not_retry_when_the_first_run_spent_the_cap(tmp_path):
+    _context(tmp_path)
+    calls = []
+    agent = _agent_that_answers([(True, "no json", 1.0), (True, ANSWER, 0.1)], calls)
+    with pytest.raises(RuntimeError, match="could not be parsed"):
+        review_pr.review(_args(tmp_path, max_budget_usd=1.0), run_agent=agent)
+    assert len(calls) == 1
+
+
+def test_review_scrubs_the_unparsed_transcript(tmp_path, monkeypatch):
+    _context(tmp_path)
+    monkeypatch.setenv("FACTORY_SUBSCRIPTION_TOKEN", "sk-secret-value")
+    calls = []
+
+    def agent(prompt, **kw):
+        calls.append(kw)
+        kw["transcript"].write_text("leak sk-secret-value")
+        return Result(True, "no json" if len(calls) == 1 else ANSWER, "success", 0.1)
+
+    review_pr.review(_args(tmp_path), run_agent=agent)
+    assert "sk-secret-value" not in (tmp_path / "agent-unparsed.jsonl").read_text()
+
+
 def _write_review(tmp_path, head="abc123"):
     (tmp_path / "context.json").write_text(json.dumps(
         {"repo": "o/r", "pr": 3, "base_sha": "b", "head_sha": head, "code_dir": "pr", "ticket": 7}))

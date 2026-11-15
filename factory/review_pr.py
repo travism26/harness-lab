@@ -35,7 +35,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from factory import claude
 from factory.github import (GitHub, GitHubError, author, label_names, neutralize_comments,
@@ -454,26 +454,98 @@ def prepare(args, gh: Optional[GitHub] = None) -> int:
     return 0
 
 
+PARSE_ERRORS = (ValueError, KeyError, TypeError, AttributeError)
+
+
+def review_with_retry(run: Callable[[float, Path], claude.Result], cap_usd: float,
+                      transcript: Path) -> Tuple[Optional[Findings], List[claude.Result]]:
+    """(findings, the results of the runs made). `run(budget, transcript)` runs
+    the Review agent once. A run that succeeded but whose answer does not parse
+    is run once more, with what is left of the cap; the first run's transcript
+    is kept beside the last one as `<name>-unparsed<suffix>`. A run that did not
+    succeed is not retried. Findings are None when the last run failed or its
+    answer did not parse."""
+    first = run(cap_usd, transcript)
+    results = [first]
+    if not first.success:
+        return None, results
+    try:
+        return parse_findings(first.text), results
+    except PARSE_ERRORS:
+        pass
+    remaining = cap_usd - (first.cost_usd if first.cost_usd is not None else cap_usd)
+    if remaining <= 0:
+        return None, results
+    if transcript.exists():
+        transcript.replace(transcript.with_name(f"{transcript.stem}-unparsed{transcript.suffix}"))
+    second = run(remaining, transcript)
+    results.append(second)
+    if not second.success:
+        return None, results
+    try:
+        return parse_findings(second.text), results
+    except PARSE_ERRORS:
+        return None, results
+
+
+def total_message(results: Sequence[claude.Result]) -> dict:
+    """One result message for the runs: the numbers that add are summed, and
+    the rest is the last run's. {} when no run has a message."""
+    messages = [r.message for r in results if r.message]
+    if not messages:
+        return {}
+
+    def add(values):
+        numbers = [v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        return sum(numbers) if numbers else None
+
+    def sum_counts(dicts, keys):
+        return {k: add([d.get(k) for d in dicts]) for k in keys}
+
+    usages = [m["usage"] for m in messages if isinstance(m.get("usage"), dict)]
+    by_model = {}
+    for m in messages:
+        if isinstance(m.get("modelUsage"), dict):
+            for model, v in m["modelUsage"].items():
+                if isinstance(v, dict):
+                    by_model.setdefault(model, []).append(v)
+    total = dict(messages[-1])
+    for key in ("num_turns", "duration_ms", "total_cost_usd"):
+        total[key] = add([m.get(key) for m in messages])
+    total["usage"] = sum_counts(usages, claude.TOKEN_KEYS)
+    total["modelUsage"] = {model: sum_counts(vs, claude.MODEL_TOKEN_KEYS)
+                           for model, vs in by_model.items()}
+    return total
+
+
 def review(args, run_agent=claude.run) -> int:
     out = Path(args.out)
     ctx = json.loads((out / "context.json").read_text())
+    prompt = build_prompt(ctx, out)
+
+    def run(budget: float, transcript: Path) -> claude.Result:
+        return run_agent(prompt, login=args.login, model=args.model, max_budget_usd=budget,
+                         cwd=os.getcwd(), transcript=transcript, disallowed_tools=DENIED_TOOLS,
+                         allowed_tools=READ_TOOLS)
+
     try:
-        result = run_agent(build_prompt(ctx, out), login=args.login, model=args.model,
-                           max_budget_usd=args.max_budget_usd, cwd=os.getcwd(),
-                           transcript=out / "agent.jsonl", disallowed_tools=DENIED_TOOLS,
-                           allowed_tools=READ_TOOLS)
-        claude.save_numbers(out, result.message)
-        if not result.success:
-            raise RuntimeError(claude.failure_message(result, args.max_budget_usd,
+        findings, results = review_with_retry(run, args.max_budget_usd, out / "agent.jsonl")
+        claude.save_numbers(out, total_message(results))
+        last = results[-1]
+        if not last.success:
+            raise RuntimeError(claude.failure_message(last, args.max_budget_usd,
                                                       "FACTORY_REVIEW_BUDGET_USD"))
-        try:
-            findings = parse_findings(result.text)
-        except (ValueError, KeyError) as e:
-            raise RuntimeError(f"the review agent's findings could not be parsed: {e}") from e
+        if findings is None:
+            try:
+                parse_findings(last.text)
+            except PARSE_ERRORS as e:
+                tried = " (tried twice)" if len(results) == 2 else ""
+                raise RuntimeError(
+                    f"the review agent's findings could not be parsed{tried}: {e}") from e
         (out / "findings.json").write_text(json.dumps(asdict(findings), indent=2) + "\n")
         print(f"Review {'found a blocker' if findings.blocker else 'passed'}: "
               f"{len(findings.spec_findings) + len(findings.standards_findings)} finding(s), "
-              f"${result.cost_usd:.2f}")
+              f"${sum(r.cost_usd or 0 for r in results):.2f}")
         return 0
     finally:
         if claude.scrub(out, claude.secret_values(os.environ)):

@@ -128,10 +128,32 @@ def test_tracer_crash_skips_review(bench_case, tmp_path):
     assert calls == [] and row["build_cost_usd"] == 2.0
 
 
-def test_tracer_unparseable_review_is_error_and_not_retried(bench_case, tmp_path):
+def test_tracer_unparseable_review_is_retried_once(bench_case, tmp_path):
+    answers = iter(["not json", PASS_ANSWER])
+    seen = []
+
+    def two_answers(prompt, **kw):
+        seen.append(kw)
+        kw["transcript"].write_text(f"run {len(seen)}")
+        return claude.Result(True, next(answers), "success", 0.25)
+
+    setup = {"setup_id": "s1", "harness_command": standin(tmp_path, GOOD), "model": "sonnet",
+             "review_model": "sonnet", "repeat": 1}
+    row = bench.bench_run(bench_case, setup, tmp_path / "out", bench.Limits(), two_answers, SOURCE,
+                          step_env={})
+    assert row["review"] == "PASS" and row["outcome"] == "pass" and len(seen) == 2
+    assert seen[1]["max_budget_usd"] == pytest.approx(bench.Limits().review_cap_usd - 0.25)
+    assert row["review_cost_usd"] == pytest.approx(0.5)
+    run_dir = next((tmp_path / "out" / "runs").iterdir())
+    assert (run_dir / "review.jsonl").read_text() == "run 2"
+    assert (run_dir / "review-unparsed.jsonl").read_text() == "run 1"
+
+
+def test_tracer_review_unparseable_twice_is_error(bench_case, tmp_path):
     calls = []
     row = run(bench_case, tmp_path, standin(tmp_path, GOOD), "not json", calls=calls)
-    assert row["review"] == "error" and row["outcome"] == "fail" and len(calls) == 1
+    assert row["review"] == "error" and row["outcome"] == "fail" and len(calls) == 2
+    assert row["review_cost_usd"] == pytest.approx(0.5)
 
 
 def test_tracer_standin_env_and_scratch_clone(bench_case, tmp_path):
