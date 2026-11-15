@@ -253,6 +253,10 @@ Review's last step (`factory.run_record write --workflow review`, in `review.yml
 
 If a job hits `timeout-minutes`, GitHub cancels it, and GitHub's cancellation docs say a step whose condition is `always()` keeps running, within a five minute limit. No run of this repo has timed out yet, so a timed-out run leaving a record is documented but untested.
 
+### Backfill
+
+`uv run python -m factory.backfill --repo OWNER/NAME` builds a record for each past Implement, Rework and Review run whose agent started, from the artifacts GitHub still holds, and writes them to `factory/run-records-backfill.jsonl` (`--out` changes the path). Run it before the earliest artifacts expire on 2027-02-05. Each record has `backfilled: true`, its `ts` comes from the run, and the file is ordered by run id then attempt, so a second run gives the same bytes. Old artifacts predate `result.json`, so the numbers come from the transcript's closing result line, read through the same number-only path the factory uses. The download goes to a fresh temp directory (`--scratch` overrides it; one inside the repo is refused) and is deleted as soon as the record is built. A run with no artifact still gets a record with null numbers. `login`, `model`, `budget` and `claude_code_version` are null, since an old run did not leave them. `verdict`, `gate` and a Review's `round` come from the bot's report comment where one exists, and a Rework's `round` from the bot's charging comments. Old comments are not edited. The command prints how many records have numbers and how many do not.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every PR and on every push to `main`, with no secrets and
