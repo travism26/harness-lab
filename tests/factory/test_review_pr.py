@@ -304,3 +304,44 @@ def test_apply_keeps_a_quoted_comment_opener_readable_but_inert(tmp_path):
     review_pr.apply(_args(tmp_path), gh)
     assert "<!--" not in gh.comments[0].split("\n", 2)[2] and "&lt;" not in gh.comments[0]
     assert "<!" in gh.comments[0]
+
+
+def _answer(spec_kind=None, standards_kind="baseline_smell"):
+    spec = [{"kind": spec_kind, "description": "d", "resolution": "r", "file_path": None}] if spec_kind else []
+    return json.dumps({"spec_summary": "s", "standards_summary": "t", "spec_findings": spec,
+                       "standards_findings": [{"kind": standards_kind, "description": "d",
+                                               "resolution": "r", "file_path": None}]})
+
+
+def test_parse_findings_accepts_an_open_question_spec_finding():
+    findings = parse_findings(_answer("open_question"))
+    assert [f.kind for f in findings.spec_findings] == ["open_question"]
+
+
+def test_an_open_question_does_not_block():
+    question = Finding("open_question", "d", "r")
+    assert not Findings("s", "t", [question]).blocker
+    assert not Findings("s", "t", [question, Finding("scope_creep", "d", "r")]).blocker
+    assert Findings("s", "t", [question, Finding("missing_requirement", "d", "r")]).blocker
+
+
+def test_parse_findings_rejects_an_open_question_in_standards_findings():
+    with pytest.raises(ValueError):
+        parse_findings(_answer(None, standards_kind="open_question"))
+
+
+def test_render_report_passes_with_an_open_question_as_a_note():
+    findings = Findings("s", "t", [Finding("open_question", "the edge case", "decide")])
+    report = review_pr.render_report(findings, {"head_sha": "abc123def456", "ticket": 7},
+                                     Moves("pass"), [])
+    assert "## Factory review: PASS" in report
+    assert "### Spec: NOTES" in report
+    assert any(line.startswith("- **open_question** ") for line in report.splitlines())
+
+
+def test_build_prompt_offers_the_open_question_kind(tmp_path):
+    ctx = {"repo": "o/r", "pr": 3, "base_sha": "b", "head_sha": "h", "code_dir": "pr", "ticket": 7}
+    prompt = review_pr.build_prompt(ctx, tmp_path)
+    assert '- "open_question":' in prompt
+    assert 'scope_creep"|"open_question"' in prompt
+    assert "state the breach as a fact" in prompt

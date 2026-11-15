@@ -73,7 +73,8 @@ _CLOSING_RE = re.compile(
     r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?[ \t]+(?:([\w.-]+/[\w.-]+))?#(\d+)\b",
     re.IGNORECASE)
 
-SPEC_KINDS = {"missing_requirement": True, "implemented_wrongly": True, "scope_creep": False}
+SPEC_KINDS = {"missing_requirement": True, "implemented_wrongly": True, "scope_creep": False,
+              "open_question": False}
 STANDARDS_KINDS = ("repo_standard", "baseline_smell")
 
 
@@ -371,9 +372,19 @@ The requirement: {primary}
 ## Spec axis
 Check the diff against every acceptance criterion of the requirement, one by one. \
 Report each finding as one of:
-- "missing_requirement": a criterion or asked-for behaviour that is missing or partial.
-- "implemented_wrongly": it looks implemented but the implementation is wrong.
+- "missing_requirement": a sentence of the requirement asks for something, and the diff \
+does not do it or does only part of it.
+- "implemented_wrongly": a sentence of the requirement asks for something, and the diff \
+does it wrongly.
 - "scope_creep": behaviour the requirement didn't ask for.
+- "open_question": anything else worth raising against the requirement. Use it for \
+behaviour the requirement does not specify (an edge case it is silent on), for a sentence \
+of the requirement that can be read two ways when the diff implements one of them, for \
+anything you could not confirm by reading, and for a finding whose resolution is for \
+someone to decide or is to leave the code as it is.
+Use "missing_requirement" or "implemented_wrongly" only when you can quote the sentence \
+of the requirement, name the place in the diff that breaks it, and state the breach as a \
+fact. Only those two kinds send the change back for rework.
 Quote the criterion in the description.
 
 ## Standards axis
@@ -387,7 +398,7 @@ Keep the axes separate.
 
 Respond with ONLY this JSON object:
 {{"spec_summary": "<1-3 sentences>", "standards_summary": "<1-3 sentences>",
-  "spec_findings": [{{"kind": "missing_requirement"|"implemented_wrongly"|"scope_creep", \
+  "spec_findings": [{{"kind": "missing_requirement"|"implemented_wrongly"|"scope_creep"|"open_question", \
 "description": "...", "resolution": "...", "file_path": "path:line or null"}}],
   "standards_findings": [{{"kind": "repo_standard"|"baseline_smell", \
 "description": "...", "resolution": "...", "file_path": "path:line or null"}}]}}"""
