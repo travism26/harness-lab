@@ -24,6 +24,14 @@ _Avoid_: Task, story
 One pass in which the factory revises a draft PR after review. A ticket stops after two.
 _Avoid_: Retry, iteration
 
+**Factory run**:
+One attempt of the factory's Implement, Rework or Review workflow that started its agent. A refused Ticket, the CI gate and the Factory check are not Factory runs.
+_Avoid_: Run, job, session
+
+**Run record**:
+The one small record a Factory run leaves: what ran, on which Ticket or pull request, how it ended and what it cost. It holds facts and numbers, never text from the model.
+_Avoid_: Run log, Call record, ledger row
+
 **Brake**:
 A rule that limits what the factory can do on its own, such as draft-only PRs or the rework cap.
 _Avoid_: Guardrail, limit
