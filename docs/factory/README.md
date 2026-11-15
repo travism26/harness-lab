@@ -234,7 +234,7 @@ factory's Claude Code.
 | CI failure and green settle | `.github/workflows/ci-gate.yml`, `factory/ci_gate.py` |
 | Live check | `.github/workflows/factory-check.yml`, `factory/check.py` |
 | Claude Code login | `factory/claude.py`, `factory/switch_rule.py` |
-| Run record (Implement only for now) | `factory/run_record.py` (`write`), the last step of `.github/workflows/implement.yml` |
+| Run record (Implement and Rework for now) | `factory/run_record.py` (`write`), the last step of `.github/workflows/implement.yml` and `.github/workflows/rework.yml` |
 | CI check | `.github/workflows/ci.yml`, `factory/ci_projects.py` (see [CI](#ci)) |
 
 The owner runs one Bench tracer, no model call and no GitHub call: `uv run python -m factory.bench --case CASE.json --setup-id ID --harness-command CMD --review-answer-file tests/factory/review-answer.json`.
@@ -247,7 +247,7 @@ A Run record is the one small JSON object a Factory run leaves behind: what ran 
 
 It lives in two places. The durable copy is a hidden `<!-- factory:run {...} -->` marker appended to the comment the run already posted on the Ticket (the "opened a draft PR" comment, or the "failed" comment), so it lasts as long as the Ticket. A cancelled run posts neither comment, so its record goes on one plain line the last step posts. The other copy is `run-out/run.json` in the run's uploaded files, which GitHub deletes after 90 days. The decision is in [ADR 0010](../adr/0010-run-records-live-in-comment-markers.md).
 
-`factory.ticket build` saves only the raw numbers from the CLI's result line to `run-out/result.json`. The last step of `implement.yml` (`factory.run_record write`) runs whenever the agent step started, holds the App token, and trusts nothing the agent step wrote: the run's identity comes from the workflow's context, it copies only known fields from `result.json`, checks each one's type, writes a field that fails its check as null with a workflow warning, and never puts `-->` or a token-shaped string in the marker. It finds its comment among the bot's own comments on the Ticket, never from a file. Only Implement writes a record today; Rework and Review follow.
+`factory.ticket build` saves only the raw numbers from the CLI's result line to `run-out/result.json`. The last step of `implement.yml` (`factory.run_record write`) runs whenever the agent step started, holds the App token, and trusts nothing the agent step wrote: the run's identity comes from the workflow's context, it copies only known fields from `result.json`, checks each one's type, writes a field that fails its check as null with a workflow warning, and never puts `-->` or a token-shaped string in the marker. It finds its comment among the bot's own comments on the Ticket, never from a file. Rework has no comment of its own, so its last step (`factory.run_record write --workflow rework`) posts one plain line on the pull request, for example "Rework round 1 pushed `abc1234`." or "Rework round 1 failed: `no-change`.", with a link to the run and the marker. `round` and `pr` come from the workflow's context (the event's pull request and its `rework:N` label when the run started), never from `run-out/`. A Rework run refused before its agent starts leaves no record. Review follows.
 
 If a job hits `timeout-minutes`, GitHub cancels it, and GitHub's cancellation docs say a step whose condition is `always()` keeps running, within a five minute limit. No run of this repo has timed out yet, so a timed-out run leaving a record is documented but untested.
 

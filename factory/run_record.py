@@ -27,6 +27,7 @@ from typing import List, Optional
 
 from factory import claude
 from factory.github import GitHub, GitHubError, write_comment
+from factory.review_pr import rework_round
 from factory.switch_rule import LOGINS
 from factory.ticket import OPENED_PREFIX, UNCHANGED_FILE, failed_prefix
 
@@ -234,11 +235,58 @@ def _bot_comment(comments: List[dict], slug: str, prefix: str) -> Optional[dict]
     return max(found, key=lambda c: c["id"]) if found else None
 
 
+def _rework_round(pr_labels: Optional[str]) -> Optional[int]:
+    """The `rework:N` the pull request carried when the run started, or None."""
+    try:
+        labels = json.loads(pr_labels or "[]")
+    except ValueError:
+        return None
+    if not isinstance(labels, list):
+        return None
+    return rework_round([x for x in labels if isinstance(x, str)]) or None
+
+
+def write_rework(args, gh: GitHub, out: Path) -> int:
+    """The Rework run: write <out>/run.json and post one plain line, with the marker, on
+    the pull request. The pull request and round come from the workflow's context."""
+    numbers = read_numbers(out)
+    ok = (args.publish_outcome == "success" and args.job_status != "cancelled")
+    round_ = _rework_round(args.pr_labels)
+    reason = None if ok else _implement_reason(args, numbers, out)
+    head_sha = None
+    if ok:
+        try:
+            head_sha = gh.pr(args.repo, args.pr).get("headRefOid")
+        except GitHubError as e:
+            print(f"::warning title=Run record::could not read the pull request: {e}")
+    ctx = {"repo": args.repo, "run_id": args.run_id, "attempt": args.attempt,
+           "issue": args.issue, "project": args.project, "login": args.login,
+           "model": args.model, "budget": args.budget,
+           "claude_code_version": args.claude_code_version}
+    record = build_record("rework", ctx, numbers, "ok" if ok else "fail", reason,
+                          pr=args.pr, head_sha=head_sha, round_=round_)
+    (out / "run.json").write_text(json.dumps(record, indent=2) + "\n")
+    label = f"Rework round {'unknown' if record['round'] is None else record['round']}"
+    if record["outcome"] == "ok":
+        said = f"{label} pushed `{(record['head_sha'] or 'unknown')[:7]}`."
+    else:
+        said = f"{label} failed: `{record['reason'] or 'unknown'}`."
+    body = f"{said} [Run]({args.run_url}) {marker(record)}\n"
+    try:
+        gh.comment(args.repo, args.pr, write_comment(out, "run-comment.md", body))
+    except GitHubError as e:
+        print(f"::warning title=Run record::could not post the record: {e}")
+    print(f"Run record: {record['outcome']}" + (f" ({record['reason']})" if record["reason"] else ""))
+    return 0
+
+
 def write(args, gh: Optional[GitHub] = None) -> int:
     """Build the record, write <out>/run.json and put the marker on the run's comment."""
     gh = gh or GitHub()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    if args.workflow == "rework":
+        return write_rework(args, gh, out)
     if args.workflow != "implement":
         raise RuntimeError(f"no Run record is wired for the {args.workflow} workflow yet")
     numbers = read_numbers(out)
@@ -296,6 +344,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     w.add_argument("--model", required=True)
     w.add_argument("--budget", required=True)
     w.add_argument("--claude-code-version", dest="claude_code_version", required=True)
+    w.add_argument("--pr", type=int, default=None)
+    w.add_argument("--pr-labels", dest="pr_labels", default=None)
     w.add_argument("--app-slug", required=True)
     w.add_argument("--run-url", required=True)
     w.add_argument("--job-status", default="")
