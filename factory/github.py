@@ -82,6 +82,11 @@ class GitHub:
                         f"repos/{repo}/issues/{number}/comments?per_page=100"])
         return [c for page in json.loads(out) for c in page]
 
+    def repo_comments(self, repo: str) -> List[dict]:
+        """Every issue and pull request comment in the repo (the metrics report reads these)."""
+        out = self._gh(["api", "--paginate", "--slurp", f"repos/{repo}/issues/comments?per_page=100"])
+        return [c for page in json.loads(out) for c in page]
+
     def comment(self, repo: str, number: int, body_file: Path) -> int:
         # Issues and PRs share one number space; the issue endpoint takes both.
         out = self._gh(["api", f"repos/{repo}/issues/{number}/comments",
