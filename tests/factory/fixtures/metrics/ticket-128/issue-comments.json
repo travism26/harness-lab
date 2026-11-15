@@ -1,0 +1,18 @@
+[
+  {
+    "id": 6864491578,
+    "user": {
+      "login": "travism26-factory[bot]"
+    },
+    "created_at": "2026-11-13T20:45:10Z",
+    "body": "The factory started this Ticket. [Run](https://github.com/travism26/harness-lab/actions/runs/43504391830)\n"
+  },
+  {
+    "id": 6864551703,
+    "user": {
+      "login": "travism26-factory[bot]"
+    },
+    "created_at": "2026-11-13T20:48:02Z",
+    "body": "The factory opened a draft PR: https://github.com/travism26/harness-lab/pull/133\n<!-- factory:run {\"schema\":1,\"ts\":\"2026-11-13T20:48:02Z\",\"workflow\":\"implement\",\"run_id\":43504391830,\"attempt\":1,\"repo\":\"travism26/harness-lab\",\"issue\":128,\"pr\":133,\"project\":null,\"login\":\"subscription\",\"model\":\"sonnet\",\"budget\":5.0,\"model_ids\":[\"claude-sonnet-5-5\"],\"claude_code_version\":\"2.1.319\",\"round\":0,\"outcome\":\"ok\",\"reason\":null,\"verdict\":null,\"gate\":null,\"cost_usd\":0.1289566,\"cost_note\":\"client-estimate\",\"turns\":5,\"duration_ms\":40915,\"input_tokens\":10,\"output_tokens\":4592,\"cache_creation_input_tokens\":18389,\"cache_read_input_tokens\":94606,\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"} -->\n"
+  }
+]

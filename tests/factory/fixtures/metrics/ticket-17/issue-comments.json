@@ -1,0 +1,18 @@
+[
+  {
+    "id": 6708079532,
+    "user": {
+      "login": "travism26-factory[bot]"
+    },
+    "created_at": "2026-11-07T14:18:49Z",
+    "body": "The factory started this Ticket. [Run](https://github.com/travism26/harness-lab/actions/runs/42380989150)\n"
+  },
+  {
+    "id": 6708100408,
+    "user": {
+      "login": "travism26-factory[bot]"
+    },
+    "created_at": "2026-11-07T14:20:36Z",
+    "body": "The factory opened a draft PR: https://github.com/travism26/harness-lab/pull/20\n"
+  }
+]
