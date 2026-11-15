@@ -1,0 +1,9 @@
+{
+  "number": 133,
+  "state": "closed",
+  "created_at": "2026-11-13T20:48:01Z",
+  "merged_at": "2026-11-13T21:02:27Z",
+  "head": {
+    "ref": "factory/issue-128"
+  }
+}

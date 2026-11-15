@@ -1,0 +1,132 @@
+{
+  "workflow_runs": [
+    {
+      "name": "CI",
+      "event": "pull_request",
+      "conclusion": "success",
+      "created_at": "2026-11-07T14:20:37Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "9d4c9adf105467ba5f411b3c1e41007f8089c773"
+    },
+    {
+      "name": "Review",
+      "event": "pull_request_target",
+      "conclusion": "success",
+      "created_at": "2026-11-07T14:20:37Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "9d4c9adf105467ba5f411b3c1e41007f8089c773"
+    },
+    {
+      "name": "Rework",
+      "event": "pull_request_target",
+      "conclusion": "skipped",
+      "created_at": "2026-11-07T14:21:23Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "9d4c9adf105467ba5f411b3c1e41007f8089c773"
+    },
+    {
+      "name": "Rework",
+      "event": "pull_request_target",
+      "conclusion": "success",
+      "created_at": "2026-11-07T14:21:23Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "9d4c9adf105467ba5f411b3c1e41007f8089c773"
+    },
+    {
+      "name": "Review",
+      "event": "pull_request_target",
+      "conclusion": "success",
+      "created_at": "2026-11-07T14:22:13Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "f2a796b39493d8cae16ac80333ebc1bdffff998a"
+    },
+    {
+      "name": "CI",
+      "event": "pull_request",
+      "conclusion": "success",
+      "created_at": "2026-11-07T14:22:15Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "f2a796b39493d8cae16ac80333ebc1bdffff998a"
+    },
+    {
+      "name": "Review",
+      "event": "pull_request_target",
+      "conclusion": "success",
+      "created_at": "2026-11-07T14:31:58Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "d1d8c5ed1b3726aff92aa9fa27c4bfe05b1a17e8"
+    },
+    {
+      "name": "CI",
+      "event": "pull_request",
+      "conclusion": "success",
+      "created_at": "2026-11-07T14:31:59Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "d1d8c5ed1b3726aff92aa9fa27c4bfe05b1a17e8"
+    },
+    {
+      "name": "Rework",
+      "event": "pull_request_target",
+      "conclusion": "skipped",
+      "created_at": "2026-11-07T14:33:23Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "d1d8c5ed1b3726aff92aa9fa27c4bfe05b1a17e8"
+    },
+    {
+      "name": "Rework",
+      "event": "pull_request_target",
+      "conclusion": "success",
+      "created_at": "2026-11-07T14:33:23Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "d1d8c5ed1b3726aff92aa9fa27c4bfe05b1a17e8"
+    },
+    {
+      "name": "Review",
+      "event": "pull_request_target",
+      "conclusion": "success",
+      "created_at": "2026-11-07T14:34:56Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "2c378a96ca120d99d58a1d9544a481584be1b31f"
+    },
+    {
+      "name": "CI",
+      "event": "pull_request",
+      "conclusion": "success",
+      "created_at": "2026-11-07T14:34:59Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "2c378a96ca120d99d58a1d9544a481584be1b31f"
+    },
+    {
+      "name": "Rework",
+      "event": "pull_request_target",
+      "conclusion": "skipped",
+      "created_at": "2026-11-07T14:35:42Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "2c378a96ca120d99d58a1d9544a481584be1b31f"
+    },
+    {
+      "name": "CI",
+      "event": "pull_request",
+      "conclusion": "success",
+      "created_at": "2026-11-07T14:40:08Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "cd262518a375574808baaeee8ab254dc3e36281d"
+    },
+    {
+      "name": "Review",
+      "event": "pull_request_target",
+      "conclusion": "skipped",
+      "created_at": "2026-11-07T14:40:08Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "cd262518a375574808baaeee8ab254dc3e36281d"
+    },
+    {
+      "name": "Review",
+      "event": "pull_request_target",
+      "conclusion": "skipped",
+      "created_at": "2026-11-07T14:40:47Z",
+      "head_branch": "factory/issue-17",
+      "head_sha": "cd262518a375574808baaeee8ab254dc3e36281d"
+    }
+  ]
+}

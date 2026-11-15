@@ -1,0 +1,60 @@
+{
+  "workflow_runs": [
+    {
+      "name": "Review",
+      "event": "pull_request_target",
+      "conclusion": "success",
+      "created_at": "2026-11-13T20:48:05Z",
+      "head_branch": "factory/issue-128",
+      "head_sha": "7e2e289de2ba306267ab37f972a0cf8419f84982"
+    },
+    {
+      "name": "CI",
+      "event": "pull_request",
+      "conclusion": "success",
+      "created_at": "2026-11-13T20:48:05Z",
+      "head_branch": "factory/issue-128",
+      "head_sha": "7e2e289de2ba306267ab37f972a0cf8419f84982"
+    },
+    {
+      "name": "Rework",
+      "event": "pull_request_target",
+      "conclusion": "skipped",
+      "created_at": "2026-11-13T20:48:50Z",
+      "head_branch": "factory/issue-128",
+      "head_sha": "7e2e289de2ba306267ab37f972a0cf8419f84982"
+    },
+    {
+      "name": "Rework",
+      "event": "pull_request_target",
+      "conclusion": "success",
+      "created_at": "2026-11-13T20:48:50Z",
+      "head_branch": "factory/issue-128",
+      "head_sha": "7e2e289de2ba306267ab37f972a0cf8419f84982"
+    },
+    {
+      "name": "Review",
+      "event": "pull_request_target",
+      "conclusion": "success",
+      "created_at": "2026-11-13T20:50:04Z",
+      "head_branch": "factory/issue-128",
+      "head_sha": "5b0c49fba95990980c1ecf4881778afbf632d0f3"
+    },
+    {
+      "name": "CI",
+      "event": "pull_request",
+      "conclusion": "success",
+      "created_at": "2026-11-13T20:50:06Z",
+      "head_branch": "factory/issue-128",
+      "head_sha": "5b0c49fba95990980c1ecf4881778afbf632d0f3"
+    },
+    {
+      "name": "Review",
+      "event": "pull_request_target",
+      "conclusion": "success",
+      "created_at": "2026-11-13T21:02:22Z",
+      "head_branch": "factory/issue-128",
+      "head_sha": "5b0c49fba95990980c1ecf4881778afbf632d0f3"
+    }
+  ]
+}
