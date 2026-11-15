@@ -263,8 +263,18 @@ If a job hits `timeout-minutes`, GitHub cancels it, and GitHub's cancellation do
 | First-pass review | The `verdict` of the first Review record for the pull request. The total is the share of PASS over Tickets that opened a draft. |
 | Cost (estimate) | The sum of `cost_usd` across the Ticket's records, with the login, always an estimate. |
 | Agent time | The sum of `duration_ms` across the Ticket's records. |
+| Rework rounds | The highest `rework:N` label the bot added, read from the Ticket's and the pull request's timelines. A label added by anyone else, such as a hand re-add of `rework`, does not count. The total is the sum. |
+| Owner commits | Commits on the pull request not authored by the bot. The total is the sum. |
+| Human escalation | The bot added `ready-for-human`. |
+| CI on first push | The first run of the CI workflow on `factory/issue-<N>` concluded `success`. Review runs and the CI gate are not CI. A branch with no CI run shows `none`, an unfinished first run `pending`; neither is a success. |
+| Start label to draft | From the bot removing the start label (`ready-for-factory`, or `ready-for-agent` before 2026-11-08), taking the last removal at or before the pull request's creation, to that creation. The total is the median. |
+| Merge | `merged`, `closed` (unmerged) or `open`. The total is merged over merged plus closed; an open pull request counts toward neither. |
+| Untouched merge | Merged with no owner commit and never labelled `ready-for-human` by the bot. |
+| Post-merge reverts | Subjects of commits on `main` that start with `Revert` and name the merged pull request as `#<N>`. The total is the sum. |
 
-`--fixtures DIR` reads a directory of `ticket-<N>/issue-comments.json` and `pr-comments.json` instead of GitHub, and `--backfill FILE` reads a backfill file. A fixtures directory holding a token-shaped string is refused. `tests/factory/fixtures/metrics/` holds fixtures cut down from real API JSON (prose replaced by placeholders, markers built by `factory/run_record.py`) and the golden table `golden.md`.
+Every rate in the columns from Rework rounds on is over factory Tickets that opened a draft, except Merge. A Ticket with no draft shows `-`. Labels, pull requests, commits and CI runs are read per draft through `gh`, because the CI gate can charge a rework round or hand a pull request to a human and it is not a Factory run. Commit subjects on `main` are read through the commits API for the `--repo` repository, not a local clone, which may be stale.
+
+`--fixtures DIR` reads a directory of `ticket-<N>/` (`issue-comments.json`, `pr-comments.json`, `issue-timeline.json`, `pr-timeline.json`, `pr.json`, `pr-commits.json`, `ci-runs.json`) and a top-level `main-subjects.json` instead of GitHub, and `--backfill FILE` reads a backfill file. A fixtures directory holding a token-shaped string is refused. `tests/factory/fixtures/metrics/` holds fixtures cut down from real API JSON (prose replaced by placeholders, markers built by `factory/run_record.py`) and the golden table `golden.md`. `ticket-9001`, `ticket-9003` and `ticket-9005` are synthetic (see `SYNTHETIC.md` there).
 
 ## CI
 

@@ -50,6 +50,45 @@ def test_the_golden_table_comes_from_the_fixtures_offline(capsys):
     assert out == (FIXTURES / "golden.md").read_text()
 
 
+def test_live_mode_reads_the_same_facts_through_gh(capsys, monkeypatch):
+    """`--repo` asks GitHub for each draft's timelines, pull request, commits and branch runs, and
+    for main's subjects; a fake serving the fixtures must give the golden table."""
+    def load(issue, name, default):
+        path = FIXTURES / f"ticket-{issue}" / name
+        return json.loads(path.read_text()) if path.is_file() else default
+
+    class FakeGitHub:
+        calls = []
+
+        def repo_comments(self, repo):
+            return [c for d in sorted(FIXTURES.glob("ticket-*")) for n in metrics.COMMENT_FILES
+                    for c in (json.loads((d / n).read_text()) if (d / n).is_file() else [])]
+
+        def label_events(self, repo, number):
+            self.calls.append(("label_events", number))
+            issue = next(i for i in PRS if number in (i, PRS[i]))
+            return load(issue, "issue-timeline.json" if number == issue else "pr-timeline.json", [])
+
+        def pull(self, repo, number):
+            return load(next(i for i in PRS if PRS[i] == number), "pr.json", {})
+
+        def pull_commits(self, repo, number):
+            return load(next(i for i in PRS if PRS[i] == number), "pr-commits.json", [])
+
+        def branch_runs(self, repo, branch):
+            return load(int(branch.rsplit("-", 1)[1]), "ci-runs.json", {}).get("workflow_runs", [])
+
+        def main_subjects(self, repo):
+            return json.loads((FIXTURES / "main-subjects.json").read_text())
+
+    PRS = {int(d.name.split("-")[1]): load(int(d.name.split("-")[1]), "pr.json", {}).get("number")
+           for d in FIXTURES.glob("ticket-*")}
+    monkeypatch.setattr(metrics, "GitHub", FakeGitHub)
+    code, out, err = _run(capsys, "--repo", "o/r", "--backfill", str(FIXTURES / "backfill.jsonl"))
+    assert code == 0, err
+    assert out == (FIXTURES / "golden.md").read_text()
+
+
 def test_a_marker_on_a_comment_the_bot_did_not_write_is_ignored(tmp_path, capsys):
     fx = _fixtures(tmp_path,
                    _comment(1, "opened\n" + _marker(_record(pr=9, cost_usd=0.5))),

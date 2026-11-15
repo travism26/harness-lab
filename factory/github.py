@@ -87,6 +87,33 @@ class GitHub:
         out = self._gh(["api", "--paginate", "--slurp", f"repos/{repo}/issues/comments?per_page=100"])
         return [c for page in json.loads(out) for c in page]
 
+    def _paged(self, path: str) -> List[dict]:
+        out = self._gh(["api", "--paginate", "--slurp", path])
+        return [item for page in json.loads(out) for item in (page if isinstance(page, list) else [page])]
+
+    def label_events(self, repo: str, number: int) -> List[dict]:
+        """The labeled and unlabeled events on a Ticket or pull request, as the timeline gives them."""
+        return [e for e in self._paged(f"repos/{repo}/issues/{number}/timeline?per_page=100")
+                if e.get("event") in ("labeled", "unlabeled")]
+
+    def pull(self, repo: str, number: int) -> dict:
+        return json.loads(self._gh(["api", f"repos/{repo}/pulls/{number}"]))
+
+    def pull_commits(self, repo: str, number: int) -> List[dict]:
+        return self._paged(f"repos/{repo}/pulls/{number}/commits?per_page=100")
+
+    def branch_runs(self, repo: str, branch: str) -> List[dict]:
+        """Every workflow run on a branch (CI, Review and Rework alike; the caller picks)."""
+        runs = self._gh(["api", "--paginate", "--slurp",
+                         f"repos/{repo}/actions/runs?branch={quote(branch, safe='')}&per_page=100"])
+        return [run for page in json.loads(runs) for run in page.get("workflow_runs", [])]
+
+    def main_subjects(self, repo: str) -> List[str]:
+        """The first line of every commit message on main, newest first."""
+        messages = [(c.get("commit") or {}).get("message") or ""
+                    for c in self._paged(f"repos/{repo}/commits?sha=main&per_page=100")]
+        return [m.splitlines()[0] if m else "" for m in messages]
+
     def comment(self, repo: str, number: int, body_file: Path) -> int:
         # Issues and PRs share one number space; the issue endpoint takes both.
         out = self._gh(["api", f"repos/{repo}/issues/{number}/comments",

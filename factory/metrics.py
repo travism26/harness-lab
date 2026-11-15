@@ -143,6 +143,25 @@ class FixtureSource:
         return self._json(self.directory / "main-subjects.json", [])
 
 
+class LiveSource:
+    """Facts read through gh. Per draft: two timelines, the pull request, its commits and the runs
+    on its branch. Commit subjects on main are read through the API, not a local clone: a clone may
+    be stale or absent, and the API answers for the repo named by --repo."""
+
+    def __init__(self, gh, repo: str):
+        self.gh, self.repo = gh, repo
+
+    def facts(self, issue: int, pr: int, app_slug: str) -> "Facts":
+        return Facts(app_slug,
+                     events=self.gh.label_events(self.repo, issue) + self.gh.label_events(self.repo, pr),
+                     pr=self.gh.pull(self.repo, pr),
+                     commits=self.gh.pull_commits(self.repo, pr),
+                     runs=self.gh.branch_runs(self.repo, f"factory/issue-{issue}"))
+
+    def main_subjects(self) -> List[str]:
+        return self.gh.main_subjects(self.repo)
+
+
 def attach_facts(tickets: List["Ticket"], source, app_slug: str) -> None:
     """Give every Ticket that opened a draft its facts."""
     subjects = source.main_subjects() if any(t.pr for t in tickets) else []
@@ -384,7 +403,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             source = FixtureSource(Path(args.fixtures))
             backfill = Path(args.backfill) if args.backfill else None
         else:
-            comments = GitHub().repo_comments(args.repo)
+            gh = GitHub()
+            comments = gh.repo_comments(args.repo)
+            source = LiveSource(gh, args.repo)
             backfill = Path(args.backfill) if args.backfill else (BACKFILL if BACKFILL.is_file() else None)
         live = records_in(comments, args.app_slug)
         old = read_backfill(backfill) if backfill else []
