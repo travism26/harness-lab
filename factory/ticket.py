@@ -467,6 +467,14 @@ def pr_body(ctx: dict, summary: str) -> str:
 _UNCHANGED = ("the agent finished without changing the work checkout, "
               "so there is nothing to publish")
 _UNCHANGED_FILE = "unchanged.md"
+UNCHANGED_FILE = _UNCHANGED_FILE
+# The start of the comments publish and release post. `factory.run_record` finds
+# the run's comment by these, so a file in --out never picks which comment is edited.
+OPENED_PREFIX = "The factory opened a draft PR: "
+
+
+def failed_prefix(run_url: str) -> str:
+    return f"The factory run for this Ticket failed: [run]({run_url})"
 
 
 def _porcelain_path(line: str) -> str:
@@ -556,13 +564,13 @@ def publish(args, gh: Optional[GitHub] = None) -> int:
     body = write_comment(out, "pr-body.md", pr_body(ctx, summary))
     url = gh.create_draft_pr(ctx["repo"], BASE_BRANCH, ctx["branch"], ctx["title"], body)
     gh.comment(ctx["repo"], ctx["issue"], write_comment(
-        out, "opened.md", f"The factory opened a draft PR: {url}\n"))
+        out, "opened.md", f"{OPENED_PREFIX}{url}\n"))
     print(f"Opened {url}")
     return 0
 
 
 def _failure_comment(out: Path, run_url: str) -> str:
-    body = (f"The factory run for this Ticket failed: [run]({run_url}). "
+    body = (f"{failed_prefix(run_url)}. "
             f"`{PROGRESS_LABEL}` has been removed; re-apply `{START_LABEL}` to try again.\n")
     unchanged = out / _UNCHANGED_FILE
     if unchanged.is_file():
