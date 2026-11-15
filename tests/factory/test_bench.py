@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -402,3 +403,28 @@ def test_replay_gives_the_harness_only_the_bench_key(bench_case, tmp_path):
                                             "GH_TOKEN": None}
     assert "sk-test-key-value" not in "".join(
         p.read_text(errors="replace") for p in (tmp_path / "o").rglob("*") if p.is_file())
+
+
+def test_baseline_standin_names_a_ticket_file_that_exists_when_claude_starts(tmp_path, monkeypatch):
+    ticket_file = tmp_path / "ticket.md"
+    ticket_file.write_text("# Make done.txt\n")
+    result_file = tmp_path / "result.json"
+    step_env = {"BENCH_TICKET": str(ticket_file), "BENCH_BUDGET": "2.0", "BENCH_MODEL": "sonnet",
+                "BENCH_RESULT": str(result_file), bench.KEY_VAR: "test-key"}
+    calls = []
+
+    def fake_run(cmd, input, stdout, **_):
+        named = re.findall(r"[^\s`'\"]*ticket\.md", input)
+        calls.append({path: Path(path).is_file() for path in named})
+        stdout.write(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                                 "result": "built", "total_cost_usd": 0.5, "num_turns": 3,
+                                 "duration_ms": 10, "usage": {"input_tokens": 1}}) + "\n")
+        return subprocess.CompletedProcess(cmd, 0, stdout=None, stderr="")
+
+    monkeypatch.setattr(bench.subprocess, "run", fake_run)
+    code = bench.baseline_standin(step_env)
+    assert len(calls) == 1
+    assert calls[0], "the prompt names no ticket.md"
+    assert all(calls[0].values()), calls[0]
+    assert code == 0
+    assert json.loads(result_file.read_text())["ok"] is True

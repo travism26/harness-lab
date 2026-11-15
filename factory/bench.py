@@ -357,7 +357,7 @@ def baseline_standin(step_env: Optional[Mapping[str, str]] = None) -> int:
         out = Path(tmp)
         (out / "ticket.md").write_text(ticket_path.read_text())
         (out / "context.json").write_text(json.dumps({"project": "harness", "bootstrap": False}))
-        prompt = ticket_mod.build_prompt(out)
+        prompt = ticket_mod.build_prompt(out, ticket_path=str(ticket_path.resolve()))
     transcript = ticket_path.parent / "build.jsonl"
     began = time.monotonic()
     with transcript.open("w") as f:
