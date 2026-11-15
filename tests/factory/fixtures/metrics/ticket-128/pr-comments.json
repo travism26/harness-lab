@@ -13,7 +13,7 @@
       "login": "travism26-factory[bot]"
     },
     "created_at": "2026-11-13T20:49:50Z",
-    "body": "Rework round 1 pushed `bbbbbbb`. [Run](https://github.com/travism26/harness-lab/actions/runs/43504986244) <!-- factory:run {\"schema\":1,\"ts\":\"2026-11-13T20:49:50Z\",\"workflow\":\"rework\",\"run_id\":43504986244,\"attempt\":1,\"repo\":\"travism26/harness-lab\",\"issue\":128,\"pr\":133,\"project\":null,\"login\":\"subscription\",\"model\":\"sonnet\",\"budget\":5.0,\"model_ids\":[\"claude-sonnet-5-5\"],\"claude_code_version\":\"2.1.319\",\"round\":1,\"outcome\":\"ok\",\"reason\":null,\"verdict\":null,\"gate\":null,\"cost_usd\":0.1233179,\"cost_note\":\"client-estimate\",\"turns\":7,\"duration_ms\":32535,\"input_tokens\":14,\"output_tokens\":3115,\"cache_creation_input_tokens\":19213,\"cache_read_input_tokens\":152879,\"head_sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"} -->\n"
+    "body": "Rework round 1 pushed `bbbbbbb`. [Run](https://github.com/travism26/harness-lab/actions/runs/43504986244)\n<!-- factory:run {\"schema\":1,\"ts\":\"2026-11-13T20:49:50Z\",\"workflow\":\"rework\",\"run_id\":43504986244,\"attempt\":1,\"repo\":\"travism26/harness-lab\",\"issue\":128,\"pr\":133,\"project\":null,\"login\":\"subscription\",\"model\":\"sonnet\",\"budget\":5.0,\"model_ids\":[\"claude-sonnet-5-5\"],\"claude_code_version\":\"2.1.319\",\"round\":1,\"outcome\":\"ok\",\"reason\":null,\"verdict\":null,\"gate\":null,\"cost_usd\":0.1233179,\"cost_note\":\"client-estimate\",\"turns\":7,\"duration_ms\":32535,\"input_tokens\":14,\"output_tokens\":3115,\"cache_creation_input_tokens\":19213,\"cache_read_input_tokens\":152879,\"head_sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"} -->\n"
   },
   {
     "id": 6864607676,

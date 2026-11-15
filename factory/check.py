@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from factory import claude
-from factory.github import GitHub, GitHubError, label_names, write_comment
+from factory.github import GitHub, GitHubError, label_names, neutralize_comments, write_comment
 from factory.switch_rule import LOGINS
 
 LABEL = "factory-check"
@@ -54,7 +54,7 @@ def answer(args, gh: Optional[GitHub] = None) -> int:
     out = Path(args.out)
     reply = json.loads((out / "answer.json").read_text())
     body = (f"Factory check: the factory answered as its GitHub App, and Claude Code replied "
-            f"`{reply['text'].strip()}` on the `{args.login}` login "
+            f"`{neutralize_comments(reply['text'].strip())}` on the `{args.login}` login "
             f"(${reply['cost_usd']:.4f}). [Run]({args.run_url})\n")
     gh.comment(args.repo, args.issue, write_comment(out, "answer.md", body))
     if LABEL in label_names(gh.issue(args.repo, args.issue)):

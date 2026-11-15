@@ -77,26 +77,26 @@ class GitHub:
     def job_log(self, repo: str, job_id: int) -> str:
         return self._gh(["api", f"repos/{repo}/actions/jobs/{job_id}/logs"])
 
+    def _paged(self, path: str) -> List[dict]:
+        """Every page of a list endpoint, flattened. A page that is an object (the runs
+        endpoints wrap their list) comes back as one item."""
+        out = self._gh(["api", "--paginate", "--slurp", path])
+        return [item for page in json.loads(out) for item in (page if isinstance(page, list) else [page])]
+
     def pr_comments(self, repo: str, number: int) -> List[dict]:
-        out = self._gh(["api", "--paginate", "--slurp",
-                        f"repos/{repo}/issues/{number}/comments?per_page=100"])
-        return [c for page in json.loads(out) for c in page]
+        return self._paged(f"repos/{repo}/issues/{number}/comments?per_page=100")
 
     def repo_comments(self, repo: str) -> List[dict]:
         """Every issue and pull request comment in the repo (the metrics report reads these)."""
-        out = self._gh(["api", "--paginate", "--slurp", f"repos/{repo}/issues/comments?per_page=100"])
-        return [c for page in json.loads(out) for c in page]
-
-    def _paged(self, path: str) -> List[dict]:
-        out = self._gh(["api", "--paginate", "--slurp", path])
-        return [item for page in json.loads(out) for item in (page if isinstance(page, list) else [page])]
+        return self._paged(f"repos/{repo}/issues/comments?per_page=100")
 
     def label_events(self, repo: str, number: int) -> List[dict]:
         """The labeled and unlabeled events on a Ticket or pull request, as the timeline gives them."""
         return [e for e in self._paged(f"repos/{repo}/issues/{number}/timeline?per_page=100")
                 if e.get("event") in ("labeled", "unlabeled")]
 
-    def pull(self, repo: str, number: int) -> dict:
+    def pull_api(self, repo: str, number: int) -> dict:
+        """The REST pull request (state, created_at, merged_at), not `gh pr view`'s shape."""
         return json.loads(self._gh(["api", f"repos/{repo}/pulls/{number}"]))
 
     def pull_commits(self, repo: str, number: int) -> List[dict]:
@@ -104,9 +104,29 @@ class GitHub:
 
     def branch_runs(self, repo: str, branch: str) -> List[dict]:
         """Every workflow run on a branch (CI, Review and Rework alike; the caller picks)."""
-        runs = self._gh(["api", "--paginate", "--slurp",
-                         f"repos/{repo}/actions/runs?branch={quote(branch, safe='')}&per_page=100"])
-        return [run for page in json.loads(runs) for run in page.get("workflow_runs", [])]
+        pages = self._paged(f"repos/{repo}/actions/runs?branch={quote(branch, safe='')}&per_page=100")
+        return [run for page in pages for run in page.get("workflow_runs", [])]
+
+    def workflow_runs(self, repo: str, workflow: str) -> List[dict]:
+        """Every run of one workflow file, newest first."""
+        pages = self._paged(f"repos/{repo}/actions/workflows/{workflow}.yml/runs?per_page=100")
+        return [run for page in pages for run in page.get("workflow_runs", [])]
+
+    def attempt_run(self, repo: str, run_id: int, attempt: int) -> dict:
+        return json.loads(self._gh(["api", f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}"]))
+
+    def attempt_jobs(self, repo: str, run_id: int, attempt: int) -> List[dict]:
+        out = self._gh(["api", f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs"
+                               "?per_page=100", "--jq", ".jobs"])
+        return json.loads(out)
+
+    def run_artifacts(self, repo: str, run_id: int) -> List[dict]:
+        out = self._gh(["api", f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100",
+                        "--jq", ".artifacts"])
+        return json.loads(out)
+
+    def download_artifact(self, repo: str, run_id: int, name: str, dest: Path) -> None:
+        self._gh(["run", "download", str(run_id), "-R", repo, "-n", name, "-D", str(dest)])
 
     def main_subjects(self, repo: str) -> List[str]:
         """The first line of every commit message on main, newest first."""
@@ -153,6 +173,15 @@ def label_names(item: dict) -> List[str]:
 
 def author(item: dict) -> str:
     return (item.get("author") or {}).get("login") or ""
+
+
+def neutralize_comments(text: str) -> str:
+    """Model text for a bot comment, unable to open or close an HTML comment. The factory
+    reads its own hidden markers (`<!-- factory:... -->`) back from its comments, so text that
+    is not the factory's own must not be able to form one."""
+    # A zero-width space breaks the opener and closer without the entity, which a code span
+    # would show as literal `&lt;`.
+    return (text or "").replace("<!--", "<!\u200b--").replace("-->", "--\u200b>")
 
 
 def write_comment(out: Path, name: str, body: str) -> Path:

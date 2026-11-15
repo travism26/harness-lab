@@ -29,20 +29,17 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from factory.github import GitHub, GitHubError
-from factory.run_record import MARKER_RE
-from factory.switch_rule import is_factory_app
+from factory.record import BACKFILL_FILE, SCHEMA, TOKEN_RE, record_text
+from factory.review_pr import HUMAN_LABEL, rework_round
+from factory.switch_rule import default_app_slug, is_factory_app
+from factory.ticket import START_LABEL
 
-SCHEMA = 1
-DEFAULT_APP_SLUG = "travism26-factory"
-BACKFILL = Path(__file__).parent / "run-records-backfill.jsonl"
 COMMENT_FILES = ("issue-comments.json", "pr-comments.json")
-HUMAN_LABEL = "ready-for-human"
-START_LABELS = ("ready-for-agent", "ready-for-factory")  # the rename was 2026-11-08
+# Tickets started before the rename (2026-11-08) used the old label.
+START_LABELS = ("ready-for-agent", START_LABEL)
 CI_WORKFLOW = "CI"
-_ROUND = re.compile(r"^rework:(\d+)$")
-_MARKER = re.compile(r"<!-- factory:run (\{.*?\}) -->")
-_TOKEN = re.compile(r"sk-ant-|sk-or-|\bsk-[A-Za-z0-9]{20,}|\bgh[pousr]_[A-Za-z0-9]{10,}"
-                    r"|github_pat_|xox[abposr]-|eyJ[A-Za-z0-9_-]{10,}")
+# The repo the committed fixtures were captured from, for the App slug when none is given.
+FIXTURES_REPO = "travism26/harness-lab"
 
 
 class MetricsError(RuntimeError):
@@ -52,23 +49,23 @@ class MetricsError(RuntimeError):
 # ---- reading ---------------------------------------------------------------------
 
 def records_in(comments: List[dict], app_slug: str) -> List[dict]:
-    """The Run records in the markers of the bot's own comments. A marker anywhere else is
-    ignored. A marker whose JSON cannot be read is skipped with a warning."""
+    """The Run records in the markers of the bot's own comments. Only a marker that is the whole
+    final line of a comment counts; one anywhere else is somebody's quotation and is ignored. A
+    marker whose JSON cannot be read is skipped with a warning."""
     found = []
     for comment in comments:
-        body = comment.get("body")
         login = (comment.get("user") or {}).get("login") or ""
-        if not isinstance(body, str) or not MARKER_RE.search(body) or not is_factory_app(login, app_slug):
+        text = record_text(comment.get("body"))
+        if text is None or not is_factory_app(login, app_slug):
             continue
-        for text in _MARKER.findall(body):
-            try:
-                record = json.loads(text)
-            except ValueError:
-                print(f"warning: comment {comment.get('id')} holds a Run record that is not JSON",
-                      file=sys.stderr)
-                continue
-            if isinstance(record, dict):
-                found.append(record)
+        try:
+            record = json.loads(text)
+        except ValueError:
+            print(f"warning: comment {comment.get('id')} holds a Run record that is not JSON",
+                  file=sys.stderr)
+            continue
+        if isinstance(record, dict):
+            found.append(record)
     return found
 
 
@@ -92,7 +89,7 @@ def read_fixtures(directory: Path) -> List[dict]:
         raise MetricsError(f"{directory} is not a directory")
     comments = []
     for path in sorted(p for p in directory.rglob("*") if p.is_file()):
-        if _TOKEN.search(path.read_text()):
+        if TOKEN_RE.search(path.read_text()):
             raise MetricsError(f"{path} holds a token-shaped string; fixtures must not")
     for ticket_dir in sorted(p for p in directory.glob("ticket-*") if p.is_dir()):
         for name in COMMENT_FILES:
@@ -134,7 +131,8 @@ class FixtureSource:
         d = self.directory / f"ticket-{issue}"
         runs = self._json(d / "ci-runs.json", {})
         return Facts(app_slug,
-                     events=self._json(d / "issue-timeline.json", []) + self._json(d / "pr-timeline.json", []),
+                     events=(self._json(d / "issue-timeline.json", [])
+                             + self._json(d / "pr-timeline.json", [])),
                      pr=self._json(d / "pr.json", {}),
                      commits=self._json(d / "pr-commits.json", []),
                      runs=runs.get("workflow_runs", []))
@@ -153,8 +151,9 @@ class LiveSource:
 
     def facts(self, issue: int, pr: int, app_slug: str) -> "Facts":
         return Facts(app_slug,
-                     events=self.gh.label_events(self.repo, issue) + self.gh.label_events(self.repo, pr),
-                     pr=self.gh.pull(self.repo, pr),
+                     events=(self.gh.label_events(self.repo, issue)
+                             + self.gh.label_events(self.repo, pr)),
+                     pr=self.gh.pull_api(self.repo, pr),
                      commits=self.gh.pull_commits(self.repo, pr),
                      runs=self.gh.branch_runs(self.repo, f"factory/issue-{issue}"))
 
@@ -193,9 +192,7 @@ class Facts:
 
     @property
     def rework_rounds(self) -> int:
-        rounds = [int(m.group(1)) for name in self.bot_added() for m in [_ROUND.match(name)] if m]
-        return max(rounds, default=0)
-
+        return rework_round(self.bot_added())
 
     @property
     def owner_commits(self) -> int:
@@ -206,7 +203,15 @@ class Facts:
 
     @property
     def escalated(self) -> bool:
+        """The factory bot sent the pull request to a human (a label anyone else added is not
+        the factory's escalation)."""
         return HUMAN_LABEL in self.bot_added()
+
+    @property
+    def human_labelled(self) -> bool:
+        """Anyone, the bot or a person, put the human label on the pull request or its Ticket."""
+        return any(e.get("event") == "labeled" and (e.get("label") or {}).get("name") == HUMAN_LABEL
+                   for e in self.events)
 
     @property
     def state(self) -> str:
@@ -218,7 +223,8 @@ class Facts:
     @property
     def first_ci(self) -> Optional[str]:
         """The conclusion of the first CI run on the branch (Review and the CI gate are not CI)."""
-        ci = sorted((r for r in self.runs if r.get("name") == CI_WORKFLOW), key=lambda r: r.get("created_at") or "")
+        ci = sorted((r for r in self.runs if r.get("name") == CI_WORKFLOW),
+                    key=lambda r: r.get("created_at") or "")
         return (ci[0].get("conclusion") or "pending") if ci else None
 
     @property
@@ -227,7 +233,8 @@ class Facts:
         to the pull request's creation."""
         created = _when(self.pr.get("created_at"))
         removed = [_when(e.get("created_at")) for e in self.events
-                   if e.get("event") == "unlabeled" and (e.get("label") or {}).get("name") in START_LABELS
+                   if e.get("event") == "unlabeled"
+                   and (e.get("label") or {}).get("name") in START_LABELS
                    and self.by_bot((e.get("actor") or {}).get("login"))]
         before = [t for t in removed if t and created and t <= created]
         return int((created - max(before)).total_seconds()) if before else None
@@ -239,11 +246,13 @@ class Facts:
         if self.state != "merged" or not number:
             return 0
         named = re.compile(rf"#{number}(?!\d)")
-        return sum(1 for subject in self.main_subjects if subject.startswith("Revert") and named.search(subject))
+        return sum(1 for subject in self.main_subjects
+                   if subject.startswith("Revert") and named.search(subject))
 
     @property
     def untouched(self) -> bool:
-        return self.state == "merged" and not self.owner_commits and not self.escalated
+        """Merged with no commit from anyone but the bot, and nobody put the human label on."""
+        return self.state == "merged" and not self.owner_commits and not self.human_labelled
 
 
 @dataclass
@@ -263,8 +272,11 @@ class Ticket:
 
     @property
     def first_review(self) -> Optional[dict]:
-        reviews = [r for r in self.records if r.get("workflow") == "review" and r.get("pr") == self.pr]
-        return min(reviews, key=lambda r: (r.get("ts") or "", r.get("run_id") or 0)) if reviews else None
+        reviews = [r for r in self.records
+                   if r.get("workflow") == "review" and r.get("pr") == self.pr]
+        if not reviews:
+            return None
+        return min(reviews, key=lambda r: (r.get("ts") or "", r.get("run_id") or 0))
 
 
 def tickets_from(records: List[dict]) -> List[Ticket]:
@@ -291,16 +303,17 @@ def _cost(tickets: List[Ticket]) -> str:
     if not costs:
         return "n/a"
     logins = sorted({r["login"] for r in records if r.get("login")})
-    return f"${sum(costs):.2f} ({', '.join(logins)}, est.)"
+    return f"${sum(costs):.2f} ({', '.join([*logins, 'est.'])})"
+
+
+def _clock(seconds: int) -> str:
+    return f"{seconds // 60}m {seconds % 60:02d}s"
 
 
 def _time(tickets: List[Ticket]) -> str:
     times = [r["duration_ms"] for t in tickets for r in t.records
              if isinstance(r.get("duration_ms"), int)]
-    if not times:
-        return "n/a"
-    seconds = round(sum(times) / 1000)
-    return f"{seconds // 60}m {seconds % 60:02d}s"
+    return _clock(round(sum(times) / 1000)) if times else "n/a"
 
 
 def _drafts(tickets: List[Ticket]) -> List[Ticket]:
@@ -309,7 +322,8 @@ def _drafts(tickets: List[Ticket]) -> List[Ticket]:
 
 def _first_pass(tickets: List[Ticket]) -> str:
     drafts = _drafts(tickets)
-    return _rate(sum(1 for t in drafts if (t.first_review or {}).get("verdict") == "PASS"), len(drafts))
+    passed = sum(1 for t in drafts if (t.first_review or {}).get("verdict") == "PASS")
+    return _rate(passed, len(drafts))
 
 
 @dataclass
@@ -327,10 +341,6 @@ def _verdict(ticket: Ticket) -> str:
 
 def _when(text: Optional[str]) -> Optional[datetime]:
     return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ") if text else None
-
-
-def _clock(seconds: int) -> str:
-    return f"{seconds // 60}m {seconds % 60:02d}s"
 
 
 def _wait_total(facts: List[Facts]) -> str:
@@ -362,10 +372,13 @@ COLUMNS = [
            _facts_total(lambda fs: str(sum(f.owner_commits for f in fs)))),
     Column("Human escalation", _facts_cell(lambda f: _yes(f.escalated)),
            _facts_total(lambda fs: _rate(sum(f.escalated for f in fs), len(fs)))),
-    Column("CI on first push", _facts_cell(lambda f: {"success": "yes", None: "none", "pending": "pending"}.get(f.first_ci, "no")),
+    Column("CI on first push",
+           _facts_cell(lambda f: {"success": "yes", None: "none",
+                                  "pending": "pending"}.get(f.first_ci, "no")),
            _facts_total(lambda fs: _rate(sum(f.first_ci == "success" for f in fs), len(fs)))),
     Column("Start label to draft",
-           _facts_cell(lambda f: _clock(f.start_to_draft) if f.start_to_draft is not None else "n/a"),
+           _facts_cell(lambda f: ("n/a" if f.start_to_draft is None
+                                  else _clock(f.start_to_draft))),
            _facts_total(_wait_total)),
     Column("Merge", _facts_cell(lambda f: f.state),
            _facts_total(lambda fs: _rate(sum(f.state == "merged" for f in fs),
@@ -382,7 +395,8 @@ def render(tickets: List[Ticket]) -> str:
     lines = ["| " + " | ".join(headers) + " |", "|" + "|".join("---" for _ in headers) + "|"]
     for t in tickets:
         lines.append("| " + " | ".join([f"#{t.issue}"] + [c.cell(t) for c in COLUMNS]) + " |")
-    lines.append("| " + " | ".join([f"Total ({len(tickets)})"] + [c.total(tickets) for c in COLUMNS]) + " |")
+    totals = [f"Total ({len(tickets)})"] + [c.total(tickets) for c in COLUMNS]
+    lines.append("| " + " | ".join(totals) + " |")
     return "\n".join(lines) + "\n"
 
 
@@ -393,10 +407,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--repo", help="read live through gh, for example travism26/harness-lab")
     source.add_argument("--fixtures", help="read a fixtures directory instead of GitHub")
-    parser.add_argument("--app-slug", default=DEFAULT_APP_SLUG,
-                        help="the factory App whose comments carry records")
-    parser.add_argument("--backfill", help=f"a backfill JSONL file; live runs read {BACKFILL} if it exists")
+    parser.add_argument("--app-slug", default=None,
+                        help="the factory App whose comments carry records; "
+                             "default OWNER-factory, from --repo")
+    parser.add_argument("--backfill",
+                        help=f"a backfill JSONL file; live runs read {BACKFILL_FILE} if it exists")
     args = parser.parse_args(argv)
+    app_slug = args.app_slug or default_app_slug(args.repo or FIXTURES_REPO)
     try:
         if args.fixtures:
             comments = read_fixtures(Path(args.fixtures))
@@ -406,12 +423,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             gh = GitHub()
             comments = gh.repo_comments(args.repo)
             source = LiveSource(gh, args.repo)
-            backfill = Path(args.backfill) if args.backfill else (BACKFILL if BACKFILL.is_file() else None)
-        live = records_in(comments, args.app_slug)
+            default = BACKFILL_FILE if BACKFILL_FILE.is_file() else None
+            backfill = Path(args.backfill) if args.backfill else default
+        live = records_in(comments, app_slug)
         old = read_backfill(backfill) if backfill else []
         check_schema(live + old)
         tickets = tickets_from(merge(live, old))
-        attach_facts(tickets, source, args.app_slug)
+        attach_facts(tickets, source, app_slug)
         sys.stdout.write(render(tickets))
     except (MetricsError, GitHubError, OSError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)

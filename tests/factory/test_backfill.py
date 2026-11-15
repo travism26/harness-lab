@@ -3,7 +3,7 @@ a JSONL file out. Assertions are on the file written, what is printed and the ex
 import json
 from pathlib import Path
 
-from factory import backfill, review_pr
+from factory import backfill, review_pr, ticket
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REPO = "travism26/harness-lab"
@@ -17,15 +17,18 @@ MODEL_TEXT = "I will now rewrite the secret parser with great care"
 
 
 def run(run_id, workflow, conclusion="success", attempt=1, branch="main",
-        stamp="2026-11-13T22:27:29Z"):
+        stamp="2026-11-13T22:27:29Z", started=None, pulls=()):
     return {"id": run_id, "name": workflow.capitalize(), "conclusion": conclusion,
             "status": "completed", "run_attempt": attempt, "head_branch": branch,
-            "created_at": stamp, "updated_at": stamp, "pull_requests": []}
+            "created_at": started or stamp, "updated_at": stamp,
+            "pull_requests": [{"number": n} for n in pulls]}
 
 
-def steps(workflow, agent="success"):
-    return [{"name": "Set up job", "conclusion": "success"},
-            {"name": AGENT_STEP[workflow], "conclusion": agent}]
+def steps(workflow, agent="success", later=()):
+    """The steps of a run's job: the agent step, then `later` as (name, conclusion) pairs."""
+    return ([{"name": "Set up job", "conclusion": "success"},
+             {"name": AGENT_STEP[workflow], "conclusion": agent}]
+            + [{"name": name, "conclusion": conclusion} for name, conclusion in later])
 
 
 def transcript(**changes):
@@ -42,11 +45,13 @@ class FakeGH:
         self.runs = {"implement": [], "rework": [], "review": []}
         self.attempts, self.jobs_, self.artifacts, self.files = {}, {}, {}, {}
         self.comments, self.prs, self.downloaded = {}, {}, []
+        self.everywhere = []
 
-    def add(self, r, workflow, agent="success", artifact=None, files=None, expired=False):
+    def add(self, r, workflow, agent="success", artifact=None, files=None, expired=False,
+            later=()):
         self.runs[workflow].append(r)
         self.attempts[(r["id"], r["run_attempt"])] = r
-        self.jobs_[(r["id"], r["run_attempt"])] = steps(workflow, agent)
+        self.jobs_[(r["id"], r["run_attempt"])] = steps(workflow, agent, later)
         if artifact:
             self.artifacts.setdefault(r["id"], []).append({"name": artifact, "expired": expired})
             self.files[artifact] = files or {}
@@ -72,15 +77,24 @@ class FakeGH:
     def pr_comments(self, repo, number):
         return list(self.comments.get(number, []))
 
+    def repo_comments(self, repo):
+        return list(self.everywhere)
+
     def pr(self, repo, number):
         return self.prs.get(number, {"body": ""})
 
 
-def report(head, verdict="PASS", add=(), charged=False):
+def report(head, verdict="PASS", add=(), charged=False, id=5, at=None):
     gate = review_pr.gate_line(head, charged, "review", add=add)
-    return {"id": 5, "user": {"login": f"{SLUG}[bot]"},
-            "body": f"{review_pr.MARKER}\n{gate}\n## Factory review: {verdict}\n\n"
-                    f"Reviewed `{head[:12]}` against Ticket #7.\n"}
+    comment = {"id": id, "user": {"login": f"{SLUG}[bot]"},
+               "body": f"{review_pr.MARKER}\n{gate}\n## Factory review: {verdict}\n\n"
+                       f"Reviewed `{head[:12]}` against Ticket #7.\n"}
+    return dict(comment, created_at=at) if at else comment
+
+
+def bot_says(id, body, at="2026-11-13T22:27:20Z", issue=None):
+    comment = {"id": id, "user": {"login": f"{SLUG}[bot]"}, "body": body, "created_at": at}
+    return dict(comment, issue_url=f"https://api.github.com/repos/{REPO}/issues/{issue}") if issue else comment
 
 
 def go(gh, tmp_path, *extra):
@@ -230,3 +244,116 @@ def test_the_download_is_deleted_and_a_scratch_inside_the_repo_is_refused(tmp_pa
                           "--scratch", str(inside)], gh=gh)
     assert code != 0 and not inside.exists() and not (tmp_path / "x.jsonl").exists()
     assert "inside the repo" in capsys.readouterr().err
+
+
+# ---- what the jobs, the comments and the clock establish (code review B5) -----------------
+
+def runs_url(run_id):
+    return f"https://github.com/{REPO}/actions/runs/{run_id}"
+
+
+def failed_comment(run_id, extra=""):
+    return bot_says(1, f"{ticket.failed_prefix(runs_url(run_id))}. `in-progress` has been "
+                       f"removed; re-apply `ready-for-factory` to try again.\n{extra}",
+                    at="2026-11-13T22:25:00Z", issue=116)
+
+
+def failed_implement(gh, run_id, step, conclusion="failure", agent_files=None):
+    gh.add(run(run_id, "implement", "failure", started="2026-11-13T22:20:00Z"), "implement",
+           later=[(step, conclusion)], artifact=f"implement-issue116-run{run_id}-1",
+           files=agent_files or {"agent.jsonl": transcript(),
+                                 "context.json": json.dumps({"repo": REPO, "issue": 116})})
+
+
+def test_a_failed_check_step_is_check_failed(tmp_path):
+    gh = FakeGH()
+    failed_implement(gh, 1100, "Run the new Project check")
+    _, (row,), _ = go(gh, tmp_path)
+    assert (row["outcome"], row["reason"]) == ("fail", "check-failed")
+
+
+def test_a_failed_publish_step_is_no_change_when_the_bots_failed_comment_says_nothing_changed(tmp_path):
+    gh = FakeGH()
+    failed_implement(gh, 1101, "Commit, push and open the draft PR")
+    gh.comments[116] = [failed_comment(1101, f"\n{ticket.UNCHANGED}\n")]
+    _, (row,), _ = go(gh, tmp_path)
+    assert row["reason"] == "no-change"
+
+
+def test_a_failed_publish_step_is_publish_failed_otherwise(tmp_path):
+    gh = FakeGH()
+    failed_implement(gh, 1102, "Commit, push and open the draft PR")
+    gh.comments[116] = [failed_comment(1102), failed_comment(1103, f"\n{ticket.UNCHANGED}\n")]
+    _, (row,), _ = go(gh, tmp_path)
+    assert row["reason"] == "publish-failed"
+
+
+def test_a_review_step_that_failed_after_a_success_result_line_is_unparsed_findings(tmp_path):
+    gh = FakeGH()
+    gh.add(run(1200, "review", "failure"), "review", agent="failure",
+           artifact="review-pr135-run1200-1", files={"agent.jsonl": transcript()})
+    _, (row,), _ = go(gh, tmp_path)
+    assert row["reason"] == "unparsed-findings" and row["turns"] == 5
+
+
+def test_a_failure_nothing_establishes_has_a_null_reason(tmp_path):
+    gh = FakeGH()
+    gh.add(run(1201, "rework", "failure"), "rework", artifact="rework-pr5-run1201-1",
+           files={"agent.jsonl": transcript()})
+    _, (row,), _ = go(gh, tmp_path)
+    assert row["outcome"] == "fail" and row["reason"] is None
+
+
+def test_a_review_report_that_charged_nothing_gets_the_round_in_force(tmp_path):
+    gh = FakeGH()
+    ctx = {"repo": REPO, "pr": 135, "head_sha": HEAD, "ticket": 116}
+    gh.add(run(1300, "review", started="2026-11-13T22:20:00Z"), "review",
+           artifact="review-pr135-run1300-1",
+           files={"agent.jsonl": transcript(), "context.json": json.dumps(ctx)})
+    gh.add(run(1301, "review", started="2026-11-13T20:00:00Z", stamp="2026-11-13T20:05:00Z"),
+           "review", artifact="review-pr135-run1301-1",
+           files={"agent.jsonl": transcript(), "context.json": json.dumps(dict(ctx, head_sha="e" * 40))})
+    gh.comments[135] = [
+        report("d" * 40, "BLOCKED", add=("rework", "rework:1"), charged=True, id=3,
+               at="2026-11-13T21:00:00Z"),
+        report(HEAD, "PASS", id=7, at="2026-11-13T22:25:00Z"),
+        report("e" * 40, "PASS", id=2, at="2026-11-13T20:04:00Z")]
+    _, rows, _ = go(gh, tmp_path)
+    by_run = {r["run_id"]: r for r in rows}
+    assert (by_run[1300]["verdict"], by_run[1300]["gate"], by_run[1300]["round"]) == ("PASS", "pass", 1)
+    assert by_run[1301]["round"] == 0
+
+
+def test_a_review_whose_artifact_is_gone_finds_its_report_by_the_clock(tmp_path):
+    gh = FakeGH()
+    gh.add(run(1400, "review", started="2026-11-13T22:20:00Z", pulls=[135]), "review")
+    gh.prs[135] = {"body": "Closes #116"}
+    gh.comments[135] = [
+        report("d" * 40, "PASS", id=2, at="2026-11-13T21:00:00Z"),
+        report(HEAD, "BLOCKED", add=("rework", "rework:1"), charged=True, id=9,
+               at="2026-11-13T22:25:00Z"),
+        report("e" * 40, "PASS", id=11, at="2026-11-13T23:59:00Z")]
+    _, (row,), _ = go(gh, tmp_path)
+    assert (row["head_sha"], row["verdict"], row["gate"], row["round"]) == (
+        HEAD, "BLOCKED", "rework", 1)
+    assert (row["pr"], row["issue"], row["cost_usd"]) == (135, 116, None)
+
+
+def test_an_implement_run_with_no_artifact_takes_its_issue_from_the_comment_that_links_it(tmp_path):
+    gh = FakeGH()
+    gh.add(run(1500, "implement", "failure"), "implement")
+    gh.add(run(1501, "implement", "failure"), "implement")
+    gh.everywhere = [
+        bot_says(1, f"The factory run for this Ticket failed: [run]({runs_url(1500)}). x", issue=77),
+        bot_says(2, f"unrelated [run]({runs_url(15000)})", issue=5),
+        {"id": 3, "user": {"login": "someone"}, "issue_url": f"https://x/issues/6",
+         "body": f"[run]({runs_url(1501)})"}]
+    _, rows, _ = go(gh, tmp_path)
+    assert {r["run_id"]: r["issue"] for r in rows} == {1500: 77, 1501: None}
+
+
+def test_a_skipped_publish_step_is_not_a_publish_failure(tmp_path):
+    gh = FakeGH()
+    failed_implement(gh, 1104, "Commit, push and open the draft PR", conclusion="skipped")
+    _, (row,), _ = go(gh, tmp_path)
+    assert row["outcome"] == "fail" and row["reason"] is None

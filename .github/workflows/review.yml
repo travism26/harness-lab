@@ -139,7 +139,7 @@ jobs:
       # It takes the run's identity from this workflow's context, never from review-out/,
       # reads the verdict and gate back from the report `apply` posted, and runs only the
       # factory's own scripts from the base-branch checkout, never code under pr/. It adds
-      # no secret and no model call. The Review step's outcome goes in as the build outcome,
+      # no secret and no model call. The Review step's outcome goes in as the agent outcome,
       # and apply's as the publish outcome.
       - name: Leave the run record
         if: always() && steps.review.conclusion != 'skipped'
@@ -152,18 +152,21 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           ATTEMPT: ${{ github.run_attempt }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Set here, not read from the job's env: a step that can write $GITHUB_ENV
+          # could change the job's value before this step runs.
+          LOGIN: ${{ vars.FACTORY_CLAUDE_LOGIN || 'subscription' }}
           MODEL: ${{ vars.FACTORY_REVIEW_MODEL || 'sonnet' }}
           BUDGET_USD: ${{ vars.FACTORY_REVIEW_BUDGET_USD || '2' }}
           JOB_STATUS: ${{ job.status }}
-          REVIEW_OUTCOME: ${{ steps.review.outcome }}
-          APPLY_OUTCOME: ${{ steps.apply.outcome }}
+          AGENT_OUTCOME: ${{ steps.review.outcome }}
+          PUBLISH_OUTCOME: ${{ steps.apply.outcome }}
         run: >-
           uv run --no-dev python -m factory.run_record write --workflow review
           --out review-out --repo "$REPO" --run-id "$RUN_ID" --attempt "$ATTEMPT"
           --pr "$PR" --head-sha "$HEAD_SHA" --login "$LOGIN" --model "$MODEL"
           --budget "$BUDGET_USD" --claude-code-version "$CLAUDE_CODE_VERSION"
           --app-slug "$APP_SLUG" --run-url "$RUN_URL" --job-status "$JOB_STATUS"
-          --build-outcome "$REVIEW_OUTCOME" --publish-outcome "$APPLY_OUTCOME"
+          --agent-outcome "$AGENT_OUTCOME" --publish-outcome "$PUBLISH_OUTCOME"
 
       - name: Keep the review's files with the run
         if: always()
