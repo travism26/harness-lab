@@ -168,3 +168,21 @@ def test_rework_workflow_runs_the_last_step_after_publish_and_before_the_upload(
     assert "claude" not in step.replace("claude-code-version", "").replace("CLAUDE_CODE_VERSION", "")
     for step_id in ("build", "verify", "publish"):
         assert f"id: {step_id}\n" in text
+
+
+def test_a_supplied_pull_request_that_fails_its_check_is_null_with_a_warning(tmp_path, capsys):
+    out = built(tmp_path, fixture_line("result-success.json"))
+    assert _step(out, FakeGitHub(), pr=-7777) == 0
+    printed = capsys.readouterr().out
+    assert record_of(out)["pr"] is None
+    assert printed.count("the field pr failed its check") == 1 and "7777" not in printed
+
+
+def test_a_round_neither_the_event_nor_the_live_labels_hold_is_null_with_one_warning(
+        tmp_path, capsys):
+    out = built(tmp_path, fixture_line("result-success.json"))
+    gh = FakeGitHub(labels=["rework"])
+    assert _step(out, gh, pr_labels=json.dumps(["rework"])) == 0
+    printed = capsys.readouterr().out
+    assert record_of(out)["round"] is None
+    assert printed.count("the field round failed its check") == 1

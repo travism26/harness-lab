@@ -350,3 +350,27 @@ def test_a_record_that_would_pass_the_comment_limit_is_its_own_one_line_comment(
     assert gh.thread[0]["body"] == big
     (number, body), = gh.posted
     assert len(body.splitlines()) == 1 and marker_of(body) == record_of(out)
+
+
+def _warned(out, name):
+    return [line for line in out.splitlines()
+            if line.startswith("::warning title=Run record::")
+            and f"the field {name} failed" in line]
+
+
+def test_a_supplied_issue_that_fails_its_check_is_null_with_a_warning_that_hides_the_value(
+        tmp_path, capsys):
+    out = built(tmp_path, fixture_line("result-success.json"))
+    gh = FakeGitHub([bot_comment(6, OPENED)])
+    assert _last(out, gh, issue=-4242) == 0
+    printed = capsys.readouterr().out
+    assert record_of(out)["issue"] is None
+    assert len(_warned(printed, "issue")) == 1 and "4242" not in printed
+
+
+def test_an_issue_that_was_never_supplied_is_null_without_a_warning(tmp_path, capsys):
+    out = built(tmp_path, fixture_line("result-success.json"))
+    gh = FakeGitHub([bot_comment(6, OPENED)])
+    assert _last(out, gh, issue=None) == 0
+    assert record_of(out)["issue"] is None
+    assert _warned(capsys.readouterr().out, "issue") == []

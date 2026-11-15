@@ -1,0 +1,11 @@
+[
+  {
+    "id": 9007,
+    "user": {
+      "login": "travism26-factory[bot]"
+    },
+    "created_at": "2026-11-14T12:00:10Z",
+    "issue_url": "https://api.github.com/repos/travism26/harness-lab/issues/9007",
+    "body": "The factory started this Ticket. [Run](https://github.com/travism26/harness-lab/actions/runs/9007)\n"
+  }
+]

@@ -347,3 +347,35 @@ def test_a_marker_already_in_the_middle_of_a_report_is_not_a_record_to_the_last_
     assert _last(out, gh) == 0
     assert len(gh.thread) == 1 and record_of(out)["outcome"] == "ok"
     assert gh.thread[0]["body"].rstrip("\n").splitlines()[-1] == marker(record_of(out))
+
+
+def test_a_supplied_pull_request_number_that_fails_its_check_is_null_with_a_warning(
+        tmp_path, capsys):
+    out = tmp_path / "review-out"
+    out.mkdir()
+    assert _last(out, _gh(), review="failure", pr=-5555) == 0
+    printed = capsys.readouterr().out
+    assert record_of(out)["pr"] is None
+    assert printed.count("the field pr failed its check") == 1 and "5555" not in printed
+
+
+def test_a_pull_request_that_closes_no_ticket_has_no_issue_and_no_issue_warning(
+        tmp_path, capsys):
+    _whole(tmp_path, _gh(body="no keyword here"))
+    assert "the field issue" not in capsys.readouterr().out
+
+
+def test_a_review_that_cannot_read_the_pull_request_has_a_null_round_and_one_round_warning(
+        tmp_path, capsys):
+    from factory.github import GitHubError
+
+    class Unreadable(FakeGitHub):
+        def pr(self, repo, number):
+            raise GitHubError("boom")
+
+    out = tmp_path / "review-out"
+    out.mkdir()
+    assert _last(out, Unreadable(head=HEAD), review="failure") == 0
+    printed = capsys.readouterr().out
+    assert record_of(out)["round"] is None
+    assert printed.count("the field round failed its check") == 1
