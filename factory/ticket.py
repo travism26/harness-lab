@@ -403,6 +403,7 @@ def build(args, run_agent=claude.run) -> int:
                            cwd=str(Path(args.work).resolve()),
                            transcript=out / "agent.jsonl", disallowed_tools=DENIED_TOOLS,
                            may_edit=True)
+        claude.save_numbers(out, result.message)
         if not result.success:
             raise RuntimeError(claude.failure_message(result, args.max_budget_usd,
                                                       "FACTORY_BUILD_BUDGET_USD"))

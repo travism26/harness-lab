@@ -1,0 +1,26 @@
+{
+  "type": "result",
+  "subtype": "error_max_budget_usd",
+  "is_error": true,
+  "num_turns": 1,
+  "duration_ms": 1037,
+  "total_cost_usd": 0.004602,
+  "terminal_reason": "budget_exhausted",
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "modelUsage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 2,
+      "outputTokens": 56,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 22869,
+      "costUSD": 0.004602,
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  }
+}
