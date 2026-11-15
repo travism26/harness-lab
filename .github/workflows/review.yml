@@ -106,6 +106,7 @@ jobs:
           --login "$LOGIN" --app-slug "$APP_SLUG"
 
       - name: Review (fresh context, read-only, budget-capped)
+        id: review
         env:
           # Only the secret the login needs reaches this step.
           FACTORY_SUBSCRIPTION_TOKEN: ${{ env.LOGIN == 'subscription' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
@@ -127,11 +128,42 @@ jobs:
           --repo "$REPO" --sha "$SHA" --out review-out
 
       - name: Post the report and move the labels
+        id: apply
         env:
           GH_TOKEN: ${{ steps.preflight.outputs.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: uv run --no-dev python -m factory.review_pr apply --repo "$REPO" --pr "$PR" --out review-out
+
+      # Runs after the agent step started, whatever happened, and holds the App token.
+      # It takes the run's identity from this workflow's context, never from review-out/,
+      # reads the verdict and gate back from the report `apply` posted, and runs only the
+      # factory's own scripts from the base-branch checkout, never code under pr/. It adds
+      # no secret and no model call. The Review step's outcome goes in as the build outcome,
+      # and apply's as the publish outcome.
+      - name: Leave the run record
+        if: always() && steps.review.conclusion != 'skipped'
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MODEL: ${{ vars.FACTORY_REVIEW_MODEL || 'sonnet' }}
+          BUDGET_USD: ${{ vars.FACTORY_REVIEW_BUDGET_USD || '2' }}
+          JOB_STATUS: ${{ job.status }}
+          REVIEW_OUTCOME: ${{ steps.review.outcome }}
+          APPLY_OUTCOME: ${{ steps.apply.outcome }}
+        run: >-
+          uv run --no-dev python -m factory.run_record write --workflow review
+          --out review-out --repo "$REPO" --run-id "$RUN_ID" --attempt "$ATTEMPT"
+          --pr "$PR" --head-sha "$HEAD_SHA" --login "$LOGIN" --model "$MODEL"
+          --budget "$BUDGET_USD" --claude-code-version "$CLAUDE_CODE_VERSION"
+          --app-slug "$APP_SLUG" --run-url "$RUN_URL" --job-status "$JOB_STATUS"
+          --build-outcome "$REVIEW_OUTCOME" --publish-outcome "$APPLY_OUTCOME"
 
       - name: Keep the review's files with the run
         if: always()
