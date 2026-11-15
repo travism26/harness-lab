@@ -224,28 +224,31 @@ def score_check(clone: Path, case: dict, env: dict) -> str:
 
 def review_case(case: dict, clone: Path, run_dir: Path, start: str, setup: dict,
                 limits: Limits, run_agent: Callable) -> Tuple[str, float]:
-    """(verdict, cost). The verdict is PASS, BLOCKED (as review_pr names it) or error; an unparseable
-    answer is not retried."""
+    """(verdict, cost). The verdict is PASS, BLOCKED (as review_pr names it) or error. An answer
+    that does not parse is run once more, as `review_pr.review_with_retry` does for the factory,
+    and the cost is both runs'. A run that did not succeed, or that raised, is not retried; a
+    second answer that does not parse is an error."""
     _git("add", "-A", cwd=clone)
     (run_dir / "diff.patch").write_text(_git("diff", "--cached", "--no-color", start, cwd=clone) + "\n")
     ctx = {"repo": "bench", "pr": start[:12], "base_sha": start,
            "head_sha": _git("rev-parse", "HEAD", cwd=clone), "code_dir": str(clone),
            "ticket": case.get("issue")}
+    prompt = review_pr.build_prompt(ctx, run_dir)
+
+    def run(budget: float, transcript: Path):
+        return run_agent(prompt, login=LOGIN, model=setup["review_model"], max_budget_usd=budget,
+                         cwd=str(clone), transcript=transcript,
+                         disallowed_tools=review_pr.DENIED_TOOLS,
+                         allowed_tools=review_pr.READ_TOOLS)
+
     try:
-        result = run_agent(review_pr.build_prompt(ctx, run_dir), login=LOGIN,
-                           model=setup["review_model"], max_budget_usd=limits.review_cap_usd,
-                           cwd=str(clone), transcript=run_dir / "review.jsonl",
-                           disallowed_tools=review_pr.DENIED_TOOLS,
-                           allowed_tools=review_pr.READ_TOOLS)
+        findings, results = review_pr.review_with_retry(run, limits.review_cap_usd,
+                                                        run_dir / "review.jsonl")
     except Exception as e:  # the agent's failure is a Review error; keep the trace
         (run_dir / "review-error.txt").write_text(f"{type(e).__name__}: {e}\n")
         return "error", limits.review_cap_usd
-    cost = result.cost_usd if result.cost_usd is not None else limits.review_cap_usd
-    if not result.success:
-        return "error", cost
-    try:
-        findings = review_pr.parse_findings(result.text)
-    except (ValueError, KeyError, TypeError, AttributeError):
+    cost = sum(r.cost_usd if r.cost_usd is not None else limits.review_cap_usd for r in results)
+    if findings is None:
         return "error", cost
     return ("BLOCKED" if findings.blocker else PASS), cost
 
@@ -357,7 +360,7 @@ def baseline_standin(step_env: Optional[Mapping[str, str]] = None) -> int:
         out = Path(tmp)
         (out / "ticket.md").write_text(ticket_path.read_text())
         (out / "context.json").write_text(json.dumps({"project": "harness", "bootstrap": False}))
-        prompt = ticket_mod.build_prompt(out)
+        prompt = ticket_mod.build_prompt(out, ticket_path=str(ticket_path.resolve()))
     transcript = ticket_path.parent / "build.jsonl"
     began = time.monotonic()
     with transcript.open("w") as f:

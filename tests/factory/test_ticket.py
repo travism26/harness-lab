@@ -240,6 +240,16 @@ def test_revise_takes_the_latest_factory_review(tmp_path):
     assert "rework round" in prompt and "not on the base branch yet" not in prompt
 
 
+def test_only_the_rework_prompt_tells_the_agent_to_leave_open_questions(tmp_path):
+    _root(tmp_path)
+    gh = FakeGitHub(issue=_issue(), pr=_pr(), comments=[{"body": f"{MARKER}\nnew"}])
+    ticket.revise(_args(tmp_path), gh)
+    rework = ticket.build_prompt(tmp_path / "out")
+    assert "Do not act on a finding of kind `open_question`" in rework
+    ticket.claim(_args(tmp_path, out=str(tmp_path / "plain")), FakeGitHub(issue=_issue()))
+    assert "open_question" not in ticket.build_prompt(tmp_path / "plain")
+
+
 @pytest.mark.parametrize("pr", [_pr(labels=("rework", "ready-for-human")), _pr(labels=()),
                                 _pr(branch="fm/hand-made")])
 def test_revise_refuses_prs_not_waiting_for_factory_rework(tmp_path, pr):
