@@ -253,6 +253,19 @@ Review's last step (`factory.run_record write --workflow review`, in `review.yml
 
 If a job hits `timeout-minutes`, GitHub cancels it, and GitHub's cancellation docs say a step whose condition is `always()` keeps running, within a five minute limit. No run of this repo has timed out yet, so a timed-out run leaving a record is documented but untested.
 
+### Metrics report
+
+`uv run python -m factory.metrics --repo travism26/harness-lab` prints a markdown table, one row per factory Ticket and a totals row. A factory Ticket is one with an Implement Run record. It reads every comment through `gh`, trusts a marker only on a comment the factory bot wrote (`--app-slug`, default `travism26-factory`), keys records by run id plus attempt so every attempt's cost counts, refuses a record whose `schema` it does not know, and also reads `factory/run-records-backfill.jsonl` when that file exists. It makes no model call. The columns:
+
+| Column | Definition |
+|---|---|
+| Draft | The Ticket's Implement record has a `pr`. The total is over all factory Tickets. |
+| First-pass review | The `verdict` of the first Review record for the pull request. The total is the share of PASS over Tickets that opened a draft. |
+| Cost (estimate) | The sum of `cost_usd` across the Ticket's records, with the login, always an estimate. |
+| Agent time | The sum of `duration_ms` across the Ticket's records. |
+
+`--fixtures DIR` reads a directory of `ticket-<N>/issue-comments.json` and `pr-comments.json` instead of GitHub, and `--backfill FILE` reads a backfill file. A fixtures directory holding a token-shaped string is refused. `tests/factory/fixtures/metrics/` holds fixtures cut down from real API JSON (prose replaced by placeholders, markers built by `factory/run_record.py`) and the golden table `golden.md`.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every PR and on every push to `main`, with no secrets and
