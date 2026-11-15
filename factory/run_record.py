@@ -239,6 +239,9 @@ def write(args, gh: Optional[GitHub] = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    if args.workflow == "review":
+        from factory.run_record_review import write_review
+        return write_review(args, gh)
     if args.workflow != "implement":
         raise RuntimeError(f"no Run record is wired for the {args.workflow} workflow yet")
     numbers = read_numbers(out)
@@ -281,6 +284,11 @@ def write(args, gh: Optional[GitHub] = None) -> int:
     return 0
 
 
+def _issue(text: str) -> Optional[int]:
+    """`--issue`, or nothing when the run has no Ticket (a pull request that closes none)."""
+    return None if text in ("", "null") else int(text)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="step", required=True)
@@ -290,7 +298,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     w.add_argument("--repo", required=True)
     w.add_argument("--run-id", dest="run_id", required=True)
     w.add_argument("--attempt", required=True)
-    w.add_argument("--issue", type=int, required=True)
+    w.add_argument("--issue", type=_issue, default=None)
+    w.add_argument("--pr", type=int, default=None)
+    w.add_argument("--head-sha", dest="head_sha", default="")
     w.add_argument("--project", default="")
     w.add_argument("--login", required=True)
     w.add_argument("--model", required=True)

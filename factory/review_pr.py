@@ -445,6 +445,7 @@ def review(args, run_agent=claude.run) -> int:
                            max_budget_usd=args.max_budget_usd, cwd=os.getcwd(),
                            transcript=out / "agent.jsonl", disallowed_tools=DENIED_TOOLS,
                            allowed_tools=READ_TOOLS)
+        claude.save_numbers(out, result.message)
         if not result.success:
             raise RuntimeError(claude.failure_message(result, args.max_budget_usd,
                                                       "FACTORY_REVIEW_BUDGET_USD"))
