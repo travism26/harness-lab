@@ -279,3 +279,28 @@ def test_apply_does_not_list_workflow_runs_or_clear_in_progress(tmp_path):
     review_pr.apply(_args(tmp_path, head_sha=sha), gh)
     assert "in-progress" not in gh.removed
     assert not any("factory:settled" in comment for comment in gh.comments)
+
+
+def test_apply_survives_a_non_string_file_path(tmp_path):
+    _write_review(tmp_path)
+    path = tmp_path / "findings.json"
+    data = json.loads(path.read_text())
+    data["standards_findings"] = [{"kind": "nit", "description": "d", "resolution": "r",
+                                   "file_path": 12}]
+    path.write_text(json.dumps(data))
+    gh = FakeGitHub(_pr())
+    review_pr.apply(_args(tmp_path), gh)
+    assert "(`12`)" in gh.comments[0]
+
+
+def test_apply_keeps_a_quoted_comment_opener_readable_but_inert(tmp_path):
+    _write_review(tmp_path)
+    path = tmp_path / "findings.json"
+    data = json.loads(path.read_text())
+    data["standards_findings"] = [{"kind": "baseline_smell", "description": "write `<!--` here",
+                                   "resolution": "r", "file_path": None}]
+    path.write_text(json.dumps(data))
+    gh = FakeGitHub(_pr())
+    review_pr.apply(_args(tmp_path), gh)
+    assert "<!--" not in gh.comments[0].split("\n", 2)[2] and "&lt;" not in gh.comments[0]
+    assert "<!" in gh.comments[0]

@@ -38,7 +38,8 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 from factory import claude
-from factory.github import GitHub, GitHubError, author, label_names, write_comment
+from factory.github import (GitHub, GitHubError, author, label_names, neutralize_comments,
+                            write_comment)
 from factory.switch_rule import LOGINS, refusal
 
 REWORK_LABEL = "rework"
@@ -335,13 +336,18 @@ def render_report(findings: Findings, ctx: dict, moves: Moves, labels_after: Lis
     elif moves.outcome == "ci-blocked":
         lines.append("Spec passed. Required CI failed on this head, so the rework "
                      "counter is left to the CI gate and no labels were changed.")
+    # The summaries and findings are the model's text. Neutralised, they cannot form a
+    # hidden marker of the factory's (the review marker, the gate line, a Run record).
+    clean = neutralize_comments
     for name, summary, items in (("Spec", findings.spec_summary, findings.spec_findings),
                                  ("Standards", findings.standards_summary,
                                   findings.standards_findings)):
-        lines += ["", f"### {name}: {_axis_verdict(items)}", "", summary or "(no summary)"]
+        lines += ["", f"### {name}: {_axis_verdict(items)}", "", clean(summary) or "(no summary)"]
         for f in items:
-            where = f" (`{f.file_path}`)" if f.file_path else ""
-            lines.append(f"- **{f.kind}** {f.description}{where}. Fix: {f.resolution}")
+            path = clean(f.file_path) if isinstance(f.file_path, str) else f.file_path
+            where = f" (`{path}`)" if f.file_path else ""
+            lines.append(f"- **{clean(f.kind)}** {clean(f.description)}{where}. "
+                         f"Fix: {clean(f.resolution)}")
     lines += ["", "A Spec blocker or a failing required CI run on a factory draft "
               "sends a PR to rework. The merge is a human's."]
     return "\n".join(lines) + "\n"
@@ -445,6 +451,7 @@ def review(args, run_agent=claude.run) -> int:
                            max_budget_usd=args.max_budget_usd, cwd=os.getcwd(),
                            transcript=out / "agent.jsonl", disallowed_tools=DENIED_TOOLS,
                            allowed_tools=READ_TOOLS)
+        claude.save_numbers(out, result.message)
         if not result.success:
             raise RuntimeError(claude.failure_message(result, args.max_budget_usd,
                                                       "FACTORY_REVIEW_BUDGET_USD"))

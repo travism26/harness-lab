@@ -24,6 +24,11 @@ def is_factory_app(login: str, app_slug: str) -> bool:
     return bool(app_slug) and login.lower() in (f"{app_slug}[bot]".lower(), f"app/{app_slug}".lower())
 
 
+def default_app_slug(repo: str) -> str:
+    """The factory App's slug when none is given: `OWNER-factory`, from `OWNER/NAME`."""
+    return f"{repo.split('/')[0]}-factory"
+
+
 def others(authors: Iterable[str], owner: str, app_slug: str) -> list:
     """The authors who are neither the repo owner nor the factory App."""
     return sorted({a for a in authors

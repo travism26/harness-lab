@@ -14,7 +14,7 @@ is not using.
 import json
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Mapping, Optional
 
@@ -88,6 +88,9 @@ class Result:
     text: str
     subtype: str = ""
     cost_usd: float = 0.0
+    # The CLI's closing result message, or {}. It holds the model's text, so
+    # only `save_numbers` may write any of it to disk.
+    message: dict = field(default_factory=dict)
 
 
 def command(model: str, max_budget_usd: float, allowed_tools: Optional[List[str]],
@@ -137,7 +140,34 @@ def run(prompt: str, login: str, model: str, max_budget_usd: float, cwd: str,
     msg = result_message(transcript.read_text(errors="replace"))
     ok = proc.returncode == 0 and msg.get("subtype") == "success" and not msg.get("is_error")
     text = msg.get("result") or proc.stderr.strip() or f"claude exited {proc.returncode}"
-    return Result(ok, text, msg.get("subtype", ""), float(msg.get("total_cost_usd") or 0))
+    return Result(ok, text, msg.get("subtype", ""), float(msg.get("total_cost_usd") or 0), msg)
+
+
+# The four counts, as the result line's `usage` names them and as its `modelUsage` does.
+TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+              "cache_read_input_tokens")
+MODEL_TOKEN_KEYS = ("inputTokens", "outputTokens", "cacheCreationInputTokens",
+                    "cacheReadInputTokens")
+
+
+def save_numbers(out: Path, message: dict) -> None:
+    """Write the raw numbers from the result message to <out>/result.json.
+
+    Only numbers and ids are copied, never `result` or any other text.
+    `factory.run_record` reads this file and checks every field again.
+    """
+    if not message:
+        return
+    usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
+    models = message.get("modelUsage") if isinstance(message.get("modelUsage"), dict) else {}
+    numbers = {k: message.get(k) for k in ("subtype", "is_error", "num_turns", "duration_ms",
+                                           "total_cost_usd")}
+    numbers["usage"] = {k: usage.get(k) for k in TOKEN_KEYS}
+    numbers["model_usage"] = {
+        str(model): {k: (v.get(k) if isinstance(v, dict) else None) for k in MODEL_TOKEN_KEYS}
+        for model, v in models.items()}
+    Path(out).mkdir(parents=True, exist_ok=True)
+    (Path(out) / "result.json").write_text(json.dumps(numbers, indent=2) + "\n")
 
 
 def failure_message(result: Result, max_budget_usd: float, budget_var: str) -> str:
