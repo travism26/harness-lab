@@ -33,7 +33,7 @@ from factory import claude, review_pr
 from factory.github import GitHub, GitHubError
 from factory.record import (BACKFILL_FILE, MAX_FILE, UNSAFE_RE, WORKFLOWS, Outcomes, RunContext,
                             bot_comments, build_record, failure_reason, opened_pr, read_numbers)
-from factory.run_record_review import find_report, gate_of, reports
+from factory.run_record_review import gate_of, reports
 from factory.switch_rule import default_app_slug
 from factory.ticket import OPENED_PREFIX, UNCHANGED, failed_prefix
 
@@ -149,6 +149,41 @@ def _review_round(report: dict, comments: List[dict], slug: str, created: str) -
     return _round_in_force(comments, slug, created)
 
 
+_LEGACY_HEAD_RE = re.compile(r"^Reviewed `([0-9a-f]{12})` against ", re.M)
+_LEGACY_ROUND_RE = re.compile(r"^Sent to rework: round ([0-9]+) of [0-9]+\.$", re.M)
+
+
+def _with_gate_lines(comments: List[dict], slug: str) -> List[dict]:
+    """The comments with a gate line put on each older bot report that has none. Before the
+    gate line existed a report was its marker, its headline and `Reviewed <12 of the head>`;
+    the gate line is rebuilt from that text so the live readers can read it. Only the bot's
+    own comments are changed, and only in this copy."""
+    mine = {id(c) for c in bot_comments(comments, slug, unrecorded=False)}
+    changed = []
+    for c in comments:
+        body = c.get("body")
+        if (id(c) in mine and isinstance(body, str) and body.startswith(review_pr.MARKER + "\n")
+                and not review_pr.parse_gate(body)):
+            head = _LEGACY_HEAD_RE.search(body)
+            if head:
+                round_ = _LEGACY_ROUND_RE.search(body)
+                human = f"`{review_pr.HUMAN_LABEL}`" in body and "rework rounds" in body
+                add = ((review_pr.HUMAN_LABEL,) if human else
+                       (review_pr.REWORK_LABEL, f"rework:{round_.group(1)}") if round_ else ())
+                gate = review_pr.gate_line(head.group(1), bool(add), "review", add=add)
+                first, rest = body.split("\n", 1)
+                c = dict(c, body=f"{first}\n{gate}\n{rest}")
+        changed.append(c)
+    return changed
+
+
+def _report_for_head(comments: List[dict], slug: str, head_sha: str) -> Optional[dict]:
+    """The bot's newest report for this head; an older report names only the first 12."""
+    found = [c for c, meta in reports(comments, slug, unrecorded=False)
+             if head_sha.startswith(meta.head)]
+    return max(found, key=lambda c: c["id"]) if found else None
+
+
 def _report_in_window(comments: List[dict], slug: str, window: tuple) -> Optional[dict]:
     """The bot's newest report comment created while the run was going."""
     start, end = window
@@ -218,11 +253,14 @@ def _record(gh, args, a: RunAttempt, repo_comments) -> dict:
     elif a.workflow == "rework":
         round_ = _round_in_force(comments, args.app_slug, run.get("created_at") or "") or None
     else:
-        report = (find_report(comments, args.app_slug, head_sha, unrecorded=False) if head_sha
+        comments = _with_gate_lines(comments, args.app_slug)
+        report = (_report_for_head(comments, args.app_slug, head_sha) if head_sha
                   else _report_in_window(comments, args.app_slug, a.window))
         if report:
             head_sha = head_sha or review_pr.parse_gate(report["body"]).head
             verdict = review_pr.review_verdict(report["body"])
+            if verdict not in ("PASS", "BLOCKED"):
+                verdict = None
             gate = gate_of(report["body"])
             round_ = _review_round(report, comments, args.app_slug, run.get("created_at") or "")
     if a.workflow == "review" and pr and not issue:

@@ -357,3 +357,55 @@ def test_a_skipped_publish_step_is_not_a_publish_failure(tmp_path):
     failed_implement(gh, 1104, "Commit, push and open the draft PR", conclusion="skipped")
     _, (row,), _ = go(gh, tmp_path)
     assert row["outcome"] == "fail" and row["reason"] is None
+
+
+def old_report(head, verdict="PASS", sentence="", id=5, ticket=7):
+    """A report from before the gate line: the marker, the headline, then `Reviewed ...`."""
+    lines = [review_pr.MARKER, f"## Factory review: {verdict}", "",
+             f"Reviewed `{head[:12]}` against Ticket #{ticket}."]
+    if sentence:
+        lines.append(sentence)
+    lines += ["", "### Spec: PASS", "", "PLACEHOLDER SUMMARY"]
+    return {"id": id, "user": {"login": f"{SLUG}[bot]"}, "body": "\n".join(lines) + "\n"}
+
+
+def review_with(gh, run_id, comments, head=HEAD, pr=135):
+    ctx = {"repo": REPO, "pr": pr, "head_sha": head, "ticket": 7}
+    gh.add(run(run_id, "review"), "review", artifact=f"review-pr{pr}-run{run_id}-1",
+           files={"agent.jsonl": transcript(), "context.json": json.dumps(ctx)})
+    gh.comments[pr] = comments
+
+
+def test_a_report_from_before_the_gate_line_is_matched_by_the_head_it_names(tmp_path):
+    gh = FakeGH()
+    review_with(gh, 1600, [old_report("d" * 40, "BLOCKED", "Sent to rework: round 1 of 2.", id=3),
+                           old_report(HEAD, "PASS", id=4)])
+    (row,) = go(gh, tmp_path)[1]
+    assert (row["verdict"], row["gate"], row["round"]) == ("PASS", "pass", 1)
+
+
+def test_older_reports_give_the_gate_their_sentence_names(tmp_path):
+    gh = FakeGH()
+    review_with(gh, 1601, [old_report(HEAD, "BLOCKED", "Sent to rework: round 2 of 2.")])
+    review_with(gh, 1602, [old_report(HEAD, "BLOCKED",
+                                      "Review blocked this PR again after 2 rework rounds, "
+                                      "so it is labelled `ready-for-human` and the factory "
+                                      "stops here.")], pr=136)
+    rows = {r["run_id"]: r for r in go(gh, tmp_path)[1]}
+    assert (rows[1601]["verdict"], rows[1601]["gate"], rows[1601]["round"]) == ("BLOCKED", "rework", 2)
+    assert (rows[1602]["verdict"], rows[1602]["gate"], rows[1602]["round"]) == ("BLOCKED", "human", 2)
+
+
+def test_an_older_report_for_another_head_or_from_another_user_gives_no_verdict(tmp_path):
+    gh = FakeGH()
+    other = dict(old_report(HEAD, "PASS", id=4), user={"login": "someone"})
+    review_with(gh, 1603, [old_report("d" * 40, "PASS", id=3), other])
+    (row,) = go(gh, tmp_path)[1]
+    assert (row["verdict"], row["gate"]) == (None, None)
+
+
+def test_a_headline_that_is_neither_pass_nor_blocked_gives_no_verdict(tmp_path):
+    gh = FakeGH()
+    review_with(gh, 1604, [old_report(HEAD, "MAYBE", id=4)])
+    (row,) = go(gh, tmp_path)[1]
+    assert row["verdict"] is None
