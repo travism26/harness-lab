@@ -1,0 +1,30 @@
+# Local-only learning stack. No credentials are set: CLICKHOUSE_SKIP_USER_SETUP=1 is the
+# documented way to leave the `default` user open, and ports are published on
+# 127.0.0.1 only so nothing outside this machine can reach it. Do not reuse this
+# file for anything exposed to a network.
+# Pinned to an exact patch release of the 26.8 LTS line so runs are repeatable.
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8.39.19
+    container_name: podcast-clickhouse
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+    volumes:
+      - chdata:/var/lib/clickhouse
+      - ./schema:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "-q", "SELECT throwIf(count() = 0) FROM system.tables WHERE database = 'podcast' AND name = 'downloads_daily_mv'"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 5s
+
+volumes:
+  chdata:
