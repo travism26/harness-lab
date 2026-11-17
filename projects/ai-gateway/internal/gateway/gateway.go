@@ -253,6 +253,10 @@ func (h *Handler) upstreamRequest(r *http.Request, body []byte) (*http.Request, 
 	hdr.Del("Content-Length")
 	forwarded := credential.Take(hdr)
 	forwarded.Apply(hdr)
+	if _, ok := r.Header["Accept-Encoding"]; ok {
+		// Ask for an uncompressed body so the token parse sees event-stream text.
+		hdr["Accept-Encoding"] = []string{"identity"}
+	}
 	if _, ok := hdr["User-Agent"]; !ok {
 		// A nil value stops the transport from adding its own User-Agent.
 		hdr["User-Agent"] = nil
