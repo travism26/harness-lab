@@ -428,3 +428,60 @@ func TestEmptyBodyHeadersPinned(t *testing.T) {
 		t.Errorf("content-length %q", g.header.Get("Content-Length"))
 	}
 }
+
+// gzipUnlessIdentity is a Stand-in that gzip-encodes only when the Upstream
+// request lists gzip, deflate or br.
+func gzipUnlessIdentity(ctype, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, q *http.Request) {
+		w.Header().Set("Content-Type", ctype)
+		ae := q.Header.Get("Accept-Encoding")
+		if strings.Contains(ae, "gzip") || strings.Contains(ae, "deflate") || strings.Contains(ae, "br") {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Write([]byte("\x1f\x8b compressed"))
+			return
+		}
+		w.Write([]byte(body))
+	}
+}
+
+func TestAcceptEncodingBecomesIdentity(t *testing.T) {
+	sse := "event: message_start\r\ndata: {\"message\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":2,\"cache_creation_input_tokens\":8,\"cache_read_input_tokens\":9}}}\r\n\r\n" +
+		"event: ping\r\ndata: {\"type\":\"ping\"}\r\n\r\n" +
+		"event: message_delta\r\ndata: {\"usage\":{\"output_tokens\":20}}\r\n\r\n"
+	js := `{"usage":{"input_tokens":31,"output_tokens":32,"cache_creation_input_tokens":33,"cache_read_input_tokens":34}}`
+	cases := []struct {
+		name, ctype, body string
+		want              [4]float64
+	}{
+		{"stream", "text/event-stream", sse, [4]float64{100, 20, 8, 9}},
+		{"json", "application/json", js, [4]float64{31, 32, 33, 34}},
+		{"no usage", "text/event-stream", "event: ping\r\ndata: not json\r\n\r\n", [4]float64{}},
+	}
+	for _, c := range cases {
+		r := newRig(t, gzipUnlessIdentity(c.ctype, c.body))
+		resp := post(t, r.gw.URL+"/v1/messages?beta=true", "{}", map[string]string{
+			"Accept-Encoding": "gzip, deflate, br", "anthropic-version": "2023-06-01",
+		})
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if string(b) != c.body {
+			t.Errorf("%s: client body %q", c.name, b)
+		}
+		h := r.got[0].header
+		if v := h["Accept-Encoding"]; len(v) != 1 || v[0] != "identity" {
+			t.Errorf("%s: Accept-Encoding %v", c.name, v)
+		}
+		if h.Get("anthropic-version") != "2023-06-01" || r.got[0].uri != "/v1/messages?beta=true" {
+			t.Errorf("%s: lost version or query: %v %s", c.name, h, r.got[0].uri)
+		}
+		m := r.records(t)
+		if len(m) != 1 || m[0]["response_body"] != c.body {
+			t.Fatalf("%s: records %v", c.name, m)
+		}
+		u := m[0]["usage"].(map[string]any)
+		got := [4]float64{u["input_tokens"].(float64), u["output_tokens"].(float64), u["cache_creation_input_tokens"].(float64), u["cache_read_input_tokens"].(float64)}
+		if got != c.want {
+			t.Errorf("%s: counters %v want %v", c.name, got, c.want)
+		}
+	}
+}
