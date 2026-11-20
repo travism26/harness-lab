@@ -355,3 +355,10 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
   the owner labels three Tickets at once, the middle one's run is dropped and its label stays. Label
   one Ticket at a time.
 - **Third-party actions are pinned by tag**, not by commit SHA.
+
+## Rules from hand-fixes
+
+Each entry is a mistake fixed by hand, and the check that now catches it. Append the next one here.
+
+- A turn cap below 1 is accepted (the Run stops at once and calls no model). Ticket [#9](https://github.com/travism26/harness-lab/issues/9), PR [#24](https://github.com/travism26/harness-lab/pull/24), owner commit [`d1b8a68`](https://github.com/travism26/harness-lab/commit/d1b8a68cee42e5b10a221c3c3cf576d2550bd0da). Check: `test_turn_cap_below_one_rejected_from_flag` and `test_turn_cap_below_one_rejected_from_env`, run by `projects/harness/check`.
+- A `pyproject.toml` under `projects/` is not a uv workspace member. Ticket [#17](https://github.com/travism26/harness-lab/issues/17), PR [#20](https://github.com/travism26/harness-lab/pull/20), owner commit [`cd26251`](https://github.com/travism26/harness-lab/commit/cd262518a375574808baaeee8ab254dc3e36281d). Check: `tests/factory/test_workspace_members.py`, run by `uv run pytest tests/factory`.
