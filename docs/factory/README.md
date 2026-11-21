@@ -140,6 +140,82 @@ script's exit code. A script whose body is `exit 0` passes this step, and it pas
 read the script and has no shell, so it cannot tell that script from a real test run. Merging is
 what accepts the script as the Project's check. Every later Ticket is told to satisfy it.
 
+## Research path
+
+A second way into the same factory. The owner asks one question, and the factory answers with a
+cited Research note on a draft PR. It builds nothing. `.github/workflows/research.yml` runs it and
+`factory/research.py` holds its steps. The workflow has three jobs, so that no step in the agent's
+job holds a GitHub write token.
+
+1. The owner opens a Research request from the issue template
+   (`.github/ISSUE_TEMPLATE/research-request.md`). Its headings are `Question`, `Scope`,
+   `Public starting points`, `Cost cap (USD)` and `Out of scope`. The owner then applies
+   `ready-for-research`. The workflow starts only when `github.event.sender.login` is the
+   repository owner, the label is `ready-for-research`, and the item is an issue, not a pull
+   request. Opening the issue starts nothing.
+2. **claim** holds the App token and runs no agent. It runs the preflight and refuses for the
+   reasons Implement does: a closed Ticket, the switch rule, or another Ticket `in-progress`. It
+   also refuses a request with a missing heading, an empty `Question`, `Scope` or `Out of scope`,
+   a starting point that is not `https://`, a credential-shaped string, or a cost cap above the
+   knob. A refusal is a comment on the Ticket, and the label is removed. Otherwise claim replaces
+   `ready-for-research` with `in-progress`.
+3. **research** runs the agent. The job gets the Claude Code login through `factory/claude.py`
+   and nothing else. Its tools are Read, Grep, Glob, WebFetch and WebSearch. It has no shell and
+   no write tool: the lists are Review's (`factory/review_pr.py`), with the two web tools moved
+   from denied to allowed. The agent's reply is the note. The App token is never minted in this job.
+4. **publish** holds the App token and runs no agent. First, in a step with no token, it writes
+   the note's `Cost` section itself (the CLI's own list-price figure, marked `client-estimate`,
+   and the run's cap) and runs the deterministic check, `factory/research_note.py`. The check
+   requires the five sections of `docs/research/notes/_template.md`, at least one `https://`
+   source, one `[vendor]` or `[independent]` tag on every source, an `Unknowns` section that says
+   something, spend at or under the cap, and no credential-shaped string. Only a note that passes
+   reaches the next step. That step commits the one file `docs/research/notes/issue-<N>.md` to
+   the branch `research/issue-<N>`, opens a **draft** PR whose body closes the Ticket, comments on
+   the Ticket with the link, and removes `in-progress`.
+5. Review runs on the draft, as it does on every PR from a branch of this repo. The CI gate
+   ignores the branch, and Rework starts only on `factory/*`, so a Spec blocker leaves its labels
+   and report on the PR and no rework round starts. No agent merges the PR. The owner reads it and
+   merges or closes it. Closing the PR and deleting the branch undoes the run.
+
+**When it stops.** If the agent fails, the note fails its check, or the push fails, the run is
+red and no PR is opened. The factory comments on the Ticket and removes `in-progress`. For a
+failed check the comment lists the check's problems, which name sections and line numbers and
+never quote the note. There is no rework round on this path. The owner changes the request and
+applies `ready-for-research` again. Retry by relabelling, not by re-running the failed job: each
+run attempt names its own artifacts.
+
+**Budget.** The agent runs with `--max-budget-usd` from `FACTORY_RESEARCH_BUDGET_USD` (default
+`2`). A request can set a lower cap under `Cost cap (USD)`. A higher one is refused before any
+agent runs. A run that hits the cap fails red and publishes nothing.
+
+**One at a time.** The workflow shares Implement's `factory-ticket` concurrency group and the
+`in-progress` lock, so a research run and a build never overlap on the Claude Code login. The
+research path holds the lock only while its run lasts.
+
+**Public sources, no secrets.** A request and a note hold public material only: no private notes,
+no email, no employer or customer material, and never a secret. The issue and the PR are public.
+The check refuses a credential-shaped string in either one.
+
+**What the check does not do.** It cannot tell whether a source supports the finding that cites
+it. Review reads the note against the request, and the owner's merge is the gate.
+
+**What the agent can reach.** The agent reads web pages nobody here wrote, and it can make web
+requests, so a page can try to talk it into sending something out. The repository is public and
+the agent's job holds no App token. The one secret within reach is its own Claude Code login, in
+its own environment. As in Review, it has no shell and the rule `Read(//proc/**)` denies the
+file where that environment is readable.
+
+**Run record.** A research run that started its agent is a Factory run. Its record has
+`workflow: research` and goes on the Ticket the way Implement's does: on the "opened a draft PR"
+comment or the "failed" comment. A note that failed its check has `reason: check-failed`. The
+metrics report lists build Tickets only, so a Research request has no row there.
+
+**Not run yet.** No research run has happened on GitHub. The checker and the steps are proven on
+fixtures and fakes. Before the first run the owner merges the PR that adds the workflow and runs
+`uv run python -m factory.sync_labels --apply`, so GitHub has `ready-for-research`. The docs say
+the web tools need no shell; the first live run is what confirms it. Whether WebSearch works on
+the `openrouter` login is not known.
+
 ## Brakes
 
 Each brake, from the lab-wide [decision records](../adr/) (0003, 0004, 0005, 0007), and where it is enforced.
@@ -232,6 +308,7 @@ factory's Claude Code.
 | Review step | `.github/workflows/review.yml`, `factory/review_pr.py` (`prepare`, `review`, `apply`) |
 | Rework round | `.github/workflows/rework.yml`, `factory/ticket.py` (`revise`, `build`, `publish`) |
 | CI failure and green settle | `.github/workflows/ci-gate.yml`, `factory/ci_gate.py` |
+| Research path | `.github/workflows/research.yml`, `factory/research.py` (`claim`, `answer`, `check`, `publish`, `release`), `factory/research_note.py` (the note check). See [Research path](#research-path) |
 | Live check | `.github/workflows/factory-check.yml`, `factory/check.py` |
 | Claude Code login | `factory/claude.py`, `factory/switch_rule.py` |
 | Run record | `factory/record.py` (the fields, the checks, the marker), `factory/run_record.py` (`write`) and `factory/run_record_review.py`, the last step of `.github/workflows/implement.yml`, `.github/workflows/rework.yml` and `.github/workflows/review.yml` |
@@ -309,6 +386,7 @@ Ticket moves](#how-a-ticket-moves).
 | Label | Who adds it | Meaning |
 |---|---|---|
 | `ready-for-factory` | Owner | Start the factory on this Ticket |
+| `ready-for-research` | Owner | Start the factory's research path on this Research request. See [Research path](#research-path) |
 | `in-progress` | Factory | The factory is building or reworking this Ticket. Removed when Review has passed the current head and CI is green, so a finished draft does not hold the one-at-a-time lock. |
 | `rework`, `rework:1`, `rework:2` | Factory (Review or CI gate) | A Spec blocker or a failed required CI run; the counter is the rework round, one charge per head |
 | `ready-for-human` | Factory (Review or CI gate) | Two rework rounds were not enough; the factory has stopped |
@@ -333,6 +411,8 @@ All are repository variables. Defaults apply when a variable is unset.
 | `FACTORY_BUILD_BUDGET_USD` | `5` | `--max-budget-usd` for one Implement or Rework run |
 | `FACTORY_REVIEW_MODEL` | `sonnet` | Model for Review |
 | `FACTORY_REVIEW_BUDGET_USD` | `2` | `--max-budget-usd` for one review |
+| `FACTORY_RESEARCH_MODEL` | `sonnet` | Model for the research path |
+| `FACTORY_RESEARCH_BUDGET_USD` | `2` | `--max-budget-usd` for one research run. A Research request can set a lower cap, never a higher one. |
 
 The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of each file.
 
@@ -344,6 +424,8 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 | A comment says the factory run failed | Open the run. A new Project whose `check` was missing or failed looks like this. The Ticket has lost `in-progress`, so it can be retried. |
 | A factory PR is closed without merging, and `in-progress` is still on the Ticket | Review had not passed that head with green CI (a red CI run, a Spec blocker, or a closed PR). Remove `in-progress` by hand, or one-at-a-time keeps every other Ticket waiting. |
 | A factory draft's CI is red and no rework starts | Open the CI gate run. It ignores a PR that is not a draft, not opened by the factory App, or not on `factory/issue-<N>`, and it stops at the daily cap. A `timed_out` or `cancelled` CI run is not a failure. |
+| A comment says the factory did not start the research request | Read the reason, fix the request or wait for the other Ticket, then re-apply `ready-for-research`. |
+| A comment says the note failed its check | No PR was opened and `in-progress` is gone. The comment lists what the check found. Change the request if that helps, then re-apply `ready-for-research`. |
 | A PR is labelled `ready-for-human` | Finish it by hand, or close it. The factory will not touch it again. |
 | A Rework run failed | The PR keeps `rework`. Fix it by hand and push, or re-add `rework` to retry. |
 
