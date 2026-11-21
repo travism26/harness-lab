@@ -1,0 +1,7 @@
+pluginManagement {
+    repositories {
+        mavenCentral() // the Spring Boot plugin marker is on Maven Central: one registry
+    }
+}
+
+rootProject.name = 'spring-sandbox'
