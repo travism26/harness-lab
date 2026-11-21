@@ -7,7 +7,7 @@ The service has one endpoint and one domain class. `GET /pass-rate?passed=3&tota
 ## Prerequisites
 
 - A JDK, version 17 or newer, on `PATH` or in `JAVA_HOME`. Nothing else is installed by hand.
-- Network on the first run. The Gradle wrapper downloads Gradle 9.9.2 and checks its sha256 (`gradle/wrapper/gradle-wrapper.properties`), then Gradle downloads the libraries and plugins named in `gradle.lockfile` and `buildscript-gradle.lockfile` from Maven Central.
+- Network on the first run. The Gradle wrapper downloads Gradle 9.9.2 and checks its sha256 (`projects/spring-sandbox/gradle/wrapper/gradle-wrapper.properties`), then Gradle downloads the libraries and plugins named in `projects/spring-sandbox/gradle.lockfile` and `projects/spring-sandbox/buildscript-gradle.lockfile` from Maven Central.
 
 ## Check
 
@@ -38,7 +38,7 @@ prints the Summary, one JSON object on one line of stdout, and sends all build o
 
 ## The verify-spring skill
 
-`.claude/skills/verify-spring/SKILL.md` is a Claude Code skill scoped to this Project. Start Claude Code in this folder and type:
+`projects/spring-sandbox/.claude/skills/verify-spring/SKILL.md` is a Claude Code skill scoped to this Project. Start Claude Code in this folder and type:
 
 ```
 /verify-spring
@@ -61,11 +61,11 @@ For each Stage it copies the Project to a temporary folder, adds one Planted def
 curl 'http://127.0.0.1:8080/pass-rate?passed=3&total=4'
 ```
 
-It listens on loopback only (`src/main/resources/application.properties`).
+It listens on loopback only (`projects/spring-sandbox/src/main/resources/application.properties`).
 
 ## Dependencies
 
-Locking is strict: a library or plugin that is not in a lockfile fails the build, and so does a missing lockfile. After changing a version in `build.gradle`, rewrite both lockfiles and commit them with the change:
+Locking is strict: a library or plugin that is not in a lockfile fails the build, and so does a missing lockfile. After changing a version in `projects/spring-sandbox/build.gradle`, rewrite both lockfiles and commit them with the change:
 
 ```bash
 ./gradlew dependencies --write-locks
@@ -73,8 +73,8 @@ Locking is strict: a library or plugin that is not in a lockfile fails the build
 
 Choices worth knowing before changing the build:
 
-- **Gradle comes from the wrapper**, not from whatever `gradle` the machine has. The wrapper pins the version and the distribution's sha256, so the build tool is locked like the libraries are. The cost is one committed binary, `gradle/wrapper/gradle-wrapper.jar`. Its sha256 is `621008afc4f5d59357fcf06ffa644dd5aade5e091bdc363742710445f73cdaf8`, the value Gradle publishes for 9.9.2 at <https://gradle.org/release-checksums/>.
+- **Gradle comes from the wrapper**, not from whatever `gradle` the machine has. The wrapper pins the version and the distribution's sha256, so the build tool is locked like the libraries are. The cost is one committed binary, `projects/spring-sandbox/gradle/wrapper/gradle-wrapper.jar`. Its sha256 is `621008afc4f5d59357fcf06ffa644dd5aade5e091bdc363742710445f73cdaf8`, the value Gradle publishes for 9.9.2 at <https://gradle.org/release-checksums/>.
 - **The code compiles to Java 17 with no toolchain block**, so Gradle never downloads a JDK and any JDK from 17 up works.
 - **Checkstyle is pinned to 12.3.1**, the newest release that runs on JDK 17. Releases from 13.0.0 need JDK 21.
-- **`config/checkstyle/checkstyle.xml` is a trimmed rule set**, with every rule at error severity. The stock Google and Sun configurations report far more than a sandbox needs.
-- **Maven Central is the only registry**, for plugins as well as libraries (`settings.gradle`).
+- **`projects/spring-sandbox/config/checkstyle/checkstyle.xml` is a trimmed rule set**, with every rule at error severity. The stock Google and Sun configurations report far more than a sandbox needs.
+- **Maven Central is the only registry**, for plugins as well as libraries (`projects/spring-sandbox/settings.gradle`).

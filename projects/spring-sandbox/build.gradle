@@ -1,5 +1,5 @@
 buildscript {
-    // Lock the plugin classpath too: buildscript-gradle.lockfile
+    // Lock the plugin classpath too: projects/spring-sandbox/buildscript-gradle.lockfile
     configurations.classpath { resolutionStrategy.activateDependencyLocking() }
     dependencyLocking { lockMode = LockMode.STRICT }
 }
@@ -16,7 +16,8 @@ repositories {
     mavenCentral()
 }
 
-// Every configuration is locked; a dependency missing from gradle.lockfile fails the build.
+// Every configuration is locked; a dependency missing from
+// projects/spring-sandbox/gradle.lockfile fails the build.
 dependencyLocking {
     lockAllConfigurations()
     lockMode = LockMode.STRICT

@@ -2,8 +2,9 @@
 # The spring-sandbox check: compile, checkstyle, test and archunit, in that
 # order. Every stage runs even after an earlier one failed, except test and
 # archunit, which are recorded as not-run when compile did not pass. Gradle is
-# pinned by the wrapper's sha256; libraries and build plugins by gradle.lockfile
-# and buildscript-gradle.lockfile, resolved in strict mode. Prints a summary
+# pinned by the wrapper's sha256; libraries and build plugins by
+# projects/spring-sandbox/gradle.lockfile and
+# projects/spring-sandbox/buildscript-gradle.lockfile, resolved in strict mode. Prints a summary
 # table, or with --json one JSON line on stdout and all build output on stderr.
 # Exits 0 only if every stage passed, 1 otherwise, 2 on bad usage.
 set -uo pipefail
@@ -23,6 +24,8 @@ cmds=(
   "./gradlew test --rerun"
   "./gradlew archunit --rerun"
 )
+# 1 where the stage runs compiled classes, so it is not-run when compile did not pass.
+needs_compile=(0 0 1 1)
 total=${#names[@]}
 statuses=()
 durations=()
@@ -34,8 +37,7 @@ if [[ $json == 1 ]]; then exec 5>&2; else exec 5>&1; fi
 TIMEFORMAT='%3R'
 
 for ((i = 0; i < total; i++)); do
-  # test and archunit (index 2 and up) need the classes that compile (index 0) builds.
-  if [[ $i -ge 2 && ${statuses[0]} != pass ]]; then
+  if [[ ${needs_compile[$i]} == 1 && ${statuses[0]} != pass ]]; then
     echo "==> ${names[$i]}: not-run, compile did not pass" >&2
     statuses[$i]=not-run
     durations[$i]=0
