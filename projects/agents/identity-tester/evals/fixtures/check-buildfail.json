@@ -1,0 +1,6 @@
+{
+  "tool": "run_check",
+  "exit_code": 1,
+  "timed_out": false,
+  "output": "# github.com/travism26/harness-lab/projects/agent-identity/cmd/demo\n# [github.com/travism26/harness-lab/projects/agent-identity/cmd/demo]\nvet: cmd/demo/main.go:408:9: undefined: undefinedTourHelper\n"
+}
