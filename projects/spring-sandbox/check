@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# The spring-sandbox check: compile, checkstyle, test and archunit, in that
+# order. Every stage runs even after an earlier one failed, except test and
+# archunit, which are recorded as not-run when compile did not pass. Gradle is
+# pinned by the wrapper's sha256; libraries and build plugins by
+# projects/spring-sandbox/gradle.lockfile and
+# projects/spring-sandbox/buildscript-gradle.lockfile, resolved in strict mode. Prints a summary
+# table, or with --json one JSON line on stdout and all build output on stderr.
+# Exits 0 only if every stage passed, 1 otherwise, 2 on bad usage.
+set -uo pipefail
+cd "$(dirname "$0")"
+
+json=0
+if [[ $# -gt 1 || ( $# -eq 1 && $1 != --json ) ]]; then
+  echo "usage: projects/spring-sandbox/check [--json]" >&2
+  exit 2
+fi
+[[ $# -eq 1 ]] && json=1
+
+names=(compile checkstyle test archunit)
+cmds=(
+  "./gradlew classes testClasses archunitClasses"
+  "./gradlew checkstyleMain checkstyleTest checkstyleArchunit"
+  "./gradlew test --rerun"
+  "./gradlew archunit --rerun"
+)
+# 1 where the stage runs compiled classes, so it is not-run when compile did not pass.
+needs_compile=(0 0 1 1)
+total=${#names[@]}
+statuses=()
+durations=()
+passed=0
+
+# fd 5 receives each stage's build output: stderr in --json mode, else stdout.
+if [[ $json == 1 ]]; then exec 5>&2; else exec 5>&1; fi
+# bash 3.2 has no millisecond clock, so read `time` with %3R (seconds as 1.234).
+TIMEFORMAT='%3R'
+
+for ((i = 0; i < total; i++)); do
+  if [[ ${needs_compile[$i]} == 1 && ${statuses[0]} != pass ]]; then
+    echo "==> ${names[$i]}: not-run, compile did not pass" >&2
+    statuses[$i]=not-run
+    durations[$i]=0
+    continue
+  fi
+  echo "==> ${names[$i]}: ${cmds[$i]}" >&2
+  # The group's stderr carries time's report, then the command's exit code.
+  res=$( { time ${cmds[$i]} >&5 2>&5; echo "rc=$?" >&2; } 2>&1 )
+  rc=${res##*rc=}
+  digits=${res%%$'\n'*}
+  digits=${digits//[!0-9]/}
+  durations[$i]=$((10#$digits))
+  if [[ $rc == 0 ]]; then
+    statuses[$i]=pass
+    passed=$((passed + 1))
+  else
+    statuses[$i]=fail
+  fi
+done
+
+if [[ $json == 1 ]]; then
+  # Stage names and commands contain nothing that needs JSON escaping.
+  stages=
+  for ((i = 0; i < total; i++)); do
+    [[ -n $stages ]] && stages+=', '
+    stages+="{\"name\": \"${names[$i]}\", \"status\": \"${statuses[$i]}\", "
+    stages+="\"duration_ms\": ${durations[$i]}, \"command\": \"${cmds[$i]}\"}"
+  done
+  printf '{"project": "spring-sandbox", "stack": "spring", "stages": [%s], "passed": %d, "total": %d}\n' \
+    "$stages" "$passed" "$total"
+else
+  printf '\n%-12s %-8s %s\n' stage status duration_ms
+  for ((i = 0; i < total; i++)); do
+    printf '%-12s %-8s %s\n' "${names[$i]}" "${statuses[$i]}" "${durations[$i]}"
+  done
+  printf 'passed %d of %d\n' "$passed" "$total"
+fi
+[[ $passed == "$total" ]]

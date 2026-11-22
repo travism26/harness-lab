@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Proves each stage of projects/spring-sandbox/check fails on its own defect.
+# For every case it makes a fresh temp copy of the project, plants one defect
+# as a new file there, runs ./check --json in the copy and compares each
+# stage's status and the exit code with what the case expects. The defect is
+# never written into the real tree. Prints a Markdown table; exits 0 only if
+# every case matches.
+set -uo pipefail
+cd "$(dirname "$0")"
+src=$PWD
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+DOM=src/main/java/lab/springsandbox/domain
+
+plant_none() { :; }
+plant_compile() {
+  mkdir -p "$DOM"
+  cat > "$DOM/PlantedCompileError.java" <<'JAVA'
+package lab.springsandbox.domain;
+
+/** Well-formed and style-clean, but it does not type-check. */
+public class PlantedCompileError {
+
+    int count = "three";
+}
+JAVA
+}
+plant_style() {
+  mkdir -p "$DOM"
+  cat > "$DOM/PlantedStyleViolation.java" <<'JAVA'
+package lab.springsandbox.domain;
+
+import java.util.List;
+
+/** Compiles, but carries an unused import. */
+public class PlantedStyleViolation {
+}
+JAVA
+}
+plant_test() {
+  mkdir -p src/test/java/lab/springsandbox/domain
+  cat > src/test/java/lab/springsandbox/domain/PlantedFailingTest.java <<'JAVA'
+package lab.springsandbox.domain;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import org.junit.jupiter.api.Test;
+
+class PlantedFailingTest {
+
+    @Test
+    void oneEqualsTwo() {
+        assertEquals(1, 2);
+    }
+}
+JAVA
+}
+plant_arch() {
+  mkdir -p "$DOM"
+  cat > "$DOM/PlantedWebDependency.java" <<'JAVA'
+package lab.springsandbox.domain;
+
+import lab.springsandbox.web.PassRateController;
+
+/** A domain class that reaches into the web package. */
+public class PlantedWebDependency {
+
+    Class<?> web = PassRateController.class;
+}
+JAVA
+}
+
+# Case: label|plant function|expected compile checkstyle test archunit|expected exit (0 or 1).
+cases=(
+  "none|plant_none|pass pass pass pass|0"
+  "compile error|plant_compile|fail pass not-run not-run|1"
+  "checkstyle violation|plant_style|pass fail pass pass|1"
+  "failing test|plant_test|pass pass fail pass|1"
+  "archunit violation|plant_arch|pass pass pass fail|1"
+)
+
+# Pulls a stage's status out of check's fixed-layout JSON line.
+stage_status() {
+  local rest=${2#*\{\"name\": \"$1\", \"status\": \"}
+  printf '%s' "${rest%%\"*}"
+}
+
+printf '| defect | compile | checkstyle | test | archunit | exit | result |\n'
+printf '| --- | --- | --- | --- | --- | --- | --- |\n'
+bad=0
+n=0
+for c in "${cases[@]}"; do
+  IFS='|' read -r label plant expect want_exit <<< "$c"
+  n=$((n + 1))
+  dir=$work/case$n
+  mkdir -p "$dir/copy"
+  tar -C "$src" --exclude=./build --exclude=./.gradle -cf - . | tar -C "$dir/copy" -xf -
+  (cd "$dir/copy" && "$plant")
+  json=$(cd "$dir/copy" && ./check --json 2> "$dir/log")
+  code=$?
+  got=
+  for stage in compile checkstyle test archunit; do
+    got+="$(stage_status "$stage" "$json") "
+  done
+  got=${got% }
+  result=ok
+  if [[ $got != "$expect" ]]; then
+    result=MISMATCH
+  elif [[ $want_exit == 0 && $code != 0 ]] || [[ $want_exit != 0 && $code == 0 ]]; then
+    result=MISMATCH
+  fi
+  # shellcheck disable=SC2086
+  printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$label" $got "$code" "$result"
+  if [[ $result == MISMATCH ]]; then
+    bad=1
+    printf 'expected: %s (exit %s)\n--- tail of %s log\n' "$expect" "$want_exit" "$label"
+    tail -n 30 "$dir/log"
+  fi
+done
+exit $bad

@@ -1,0 +1,68 @@
+buildscript {
+    // Lock the plugin classpath too: projects/spring-sandbox/buildscript-gradle.lockfile
+    configurations.classpath { resolutionStrategy.activateDependencyLocking() }
+    dependencyLocking { lockMode = LockMode.STRICT }
+}
+
+plugins {
+    id 'java'
+    id 'checkstyle'
+    id 'org.springframework.boot' version '4.2.0'
+}
+
+group = 'lab.springsandbox'
+
+repositories {
+    mavenCentral()
+}
+
+// Every configuration is locked; a dependency missing from
+// projects/spring-sandbox/gradle.lockfile fails the build.
+dependencyLocking {
+    lockAllConfigurations()
+    lockMode = LockMode.STRICT
+}
+
+// No toolchain block (it could download a JDK): any JDK 17+ builds Java 17 bytecode.
+tasks.withType(JavaCompile).configureEach { options.release = 17 }
+
+// Architecture rules live in their own source set so they run as their own stage.
+sourceSets {
+    archunit {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+configurations {
+    archunitImplementation.extendsFrom implementation
+    archunitRuntimeOnly.extendsFrom runtimeOnly
+}
+
+dependencies {
+    // The Boot BOM without the io.spring.dependency-management plugin.
+    implementation platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES)
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    archunitImplementation 'com.tngtech.archunit:archunit-junit5:1.5.1'
+    archunitRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// 12.3.1 is the newest Checkstyle that runs on JDK 17; 13.0.0 and later need JDK 21.
+checkstyle {
+    toolVersion = '12.3.1'
+    maxWarnings = 0
+}
+
+// Checkstyle reads source only, so it must not wait for (or fail on) compilation.
+tasks.withType(Checkstyle).configureEach { classpath = files() }
+
+tasks.named('test') { useJUnitPlatform() }
+
+tasks.register('archunit', Test) {
+    group = 'verification'
+    description = 'Runs the ArchUnit architecture rules.'
+    testClassesDirs = sourceSets.archunit.output.classesDirs
+    classpath = sourceSets.archunit.runtimeClasspath
+    useJUnitPlatform()
+}
