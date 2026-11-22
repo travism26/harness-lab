@@ -73,7 +73,7 @@ The files in `evals/fixtures/` are recorded output of real runs on 2026-11-21, c
 - `check-pass.json` and `tour-pass.json` come from `projects/agent-identity` as it is on `main`.
 - `check-gofmt.json`, `check-testfail.json`, `check-buildfail.json` and `tour-buildfail.json` come from a throwaway copy outside the repo with one planted defect each: a misindented line, a changed format string that breaks one test, and an undefined name in `cmd/demo`. In `check-testfail.json` the machine's temp directory was replaced with `<tmp>`.
 
-The reports in the cases were written by hand: four honest ones and five that a correct grader must reject. No model produced them, because no live run has been made yet.
+The reports in the cases were written by hand: four honest ones and five that a correct grader must reject. No model produced them.
 
 ## Run it live
 
@@ -86,4 +86,11 @@ ANTHROPIC_API_KEY=... npm start
 
 The key is read from the environment at run time and is not written anywhere. The report is printed as JSON, and one line is appended to `runs/log.jsonl`, which git ignores. `runs/sample.jsonl` shows the shape, with made-up numbers.
 
-Two things about the SDK have only been checked against its docs and types so far, not on a live run: that the `PreToolUse` hook lets the SDK's `StructuredOutput` tool through, and which tools the session lists when `tools` is `[]`. Each log line records the tool list the session reported in `tools_seen`, so the first live run answers both.
+## The first live run
+
+One live run was made on 2026-11-22, on a passing tree. It ended as `pass` in 4 turns and about 19 seconds, at a client-estimated cost of $0.0011. Its log line answered two things that had only been checked against the SDK's docs and types:
+
+- With `tools` set to `[]`, the session listed exactly three tools in `tools_seen`: `StructuredOutput`, `mcp__identity__run_check` and `mcp__identity__run_tour`. No built-in tool was present.
+- The `PreToolUse` hook did not block `StructuredOutput`. The report came back and no tool call was denied.
+
+Still not seen live: a failing tree, a cap being hit, and a denied tool. Those paths are covered only by the tests in `projects/agents/identity-tester/test/run.test.ts`.
