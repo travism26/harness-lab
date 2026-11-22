@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# Proves each stage of projects/go-sandbox/check fails on its own defect.
+# For every case it makes a fresh temp copy of the project, plants one defect
+# as a new file there, runs ./check --json in the copy and compares each
+# stage's status and the exit code with what the case expects. The defect is
+# never written into the real tree. Prints a Markdown table; exits 0 only if
+# every case matches.
+set -uo pipefail
+cd "$(dirname "$0")"
+src=$PWD
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+PKG=internal/passrate
+
+plant_none() { :; }
+plant_gofmt() {
+  cat > "$PKG/planted_unformatted.go" <<'GO'
+package passrate
+
+// PlantedUnformatted is correct, but its body is not indented.
+func PlantedUnformatted() int {
+return 1
+}
+GO
+}
+# Not a bad Printf verb: that fails three stages, because staticcheck (SA5009)
+# and the vet subset that go test runs both report it too. A lock copied by
+# value is reported by go vet (copylocks) alone.
+plant_vet() {
+  cat > "$PKG/planted_copylock.go" <<'GO'
+package passrate
+
+import "sync"
+
+// PlantedGuarded holds a lock, so its methods must not copy it.
+type PlantedGuarded struct {
+	mu sync.Mutex
+	n  int
+}
+
+// Count has a value receiver, so every call copies the lock.
+func (g PlantedGuarded) Count() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.n
+}
+GO
+}
+plant_staticcheck() {
+  cat > "$PKG/planted_unused.go" <<'GO'
+package passrate
+
+// plantedUnused is never called.
+func plantedUnused() int {
+	return 1
+}
+GO
+}
+plant_test() {
+  cat > "$PKG/planted_failing_test.go" <<'GO'
+package passrate
+
+import "testing"
+
+func TestPlantedOneEqualsTwo(t *testing.T) {
+	r, err := New(1, 2)
+	if err != nil {
+		t.Fatalf("New(1, 2) returned error: %v", err)
+	}
+	if got := r.Percent(); got != 51 {
+		t.Fatalf("Percent() = %d, want 51", got)
+	}
+}
+GO
+}
+
+# Case: label|plant function|expected gofmt vet staticcheck test|expected exit (0 or 1).
+cases=(
+  "none|plant_none|pass pass pass pass|0"
+  "unformatted file|plant_gofmt|fail pass pass pass|1"
+  "lock copied by value|plant_vet|pass fail pass pass|1"
+  "unused function|plant_staticcheck|pass pass fail pass|1"
+  "failing test|plant_test|pass pass pass fail|1"
+)
+
+# Pulls a stage's status out of check's fixed-layout JSON line.
+stage_status() {
+  local rest=${2#*\{\"name\": \"$1\", \"status\": \"}
+  printf '%s' "${rest%%\"*}"
+}
+
+printf '| defect | gofmt | vet | staticcheck | test | exit | result |\n'
+printf '| --- | --- | --- | --- | --- | --- | --- |\n'
+bad=0
+n=0
+for c in "${cases[@]}"; do
+  IFS='|' read -r label plant expect want_exit <<< "$c"
+  n=$((n + 1))
+  dir=$work/case$n
+  mkdir -p "$dir/copy"
+  cp -R "$src/." "$dir/copy"
+  (cd "$dir/copy" && "$plant")
+  json=$(cd "$dir/copy" && ./check --json 2> "$dir/log")
+  code=$?
+  got=
+  for stage in gofmt vet staticcheck test; do
+    got+="$(stage_status "$stage" "$json") "
+  done
+  got=${got% }
+  result=ok
+  if [[ $got != "$expect" ]]; then
+    result=MISMATCH
+  elif [[ $want_exit == 0 && $code != 0 ]] || [[ $want_exit != 0 && $code == 0 ]]; then
+    result=MISMATCH
+  fi
+  # shellcheck disable=SC2086
+  printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$label" $got "$code" "$result"
+  if [[ $result == MISMATCH ]]; then
+    bad=1
+    printf 'expected: %s (exit %s)\n--- tail of %s log\n' "$expect" "$want_exit" "$label"
+    tail -n 30 "$dir/log"
+  fi
+done
+exit $bad

@@ -8,3 +8,4 @@ This repo is multi-context: one glossary for the lab and one per project.
 - [projects/ai-gateway/GLOSSARY.md](projects/ai-gateway/GLOSSARY.md): the local Gateway (Gateway, Call, Call record, Forwarded credential, Hint, Upstream). Decisions in [projects/ai-gateway/docs/adr/](projects/ai-gateway/docs/adr/).
 - [projects/ts-sandbox/GLOSSARY.md](projects/ts-sandbox/GLOSSARY.md): the Node.js/TypeScript Sandbox (Sandbox, Stage, Stage status, Summary, Pass rate, Tally, Planted defect).
 - [projects/spring-sandbox/GLOSSARY.md](projects/spring-sandbox/GLOSSARY.md): the Spring sandbox (Sandbox, Stage, Stage status, Summary, Pass rate, Planted defect).
+- [projects/go-sandbox/GLOSSARY.md](projects/go-sandbox/GLOSSARY.md): the Go sandbox (Sandbox, Stage, Stage status, Summary, Pass rate, Planted defect).
