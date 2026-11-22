@@ -1,0 +1,14 @@
+{
+  "name": "identity-tester",
+  "job": "Run agent-identity's offline check and demo tour, then report pass or fail for each.",
+  "model": "claude-haiku-5-5",
+  "effort": "medium",
+  "maxTurns": 12,
+  "maxBudgetUsd": 0.10,
+  "settingSources": [],
+  "permissionMode": "dontAsk",
+  "tools": [],
+  "allowedTools": ["mcp__identity__run_check", "mcp__identity__run_tour"],
+  "disallowedTools": ["Bash", "Write", "Edit", "NotebookEdit", "Read", "Glob", "Grep", "WebFetch", "WebSearch", "Agent"],
+  "runLog": "runs/log.jsonl"
+}

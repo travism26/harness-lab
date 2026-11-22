@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Proves the agents layout is complete, each agent's agent.json follows the conventions, and each
+# eval grader agrees with its recorded fixtures. It uses only Node built-ins, installs nothing, and
+# makes no network or model call. It exits non-zero on any failure. The rules are in
+# projects/agents/scripts/check.ts.
+set -euo pipefail
+cd "$(dirname "$0")"
+node -e '
+const [maj, min] = process.versions.node.split(".").map(Number);
+if (maj < 22 || (maj === 22 && min < 18)) {
+  console.error("projects/agents/check needs Node 22.18 or newer (it runs TypeScript directly); found " + process.versions.node);
+  process.exit(1);
+}
+'
+node scripts/check.ts
+node --test "scripts/*.test.ts" "*/test/*.test.ts"
