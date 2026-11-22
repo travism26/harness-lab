@@ -25,12 +25,20 @@ One pass in which the factory revises a draft PR after review. A ticket stops af
 _Avoid_: Retry, iteration
 
 **Factory run**:
-One attempt of the factory's Implement, Rework or Review workflow that started its agent. A refused Ticket, the CI gate and the Factory check are not Factory runs.
+One attempt of the factory's Implement, Rework, Review or Research workflow that started its agent. A refused Ticket, the CI gate and the Factory check are not Factory runs.
 _Avoid_: Run, job, session
 
 **Run record**:
 The one small record a Factory run leaves: what ran, on which Ticket or pull request, how it ended and what it cost. It holds facts and numbers, never text from the model.
 _Avoid_: Run log, Call record, ledger row
+
+**Research request**:
+A Ticket that states one research question for the factory to answer from public sources.
+_Avoid_: Research task, prompt, experiment
+
+**Research note**:
+The cited write-up the factory's research path publishes on a draft PR to answer a Research request. It is not a Run record, which holds facts and numbers and never text from the model.
+_Avoid_: Report, research result, results file
 
 **Brake**:
 A rule that limits what the factory can do on its own, such as draft-only PRs or the rework cap.
