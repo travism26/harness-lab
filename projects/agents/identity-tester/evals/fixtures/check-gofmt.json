@@ -1,0 +1,6 @@
+{
+  "tool": "run_check",
+  "exit_code": 1,
+  "timed_out": false,
+  "output": "gofmt: these files need formatting:\ninternal/rundir/rundir.go\n"
+}

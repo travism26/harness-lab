@@ -1,0 +1,14 @@
+{
+  "name": "REPLACE-ME",
+  "job": "REPLACE-ME: one sentence that says the single job this agent does.",
+  "model": "claude-haiku-5-5",
+  "effort": "medium",
+  "maxTurns": 12,
+  "maxBudgetUsd": 0.10,
+  "settingSources": [],
+  "permissionMode": "dontAsk",
+  "tools": [],
+  "allowedTools": ["mcp__REPLACE-ME__REPLACE-ME"],
+  "disallowedTools": ["Bash", "Write", "Edit", "NotebookEdit"],
+  "runLog": "runs/log.jsonl"
+}

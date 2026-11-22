@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# The ts-sandbox check: install, typecheck, lint and test, in that order, run
+# against the dependencies locked in package-lock.json. Every stage runs even
+# after one fails, except that a failed install marks the rest not-run. With
+# --json it prints the stage results as one JSON line. Exits non-zero on failure.
+# The stage runner is projects/ts-sandbox/scripts/check.mjs.
+set -euo pipefail
+cd "$(dirname "$0")"
+exec node scripts/check.mjs "$@"

@@ -14,6 +14,7 @@
     {"name": "project:agent-identity", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/agent-identity/)"},
     {"name": "project:ai-gateway", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/ai-gateway/)"},
     {"name": "ready-for-factory", "color": "0b6e2c", "description": "Owner-applied: the factory builds this ticket"},
+    {"name": "ready-for-research", "color": "5319e7", "description": "Owner-applied: the factory answers this research-request ticket"},
     {"name": "factory-check", "color": "bfdadc", "description": "Owner-applied: the factory answers with a short live check"}
   ]
 }

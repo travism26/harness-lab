@@ -5,9 +5,10 @@ text (`factory/record.py`). This step writes it to <out>/run.json and appends it
 `<!-- factory:run {...} -->` marker on the last line, to the comment the run already posted
 (docs/adr/0010-run-records-live-in-comment-markers.md).
 
-  write   (App token) runs after the agent step started, whatever happened. All three
-          workflows call it with their own `--workflow`: this module writes the Implement
-          and Rework records, `factory.run_record_review` the Review record.
+  write   (App token) runs after the agent step started, whatever happened. All four
+          workflows call it with their own `--workflow`: this module writes the Implement,
+          Rework and research records (`.github/workflows/research.yml`, whose record goes on
+          the Ticket the way Implement's does), `factory.run_record_review` the Review record.
 
 The step holds the App token and the agent could write anything into --out, so it trusts
 nothing there. It takes the run's identity from its own arguments (the workflow's context).
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from factory.github import GitHub, GitHubError, label_names
-from factory.record import (WORKFLOWS, Outcomes, RunContext, bot_comments, build_record,
+from factory.record import (RECORDED, Outcomes, RunContext, bot_comments, build_record,
                             failure_reason, leave_record, opened_pr, read_numbers)
 from factory.review_pr import rework_round
 from factory.run_record_review import write_review
@@ -93,10 +94,10 @@ def write_rework(args, gh: GitHub, out: Path) -> int:
     return 0
 
 
-def write_implement(args, gh: GitHub, out: Path) -> int:
-    """The Implement run: the marker goes on the comment the run posted on the Ticket, the
-    "opened a draft PR" comment or the "failed" one, or on a one-line comment when it posted
-    none (a cancelled run)."""
+def write_implement(args, gh: GitHub, out: Path, workflow: str = "implement") -> int:
+    """The Implement run, and the research run, which leaves the same comments: the marker goes
+    on the comment the run posted on the Ticket, the "opened a draft PR" comment or the "failed"
+    one, or on a one-line comment when it posted none (a cancelled run)."""
     numbers = read_numbers(out)
     ok = (args.publish_outcome == "success" and args.job_status != "cancelled")
     prefix = OPENED_PREFIX if ok else failed_prefix(args.run_url)
@@ -110,7 +111,7 @@ def write_implement(args, gh: GitHub, out: Path) -> int:
         head_sha = _head_sha(gh, args.repo, pr) if pr else None
     reason = None if ok else failure_reason(_outcomes(args), numbers,
                                             (out / UNCHANGED_FILE).is_file())
-    record = build_record("implement", RunContext.from_args(args, args.issue), numbers,
+    record = build_record(workflow, RunContext.from_args(args, args.issue), numbers,
                           "ok" if ok else "fail", reason, pr=pr, head_sha=head_sha, round_=0)
     leave_record(gh, args.repo, args.issue, out, record,
                  f"The factory run for this Ticket ended: [run]({args.run_url}).", target)
@@ -124,7 +125,9 @@ def write(args, gh: Optional[GitHub] = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     if args.workflow == "review":
         return write_review(args, gh)
-    return (write_rework if args.workflow == "rework" else write_implement)(args, gh, out)
+    if args.workflow == "rework":
+        return write_rework(args, gh, out)
+    return write_implement(args, gh, out, args.workflow)
 
 
 def issue_arg(text: str) -> Optional[int]:
@@ -137,7 +140,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="step", required=True)
     w = sub.add_parser("write")
-    w.add_argument("--workflow", choices=WORKFLOWS, required=True)
+    w.add_argument("--workflow", choices=RECORDED, required=True)
     w.add_argument("--out", required=True)
     w.add_argument("--repo", required=True)
     w.add_argument("--run-id", dest="run_id", required=True)

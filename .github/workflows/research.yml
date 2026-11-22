@@ -1,0 +1,275 @@
+# The factory's research path (docs/factory/README.md, "Research path").
+#
+# Turns one Research request into one cited Research note on a draft PR, when the
+# repository owner labels the issue `ready-for-research`. Nothing else starts it:
+# not opening an issue, not a label from anyone else (docs/adr/0005).
+#
+# Three jobs, so the agent's whole job holds no GitHub write token, not only its
+# step. The agent reads web pages nobody here wrote, and it can make web requests:
+#
+#   claim     holds the App token and runs no agent. Preflight, the switch rule,
+#             one Ticket at a time, the request's headings and its cost cap.
+#   research  runs the agent. It gets the Claude login and nothing else. Its tools
+#             are Read, Grep, Glob, WebFetch and WebSearch: no shell, no write
+#             tool. Its reply is the note. No App token is minted in this job.
+#   publish   holds the App token and runs no agent. It writes the note's Cost
+#             section, runs the deterministic check (factory/research_note.py),
+#             and only then commits the one note file and opens a draft PR.
+#
+# A job passes its files to the next one as an artifact. `publish` trusts nothing
+# in that artifact: the run's identity and cap come from this workflow's context.
+#
+# No `|| true` anywhere, as in review.yml. A note that fails its check is a red run.
+
+name: Research
+
+on:
+  issues:
+    types: [labeled]
+
+permissions: {}
+
+concurrency:
+  # The same group as implement.yml, so a research run and a build never overlap
+  # on the Claude login, and neither is cancelled. Events the first job skips get
+  # a throwaway group so they cannot displace a waiting run. Keep this condition
+  # identical to the `claim` job's `if:` below.
+  group: >-
+    ${{
+      (github.event.label.name == 'ready-for-research'
+        && github.event.sender.login == github.repository_owner
+        && !github.event.issue.pull_request)
+      && 'factory-ticket'
+      || format('research-ignored-{0}', github.run_id)
+    }}
+  cancel-in-progress: false
+
+env:
+  CLAUDE_CODE_VERSION: "2.1.319"
+  LOGIN: ${{ vars.FACTORY_CLAUDE_LOGIN || 'subscription' }}
+
+jobs:
+  claim:
+    # Only the owner's `ready-for-research` label on an issue (not a PR).
+    if: >-
+      github.event.label.name == 'ready-for-research'
+      && github.event.sender.login == github.repository_owner
+      && !github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read # the daily run cap counts this workflow's runs
+    outputs:
+      # The run's dollar cap: the knob, or the request's own cap when that is lower.
+      budget: ${{ steps.request.outputs.budget }}
+    steps:
+      - name: Check out the factory (default branch)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Preflight (configuration, daily cap, App token)
+        id: preflight
+        uses: ./.github/actions/factory-preflight
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_KEY }}
+          login: ${{ env.LOGIN }}
+          subscription-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          openrouter-key: ${{ secrets.OPENROUTER_API_KEY }}
+          daily-run-cap: ${{ vars.FACTORY_DAILY_RUN_CAP || '20' }}
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Claim the request (open, switch rule, one at a time, headings, cap)
+        id: claim
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BUDGET_USD: ${{ vars.FACTORY_RESEARCH_BUDGET_USD || '2' }}
+        run: >-
+          uv run --no-dev python -m factory.research claim --repo "$REPO" --issue "$ISSUE"
+          --out run-out --login "$LOGIN" --app-slug "$APP_SLUG" --run-url "$RUN_URL"
+          --max-budget-usd "$BUDGET_USD"
+
+      - name: Read the run's cap
+        id: request
+        run: echo "budget=$(jq -r .budget run-out/context.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Pass the request to the agent job
+        uses: actions/upload-artifact@v7
+        with:
+          name: research-issue${{ github.event.issue.number }}-run${{ github.run_id }}-${{ github.run_attempt }}-request
+          path: run-out/
+          if-no-files-found: error
+
+  research:
+    needs: claim
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      # How the agent step ended, for the Run record `publish` leaves.
+      agent-outcome: ${{ steps.answer.outcome }}
+    steps:
+      - name: Check out the repository (read by the agent, default branch)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Fetch the request
+        uses: actions/download-artifact@v8
+        with:
+          name: research-issue${{ github.event.issue.number }}-run${{ github.run_id }}-${{ github.run_attempt }}-request
+          path: run-out
+
+      - name: Install Claude Code
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Answer (agent, read and web tools only, budget-capped, no GitHub token)
+        id: answer
+        env:
+          # Only the secret the login needs reaches this step.
+          FACTORY_SUBSCRIPTION_TOKEN: ${{ env.LOGIN == 'subscription' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          FACTORY_OPENROUTER_KEY: ${{ env.LOGIN == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
+          MODEL: ${{ vars.FACTORY_RESEARCH_MODEL || 'sonnet' }}
+          BUDGET_USD: ${{ needs.claim.outputs.budget }}
+        run: >-
+          uv run --no-dev python -m factory.research answer --out run-out
+          --login "$LOGIN" --model "$MODEL" --max-budget-usd "$BUDGET_USD"
+
+      - name: Pass the agent's reply to the publish job
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: research-issue${{ github.event.issue.number }}-run${{ github.run_id }}-${{ github.run_attempt }}-agent
+          path: run-out/
+          if-no-files-found: ignore
+
+  publish:
+    needs: [claim, research]
+    # Whenever the request was claimed: a failed agent job still needs the Ticket
+    # handed back and the Run record left.
+    if: always() && needs.claim.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the factory (default branch)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Preflight (configuration, daily cap) already passed in `claim`. Running it
+      # again here could stop a paid-for run at the cap, so this job only mints.
+      - name: Mint the factory App token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_KEY }}
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Fetch what the agent job left
+        if: always() && needs.research.result != 'skipped'
+        uses: actions/download-artifact@v8
+        with:
+          name: research-issue${{ github.event.issue.number }}-run${{ github.run_id }}-${{ github.run_attempt }}-agent
+          path: run-out
+
+      - name: Check out the checkout the note is committed in
+        if: needs.research.result == 'success'
+        uses: actions/checkout@v7
+        with:
+          path: work
+          persist-credentials: false
+
+      # Token-free. It writes the Cost section from the run's own numbers and this
+      # workflow's cap, then runs the deterministic check. A note that fails is
+      # never handed to the step below.
+      - name: Check the note (no agent, no token)
+        id: check
+        if: needs.research.result == 'success'
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          BUDGET_USD: ${{ needs.claim.outputs.budget }}
+        run: >-
+          uv run --no-dev python -m factory.research check --out run-out
+          --max-budget-usd "$BUDGET_USD"
+
+      - name: Commit the note, push and open the draft PR
+        id: publish
+        if: needs.research.result == 'success'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+        run: >-
+          uv run --no-dev python -m factory.research publish --repo "$REPO" --issue "$ISSUE"
+          --out run-out --work work --app-slug "$APP_SLUG"
+
+      # The agent failed, the note failed its check, or the push did: say why on
+      # the Ticket and drop in-progress. The owner relabels to try again.
+      - name: Hand the Ticket back when no PR was opened
+        if: always() && steps.publish.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          uv run --no-dev python -m factory.research release --repo "$REPO" --issue "$ISSUE"
+          --out run-out --run-url "$RUN_URL"
+
+      # Runs whenever the agent step started, whatever happened, and holds the App
+      # token. It takes the run's identity from this workflow's context, never from
+      # run-out/, and runs only the factory's own scripts. It adds no secret and no
+      # model call. The check's outcome goes in as the verify outcome.
+      - name: Leave the run record
+        if: >-
+          always()
+          && needs.research.outputs.agent-outcome != ''
+          && needs.research.outputs.agent-outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Set here, not read from the job's env, as in implement.yml.
+          LOGIN: ${{ vars.FACTORY_CLAUDE_LOGIN || 'subscription' }}
+          MODEL: ${{ vars.FACTORY_RESEARCH_MODEL || 'sonnet' }}
+          BUDGET_USD: ${{ needs.claim.outputs.budget }}
+          JOB_STATUS: ${{ job.status }}
+          AGENT_OUTCOME: ${{ needs.research.outputs.agent-outcome }}
+          VERIFY_OUTCOME: ${{ steps.check.outcome }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+        run: >-
+          uv run --no-dev python -m factory.run_record write --workflow research
+          --out run-out --repo "$REPO" --run-id "$RUN_ID" --attempt "$ATTEMPT"
+          --issue "$ISSUE" --login "$LOGIN" --model "$MODEL"
+          --budget "$BUDGET_USD" --claude-code-version "$CLAUDE_CODE_VERSION"
+          --app-slug "$APP_SLUG" --run-url "$RUN_URL" --job-status "$JOB_STATUS"
+          --agent-outcome "$AGENT_OUTCOME" --verify-outcome "$VERIFY_OUTCOME"
+          --publish-outcome "$PUBLISH_OUTCOME"
+
+      - name: Keep the run's files
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: research-issue${{ github.event.issue.number }}-run${{ github.run_id }}-${{ github.run_attempt }}-publish
+          path: run-out/
+          if-no-files-found: ignore

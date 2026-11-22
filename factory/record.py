@@ -22,6 +22,9 @@ from factory.switch_rule import LOGINS, is_factory_app
 
 SCHEMA = 1
 WORKFLOWS = ("implement", "rework", "review")
+# Every workflow a record may name. `WORKFLOWS` stays the three `factory.backfill` rebuilds
+# records for: the research path started after records did, so it has no past run to rebuild.
+RECORDED = WORKFLOWS + ("research",)
 REASONS = ("no-result", "no-change", "check-failed", "publish-failed", "unparsed-findings",
            "cancelled")
 VERDICTS = ("PASS", "BLOCKED")
@@ -199,7 +202,7 @@ def build_record(workflow: str, ctx: RunContext, numbers: dict, outcome: str,
     record = {
         "schema": SCHEMA,
         "ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "workflow": keep("workflow", _choice(workflow, WORKFLOWS)),
+        "workflow": keep("workflow", _choice(workflow, RECORDED)),
         "run_id": keep("run_id", _digits(ctx.run_id)),
         "attempt": keep("attempt", _digits(ctx.attempt)),
         "repo": keep("repo", _text(ctx.repo, _REPO_RE)),
