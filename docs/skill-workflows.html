@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill workflows for the Lab: a brainstorm</title>
+<style>
+:root{
+  --bg:#fbfbfa;--fg:#1d1f23;--mute:#5b6270;--line:#9aa1ad;--card:#fff;--rule:#dcdfe4;
+  --m-bg:#dbe8fb;--m-bd:#2f6bd0;
+  --l-bg:#d8f0de;--l-bd:#2a8a4a;
+  --x-bg:#fce6c8;--x-bd:#c26a0a;
+  --a-bg:#ece0f7;--a-bd:#8040b0;
+  --code:#eef0f3;
+}
+@media (prefers-color-scheme:dark){
+:root{
+  --bg:#15171b;--fg:#e6e8ec;--mute:#a0a7b4;--line:#6d7480;--card:#1d2026;--rule:#33373f;
+  --m-bg:#1c2f4d;--m-bd:#6b9df0;
+  --l-bg:#1a3a26;--l-bd:#5cc17c;
+  --x-bg:#43300f;--x-bd:#e69a3d;
+  --a-bg:#32204a;--a-bd:#b98be0;
+  --code:#2a2e36;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1200px;margin:0 auto;padding:32px 24px 80px}
+h1{font-size:30px;margin:0 0 4px}
+.sub{color:var(--mute);margin:0 0 20px;font-size:17px}
+h2{font-size:23px;margin:48px 0 12px;padding-top:12px;border-top:2px solid var(--rule)}
+h3{font-size:17px;margin:28px 0 4px}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font:0.88em ui-monospace,Menlo,Consolas,monospace}
+.legend{display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding:10px 14px;border:1px solid var(--rule);border-radius:8px;background:var(--card);font-size:14px}
+.legend b{margin-right:4px}
+.sw{display:inline-block;width:16px;height:16px;border:2px solid;vertical-align:-3px;margin-right:6px;border-radius:4px}
+.sw.m{background:var(--m-bg);border-color:var(--m-bd)}
+.sw.l{background:var(--l-bg);border-color:var(--l-bd)}
+.sw.x{background:var(--x-bg);border-color:var(--x-bd)}
+.sw.a{background:var(--a-bg);border-color:var(--a-bd);border-radius:9px}
+.diagram{margin:6px 0 4px;border:1px solid var(--rule);border-radius:8px;background:var(--card);padding:14px 16px 6px;overflow-x:auto}
+.cap{color:var(--mute);margin:6px 0 10px;font-size:15px}
+.flow{display:flex;align-items:flex-start;width:max-content;padding:6px 0 14px}
+.col{display:flex;flex-direction:column;align-items:center;flex:none;width:124px}
+.col.w{width:150px}
+.n{width:100%;padding:7px 6px;border:2px solid;border-radius:6px;font-size:12.5px;line-height:1.3;text-align:center}
+.n small{display:block;color:var(--mute);font-size:11px;margin-top:3px}
+.n code{background:transparent;padding:0;font-size:12.5px;font-weight:600}
+.n.m{background:var(--m-bg);border-color:var(--m-bd)}
+.n.l{background:var(--l-bg);border-color:var(--l-bd)}
+.n.x{background:var(--x-bg);border-color:var(--x-bd)}
+.n.a{background:var(--a-bg);border-color:var(--a-bd);border-radius:16px}
+.n.opt{border-style:dashed}
+.ar{flex:none;width:22px;margin-top:9px;text-align:center;color:var(--line);font-style:normal;font-size:18px;line-height:1.2}
+.stub{position:relative;width:2px;height:22px;background:var(--line);margin-top:0}
+.stub.up::before{content:"";position:absolute;top:-2px;left:-5px;border:6px solid transparent;border-bottom:8px solid var(--line);border-top:0}
+.stub.dn::before{content:"";position:absolute;bottom:-2px;left:-5px;border:6px solid transparent;border-top:8px solid var(--line);border-bottom:0}
+.br{display:flex;flex-direction:column;align-items:center;width:100%}
+.br .tag{font-size:11px;color:var(--mute);text-align:center;margin:2px 0 3px;line-height:1.25}
+.br .stub.s{height:12px}
+.grp{flex:none;display:flex;flex-direction:column;border:2px dashed var(--line);border-radius:10px;padding:4px 8px 0;margin:0 2px}
+.grp>.gl{font-size:11px;color:var(--mute);margin-bottom:4px}
+.grp>.flow{padding-bottom:6px}
+.vflow{display:flex;flex-direction:column;align-items:center;width:100%}
+.scn{margin:18px 0;border:1px solid var(--rule);border-radius:8px;background:var(--card);padding:12px 16px 10px}
+.scn h3{margin:0 0 4px}
+.scn .diagram{border:0;padding:0 0 0;background:none}
+.scn dl{margin:4px 0 0;font-size:15px}
+.scn dt{display:inline;font-weight:700}
+.scn dd{display:inline;margin:0}
+.scn dd::after{content:"";display:block}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:15px;margin:10px 0}
+th,td{border:1px solid var(--rule);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--code)}
+.tblwrap{overflow-x:auto}
+.lead{font-size:20px;font-weight:600;border-left:5px solid var(--x-bd);padding:8px 16px;margin:12px 0 18px;background:var(--card)}
+.callout{border:2px solid var(--x-bd);background:var(--x-bg);border-radius:8px;padding:6px 18px 10px;margin:20px 0}
+.callout h3{margin-top:10px}
+.ladder{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 0 10px;min-width:640px}
+.rung{border:2px solid var(--l-bd);background:var(--l-bg);border-radius:6px;padding:6px 12px;text-align:center;font-size:14px}
+.rung b{margin-right:6px}
+.axis{color:var(--mute);font-size:13px;width:100%;display:flex;justify-content:space-between;min-width:640px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin:12px 0}
+.card{border:1px solid var(--rule);border-radius:8px;background:var(--card);padding:6px 16px 12px}
+.card h3{margin-top:10px}
+ol.q li{margin:8px 0}
+.sc{display:flex;gap:6px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<main>
+<header id="top">
+<h1 id="title">Skill workflows for the Lab: a brainstorm</h1>
+<p class="sub">A brainstorm from November 2026, kept for reference. Nothing here is wired up yet: trees, scenarios and ways to enforce them.</p>
+<div class="legend" id="legend">
+<b>Legend</b>
+<span><span class="sw m"></span>Matt Pocock skill</span>
+<span><span class="sw l"></span>Lauren Tan (pstack) skill</span>
+<span><span class="sw x"></span>Lab mechanism (check, CI, factory Review, human merge)</span>
+<span><span class="sw a"></span>Artifact (proof a step leaves behind)</span>
+<span>Dashed border: optional step</span>
+</div>
+</header>
+
+<!-- ============ SECTION 1 ============ -->
+<section id="sec-pure-trees">
+<h2>The two pure trees</h2>
+
+<h3 id="diagram-1a-title">Diagram 1A: Matt Pocock: tracker-first</h3>
+<div class="diagram" id="diagram-1a"><div class="flow">
+  <div class="col"><div class="n m"><code>/grill-with-docs</code><small>interview; writes GLOSSARY and ADRs</small></div>
+    <div class="br"><div class="stub up"></div><div class="n m"><code>prototype</code><small>throwaway, branch never merged</small></div><div class="tag">back to grilling</div></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n m"><code>/to-spec</code><small>writes up the conversation, agrees test seams, publishes with <code>ready-for-agent</code></small></div>
+    <div class="br"><div class="stub up"></div><div class="n m"><code>/triage</code><small>incoming issues: label state machine</small></div></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n m"><code>/to-tickets</code><small>vertical-slice tickets with blocking edges; owner approves</small></div>
+    <div class="br"><div class="stub up"></div><div class="n m"><code>/wayfinder</code><small>huge work: a map of decision tickets, plans, does not build</small></div></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n m"><code>/implement-spec</code><small>one subagent per ready ticket, each in a worktree</small></div></div>
+  <i class="ar">→</i>
+  <div class="grp"><div class="gl">per ticket</div>
+    <div class="flow">
+      <div class="col"><div class="n m"><code>tdd</code></div>
+        <div class="br"><div class="stub up"></div><div class="n m"><code>diagnosing-bugs</code><small>build a pass/fail feedback loop first</small></div></div></div>
+      <i class="ar">→</i>
+      <div class="col"><div class="n m"><code>code-review</code><small>standards + spec, in parallel</small></div></div>
+      <i class="ar">→</i>
+      <div class="col"><div class="n m">commit</div></div>
+    </div>
+  </div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n m"><code>/handoff</code>, <code>/retro</code></div></div>
+</div></div>
+<p class="cap">Strength: the tracker is the source of truth; every step leaves an issue, a label or a doc. Gap: nothing drives the running app to prove behaviour.</p>
+
+<h3 id="diagram-1b-title">Diagram 1B: Lauren Tan (pstack): playbook-first</h3>
+<div class="diagram" id="diagram-1b"><div class="flow">
+  <div class="col"><div class="n l"><code>/poteto-mode</code><small>picks a playbook, copies its steps into the todo list</small></div>
+    <div class="br"><div class="stub up"></div><div class="n l"><code>/figure-it-out</code><small>large or unattended: phases</small></div><div class="stub dn s" style="margin:2px 0"></div><div class="n l"><code>/show-me-your-work</code><small>a <code>decisions.tsv</code> log</small></div><div class="tag">replaces the main line's front half</div></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n l opt"><code>/sharpen</code><small>optional</small></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n l"><code>/how</code> / <code>/why</code><small>how it works now, and why</small></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n l"><code>/architect</code><small>+ <code>/arena</code> for competing designs</small></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n l">build by subagent<small><code>/tdd</code> when a cheap test path exists</small></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n l"><code>/verify-&lt;app&gt;</code><small>made once by <code>/create-verification-skill</code>; drives the real app</small></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n l"><code>/unslop</code>, <code>/no-comments</code></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n l opt"><code>/interrogate</code><small>multi-model review, only if contested</small></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n l">open PR</div>
+    <div class="br"><div class="stub up"></div><div class="n l"><code>/blast-radius</code><small>small diff you don't trust</small></div><div class="tag">joins before open PR</div></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n l">babysit</div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n l">ship</div>
+    <div class="br"><div class="stub dn" style="margin-bottom:6px"></div><div class="n l"><code>/correct</code>, <code>/reflect</code><small>after: turn repeated mistakes into checks / skill edits</small></div></div></div>
+</div></div>
+<p class="cap">Strength: proof. Verdicts are VERIFIED / NOT VERIFIED / INCONCLUSIVE, the judge is never the author, skipped steps stay listed as <code>skip: &lt;reason&gt;</code>. Gap: no tracker pipeline, no triage, no glossary discipline.</p>
+
+<h3 id="overlap-title">Where they overlap</h3>
+<div class="tblwrap"><table id="table-overlap">
+<thead><tr><th>Job</th><th>Matt</th><th>Lauren</th></tr></thead>
+<tbody>
+<tr><td>sharpen an idea</td><td><code>grilling</code></td><td><code>/sharpen</code></td></tr>
+<tr><td>design</td><td><code>codebase-design</code></td><td><code>/architect</code> + <code>/arena</code></td></tr>
+<tr><td>test-first</td><td><code>tdd</code></td><td><code>/tdd</code></td></tr>
+<tr><td>review</td><td><code>code-review</code></td><td><code>/interrogate</code></td></tr>
+<tr><td>prototype</td><td><code>prototype</code></td><td>Prototype playbook</td></tr>
+<tr><td>learn from mistakes</td><td><code>/retro</code></td><td><code>/correct</code>, <code>/reflect</code></td></tr>
+<tr><td>large work</td><td><code>/wayfinder</code>, <code>/to-tickets</code></td><td><code>/figure-it-out</code></td></tr>
+</tbody></table></div>
+<p id="only-matt"><b>Only Matt:</b> spec and ticket pipeline, triage state machine, glossary and ADRs, <code>/handoff</code>.</p>
+<p id="only-lauren"><b>Only Lauren:</b> verification skills, decision log, cross-model judging, PR babysit and ship, <code>/how</code> / <code>/why</code>.</p>
+</section>
+
+<!-- ============ SECTION 2 ============ -->
+<section id="sec-hybrids">
+<h2>Hybrids</h2>
+
+<h3 id="diagram-2a-title">Diagram 2A: Hybrid A: tracker front, proof back (the default candidate)</h3>
+<div class="diagram" id="diagram-2a"><div class="flow">
+  <div class="col"><div class="n m"><code>/grill-with-docs</code></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n m"><code>/to-spec</code></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n m"><code>/to-tickets</code></div></div>
+  <i class="ar">→</i>
+  <div class="grp"><div class="gl">per ticket</div>
+    <div class="flow">
+      <div class="col"><div class="n l"><code>/architect</code></div></div>
+      <i class="ar">→</i>
+      <div class="col"><div class="n m">build with <code>tdd</code><small>delegated</small></div></div>
+      <i class="ar">→</i>
+      <div class="col"><div class="n x"><code>projects/&lt;name&gt;/check</code></div></div>
+      <i class="ar">→</i>
+      <div class="col"><div class="n l"><code>/verify-&lt;project&gt;</code></div></div>
+      <i class="ar">→</i>
+      <div class="col"><div class="n m"><code>code-review</code></div></div>
+      <i class="ar">→</i>
+      <div class="col"><div class="n l opt"><code>/interrogate</code><small>only when risky</small></div></div>
+    </div>
+  </div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n x">PR</div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n x">CI + factory Review</div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n x">human merge</div>
+    <div class="br"><div class="stub dn" style="margin-bottom:6px"></div><div class="n l"><code>/correct</code><small>when a mistake repeats</small></div></div></div>
+</div></div>
+<p class="cap">Matt owns intake and the tracker. Lauren owns design and proof. The Lab's check, CI and Review stay the gate.</p>
+
+<h3 id="diagram-2b-title">Diagram 2B: Hybrid B: factory lane (unattended, in CI)</h3>
+<div class="diagram" id="diagram-2b"><div class="flow">
+  <div class="col"><div class="n x">Ticket labelled <code>ready-for-factory</code></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n x">factory agent<small>only skills committed in the repo</small></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n x"><code>projects/&lt;name&gt;/check</code></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n l"><code>/verify-&lt;project&gt;</code><small>committed under the Project</small></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n a">workflow record in the PR</div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n x">CI</div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n x">factory Review</div>
+    <div class="br"><div class="stub dn" style="margin-bottom:6px"></div><div class="n x">rework<small>max 2 rounds, back to the factory agent</small></div></div></div>
+  <i class="ar">→</i>
+  <div class="col"><div class="n x">human merge</div></div>
+</div></div>
+<p class="cap">The factory runner has no home-folder skills. Anything it must follow has to be committed in the repo.</p>
+
+<h3 id="diagram-2c-title">Diagram 2C: Hybrid C: overnight on the laptop</h3>
+<div class="diagram" id="diagram-2c"><div class="flow">
+  <div class="col w"><div class="n m"><code>/wayfinder</code> map<small>or a ticket queue</small></div></div>
+  <i class="ar">→</i>
+  <div class="col w"><div class="n l"><code>/figure-it-out</code> contract<small>goal, done means, fresh worktree, escape hatch</small></div></div>
+  <i class="ar">→</i>
+  <div class="col w"><div class="n a"><code>/show-me-your-work</code><br><code>decisions.tsv</code></div></div>
+  <i class="ar">→</i>
+  <div class="col w"><div class="n m">per ticket<small>as Hybrid A's build half</small></div></div>
+  <i class="ar">→</i>
+  <div class="col w"><div class="n m">morning audit<small><code>code-review</code> by a different model</small></div></div>
+  <i class="ar">→</i>
+  <div class="col w"><div class="n x">human merge</div></div>
+</div></div>
+</section>
+
+<!-- ============ SECTION 3 ============ -->
+<section id="sec-scenarios">
+<h2>Scenarios</h2>
+<p class="cap">One flow per scenario. Lines are shown only where the brief gave them.</p>
+
+<div class="scn" id="scn-small"><h3>Small ticket</h3>
+<div class="diagram" id="diagram-scn-small"><div class="flow">
+  <div class="col"><div class="n l"><code>/implement</code><small>(<code>tdd</code>)</small></div></div><i class="ar">→</i>
+  <div class="col"><div class="n x">check</div></div><i class="ar">→</i>
+  <div class="col w"><div class="n m"><code>code-review</code> or <code>/blast-radius</code></div></div><i class="ar">→</i>
+  <div class="col"><div class="n x">merge</div></div>
+</div></div>
+<dl><div><dt>Use when:</dt> <dd>one file or one clear fix.</dd></div>
+<div><dt>Skip:</dt> <dd>grilling, spec, architect.</dd></div>
+<div><dt>Proof:</dt> <dd>green check, one review.</dd></div></dl></div>
+
+<div class="scn" id="scn-medium"><h3>Medium ticket</h3>
+<div class="diagram" id="diagram-scn-medium"><div class="flow">
+  <div class="col w"><div class="n m"><code>/sharpen</code> or a short <code>grilling</code></div></div><i class="ar">→</i>
+  <div class="col"><div class="n l"><code>/architect</code></div></div><i class="ar">→</i>
+  <div class="col"><div class="n m">build with <code>tdd</code><small>delegated</small></div></div><i class="ar">→</i>
+  <div class="col"><div class="n x">check</div></div><i class="ar">→</i>
+  <div class="col"><div class="n l"><code>/verify-&lt;project&gt;</code></div></div><i class="ar">→</i>
+  <div class="col"><div class="n m"><code>code-review</code></div></div><i class="ar">→</i>
+  <div class="col"><div class="n x">PR</div></div>
+</div></div>
+<dl><div><dt>Use when:</dt> <dd>one Project, a handful of files (the go-sandbox Goal, #174, was this size).</dd></div>
+<div><dt>Skip:</dt> <dd>to-tickets, arena.</dd></div>
+<div><dt>Proof:</dt> <dd>check, verify Summary, Review PASS.</dd></div></dl></div>
+
+<div class="scn" id="scn-big"><h3>Big ticket</h3>
+<div class="diagram" id="diagram-scn-big"><div class="flow">
+  <div class="col"><div class="n m"><code>/grill-with-docs</code></div></div><i class="ar">→</i>
+  <div class="col"><div class="n m"><code>/to-spec</code></div></div><i class="ar">→</i>
+  <div class="col"><div class="n m"><code>/to-tickets</code></div></div><i class="ar">→</i>
+  <div class="col"><div class="n m"><code>/implement-spec</code><small>per ticket</small></div>
+    <div class="br"><div class="stub up"></div><div class="n l"><code>/architect</code> + <code>/arena</code><small>on the contested ticket</small></div></div></div><i class="ar">→</i>
+  <div class="col"><div class="n l"><code>/interrogate</code><small>before merge</small></div></div><i class="ar">→</i>
+  <div class="col"><div class="n l"><code>/correct</code><small>after</small></div></div>
+</div></div>
+<dl><div><dt>Use when:</dt> <dd>several PRs or more than one Project.</dd></div>
+<div><dt>Skip:</dt> <dd>nothing.</dd></div>
+<div><dt>Proof:</dt> <dd>spec, tickets with blocking edges, per-ticket check and review.</dd></div></dl></div>
+
+<div class="scn" id="scn-huge"><h3>Huge or unknown shape</h3>
+<div class="diagram" id="diagram-scn-huge"><div class="flow">
+  <div class="col"><div class="n m"><code>/wayfinder</code> map</div>
+    <div class="br"><div class="stub dn" style="margin-bottom:6px"></div><div class="n a">the map issue and its resolved decision tickets</div></div></div><i class="ar">→</i>
+  <div class="col w"><div class="n m">research / prototype / grilling tickets</div></div><i class="ar">→</i>
+  <div class="col"><div class="n m">becomes a Big ticket</div></div>
+</div></div>
+<dl><div><dt>Use when:</dt> <dd>more than one session can hold.</dd></div>
+<div><dt>Proof:</dt> <dd>the map issue and its resolved decision tickets.</dd></div></dl></div>
+
+<div class="scn" id="scn-poc"><h3>POC / Experiment</h3>
+<div class="diagram" id="diagram-scn-poc"><div class="flow">
+  <div class="col w"><div class="n a">Experiment request<small><code>experiments/&lt;slug&gt;/request.md</code>: a claim, pass/fail checks, cost cap</small></div>
+    <div class="br"><div class="stub up"></div><div class="n m"><code>prototype</code></div><div class="tag">or</div></div></div><i class="ar">→</i>
+  <div class="col"><div class="n x">throwaway branch</div></div><i class="ar">→</i>
+  <div class="col"><div class="n a"><code>results.md</code></div></div><i class="ar">→</i>
+  <div class="col"><div class="n x">keep or drop</div></div><i class="ar">→</i>
+  <div class="col w"><div class="n m">if kept, re-enter as a Medium ticket</div></div>
+</div></div>
+<dl><div><dt>Use when:</dt> <dd>testing a claim or a shape.</dd></div>
+<div><dt>Skip:</dt> <dd>review, merge.</dd></div>
+<div><dt>Proof:</dt> <dd><code>results.md</code>, recorded whether it passed or failed.</dd></div></dl></div>
+
+<div class="scn" id="scn-bug"><h3>Bug</h3>
+<div class="diagram" id="diagram-scn-bug"><div class="flow">
+  <div class="col"><div class="n m"><code>diagnosing-bugs</code><small>feedback loop first</small></div></div><i class="ar">→</i>
+  <div class="col"><div class="n a">failing test<small>(<code>tdd</code>)</small></div></div><i class="ar">→</i>
+  <div class="col"><div class="n m">fix</div></div><i class="ar">→</i>
+  <div class="col"><div class="n x">check</div></div><i class="ar">→</i>
+  <div class="col"><div class="n l opt"><code>/correct</code><small>if it is a repeat</small></div></div>
+</div></div>
+<dl><div><dt>Proof:</dt> <dd>the test that failed before and passes after.</dd></div></dl></div>
+
+<div class="scn" id="scn-unattended"><h3>Unattended run</h3>
+<div class="diagram" id="diagram-scn-unattended"><div class="flow">
+  <div class="col w"><div class="n l"><a href="#diagram-2c">Hybrid C</a></div></div><i class="ar">→</i>
+  <div class="col w"><div class="n a"><code>decisions.tsv</code> plus the morning audit</div></div>
+</div></div>
+<dl><div><dt>Proof:</dt> <dd><code>decisions.tsv</code> plus the morning audit.</dd></div></dl></div>
+</section>
+
+<!-- ============ SECTION 4 ============ -->
+<section id="sec-enforcement">
+<h2>How a workflow could be enforced</h2>
+<p class="lead" id="enforce-lead">You cannot prove an agent used a skill. You can require the artifact that step leaves behind. So define each step by its artifact.</p>
+
+<h3 id="diagram-ladder-title">Enforcement ladder</h3>
+<div class="diagram" id="diagram-ladder">
+<div class="axis"><span>Strongest at the top</span></div>
+<div class="ladder">
+  <div class="rung" style="width:100%"><b>6</b>Agents in <code>projects/agents/</code>: independent judge</div>
+  <div class="stub dn" style="height:10px"></div>
+  <div class="rung" style="width:92%"><b>5</b>Claude Code hooks: hard, in-session</div>
+  <div class="stub dn" style="height:10px"></div>
+  <div class="rung" style="width:84%"><b>4</b>Mechanical gate: hard</div>
+  <div class="stub dn" style="height:10px"></div>
+  <div class="rung" style="width:76%"><b>3</b>Workflow record: checkable</div>
+  <div class="stub dn" style="height:10px"></div>
+  <div class="rung" style="width:68%"><b>2</b>Router skill: soft</div>
+  <div class="stub dn" style="height:10px"></div>
+  <div class="rung" style="width:60%"><b>1</b>Written convention: advisory</div>
+</div>
+<div class="axis"><span>Weakest at the bottom</span></div>
+</div>
+
+<div class="tblwrap"><table id="table-ladder">
+<thead><tr><th>Rung</th><th>What it is</th><th>Works on laptop</th><th>Works in the factory</th><th>Strength</th></tr></thead>
+<tbody>
+<tr><td>1. Written convention</td><td>a scenario-to-skills table in <code>CLAUDE.md</code></td><td>yes</td><td>read only</td><td>advisory</td></tr>
+<tr><td>2. Router skill</td><td>one skill committed in the repo (for example <code>/workflow &lt;scenario&gt;</code>) that copies the scenario's steps into the todo list; a skipped step stays as <code>skip: &lt;reason&gt;</code></td><td>yes</td><td>yes</td><td>soft</td></tr>
+<tr><td>3. Workflow record</td><td>each PR carries a small record: scenario, each step done or skipped with a reason, a link to its evidence</td><td>yes</td><td>yes</td><td>checkable</td></tr>
+<tr><td>4. Mechanical gate</td><td>a script in CI reads the record and fails when a required step has no evidence; factory Review treats a missing step as a blocker; uses the existing rework rounds</td><td>yes</td><td>yes</td><td>hard</td></tr>
+<tr><td>5. Claude Code hooks</td><td>committed project settings: a Stop hook that refuses to finish until the check ran, a PreToolUse hook that blocks <code>git push</code> until the record exists</td><td>yes</td><td>yes (the factory loads project settings)</td><td>hard, in-session</td></tr>
+<tr><td>6. Agents in <code>projects/agents/</code></td><td>small Agent SDK programs with a fixed tool list and a strict output schema, run beside the work</td><td>by hand today</td><td>not wired yet</td><td>independent judge</td></tr>
+</tbody></table></div>
+
+<div class="callout" id="callout-constraints">
+<h3>Three constraints found in the repo</h3>
+<p><b>(a)</b> Almost every skill in both suites is user-only (<code>disable-model-invocation</code>), so an agent cannot invoke them; only a person typing the command can.</p>
+<p><b>(b)</b> The factory runner installs plain Claude Code with project settings only: no plugins, no home-folder skills, and the repo has no root <code>.claude/</code> folder yet.</p>
+<p><b>(c)</b> Agents in <code>projects/agents/</code> load no skills (<code>settingSources: []</code>), run on Haiku 5.5, cap at $1 a run and are launched by hand.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 5 ============ -->
+<section id="sec-agents">
+<h2>Agent ideas (not built)</h2>
+<div class="cards">
+<div class="card" id="card-ticket-sizer"><h3><code>ticket-sizer</code></h3>
+<p>Reads an issue, proposes a scenario (small, medium, big, huge, POC, bug) through a strict schema. Code checks the answer against the allowed list. Feeds rung 2 and 3.</p></div>
+<div class="card" id="card-workflow-auditor"><h3><code>workflow-auditor</code></h3>
+<p>Read-only. Reads a PR and its workflow record, answers pass or fail per required step with the evidence it found. Feeds rung 4. Never the agent that wrote the change.</p></div>
+<div class="card" id="card-verify-runner"><h3><code>verify-runner</code></h3>
+<p>Runs a Project's <code>./check --json</code>, returns the Summary unchanged. The three sandboxes already give it a shared format.</p></div>
+</div>
+<p id="agents-closing">With a workflow record on every PR, the Lab can run the same Bench case under Matt's tree, Lauren's tree and a hybrid, and compare passed out of N. That is how we test them ourselves.</p>
+</section>
+
+<!-- ============ SECTION 6 ============ -->
+<section id="sec-questions">
+<h2>Open questions for the owner</h2>
+<ol class="q" id="questions-list">
+<li id="q1">Is Hybrid A the default, or do you want to run the two pure trees side by side first?</li>
+<li id="q2">Which scenario do we wire first? Suggested: Medium ticket.</li>
+<li id="q3">How far up the ladder for a first cut? Suggested: rungs 2 to 4.</li>
+<li id="q4">Vendor skills into the repo for the factory, or keep the factory on Lab-written skills only? pstack is MIT; Matt Pocock's licence is not checked yet.</li>
+<li id="q5">Are <code>ticket-sizer</code> and <code>workflow-auditor</code> worth a Goal in <code>projects/agents/</code>?</li>
+</ol>
+</section>
+</main>
+</body>
+</html>
