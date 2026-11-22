@@ -1,0 +1,105 @@
+{
+  "source": "docs/skill-workflows.md, section 3 (Scenarios)",
+  "scenarios": [
+    {
+      "key": "small",
+      "name": "Small ticket",
+      "flow": [
+        {"step": "`/implement` (`tdd`)"},
+        {"step": "check"},
+        {"step": "`code-review` or `/blast-radius`"},
+        {"step": "merge"}
+      ],
+      "skip": ["grilling", "spec", "architect"],
+      "when_to_use": "one file or one clear fix",
+      "proof": "green check, one review"
+    },
+    {
+      "key": "medium",
+      "name": "Medium ticket",
+      "flow": [
+        {"step": "`/sharpen` or a short `grilling`"},
+        {"step": "`/architect`"},
+        {"step": "build with `tdd` (delegated)"},
+        {"step": "check"},
+        {"step": "`/verify-<project>`"},
+        {"step": "`code-review`"},
+        {"step": "PR"}
+      ],
+      "skip": ["to-tickets", "arena"],
+      "when_to_use": "one Project, a handful of files (the go-sandbox Goal, #174, was this size)",
+      "proof": "check, verify Summary, Review PASS"
+    },
+    {
+      "key": "big",
+      "name": "Big ticket",
+      "flow": [
+        {"step": "`/grill-with-docs`"},
+        {"step": "`/to-spec`"},
+        {"step": "`/to-tickets`"},
+        {"step": "`/implement-spec` (per ticket)"},
+        {"step": "`/interrogate` (before merge)"},
+        {"step": "`/correct` (after)"}
+      ],
+      "branch": "`/architect` + `/arena` on the contested ticket, hanging off `/implement-spec`",
+      "skip": [],
+      "when_to_use": "several PRs or more than one Project",
+      "proof": "spec, tickets with blocking edges, per-ticket check and review"
+    },
+    {
+      "key": "huge",
+      "name": "Huge or unknown shape",
+      "flow": [
+        {"step": "`/wayfinder` map"},
+        {"step": "research / prototype / grilling tickets"},
+        {"step": "becomes a Big ticket"}
+      ],
+      "skip": [],
+      "when_to_use": "more than one session can hold",
+      "proof": "the map issue and its resolved decision tickets"
+    },
+    {
+      "key": "poc",
+      "name": "POC / Experiment",
+      "flow": [
+        {"step": "Experiment request (`experiments/<slug>/request.md`: a claim, pass/fail checks, cost cap); `prototype` can stand in for it"},
+        {"step": "throwaway branch"},
+        {"step": "`results.md`"},
+        {"step": "keep or drop"},
+        {"step": "if kept, re-enter as a Medium ticket"}
+      ],
+      "skip": ["review", "merge"],
+      "when_to_use": "testing a claim or a shape",
+      "proof": "`results.md`, recorded whether it passed or failed"
+    },
+    {
+      "key": "bug",
+      "name": "Bug",
+      "flow": [
+        {"step": "`diagnosing-bugs` (feedback loop first)"},
+        {"step": "failing test (`tdd`)"},
+        {"step": "fix"},
+        {"step": "check"},
+        {"step": "`/correct` (if it is a repeat)", "optional": true}
+      ],
+      "skip": [],
+      "when_to_use": "not stated",
+      "proof": "the test that failed before and passes after"
+    },
+    {
+      "key": "unattended",
+      "name": "Unattended run",
+      "flow": [
+        {"step": "`/wayfinder` map, or a ticket queue"},
+        {"step": "`/figure-it-out` contract: goal, done means, fresh worktree, escape hatch"},
+        {"step": "`/show-me-your-work` `decisions.tsv`"},
+        {"step": "per ticket: as Hybrid A's build half"},
+        {"step": "morning audit: `code-review` by a different model"},
+        {"step": "human merge"}
+      ],
+      "skip": [],
+      "when_to_use": "not stated",
+      "proof": "`decisions.tsv` plus the morning audit"
+    }
+  ]
+}

@@ -220,7 +220,7 @@ Listed here from rung 1 up to rung 6 (strength rises with the number).
 | Rung | What it is | Works on laptop | Works in the factory | Strength |
 | --- | --- | --- | --- | --- |
 | 1. Written convention | a scenario-to-skills table in `CLAUDE.md` | yes | read only | advisory |
-| 2. Router skill | one skill committed in the repo (for example `/workflow <scenario>`) that copies the scenario's steps into the todo list; a skipped step stays as `skip: <reason>` | yes | yes | soft |
+| 2. Router skill | one skill committed in the repo (for example `/workflow <scenario>`) that copies the scenario's steps into the todo list; a skipped step stays as `skip: <reason>`; built as `.claude/skills/workflow/SKILL.md` | yes | yes | soft |
 | 3. Workflow record | each PR carries a small record: scenario, each step done or skipped with a reason, a link to its evidence | yes | yes | checkable |
 | 4. Mechanical gate | a script in CI reads the record and fails when a required step has no evidence; factory Review treats a missing step as a blocker; uses the existing rework rounds | yes | yes | hard |
 | 5. Claude Code hooks | committed project settings: a Stop hook that refuses to finish until the check ran, a PreToolUse hook that blocks `git push` until the record exists | yes | yes (the factory loads project settings) | hard, in-session |
