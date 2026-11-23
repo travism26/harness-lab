@@ -12,6 +12,10 @@ _Avoid_: Monorepo, platform
 One self-contained application under `projects/`, with its own glossary, decisions and check.
 _Avoid_: App, module, package
 
+**Project check**:
+The one command a Project provides that says whether its code is sound. It is not the Factory check, which proves the factory's credentials work.
+_Avoid_: Factory check, test script, verify
+
 **Factory**:
 The GitHub Actions setup that turns labelled issues into draft PRs against this repo, with a review step. It builds the lab's projects, not the harness.
 _Avoid_: Pipeline, CI bot, automation
@@ -23,6 +27,18 @@ _Avoid_: Task, story
 **Rework round**:
 One pass in which the factory revises a draft PR after review. A ticket stops after two.
 _Avoid_: Retry, iteration
+
+**Review**:
+The factory's read of a pull request against its Ticket and the Lab's standards. It ends in a Verdict.
+_Avoid_: Code review, judge, second read
+
+**Verdict**:
+The result of a Review for one head commit: PASS or BLOCKED.
+_Avoid_: Result, approval, score
+
+**Override**:
+The owner's recorded decision to merge a head whose Verdict is not PASS, with the reason written down.
+_Avoid_: Bypass, force merge
 
 **Factory run**:
 One attempt of the factory's Implement, Rework, Review or Research workflow that started its agent. A refused Ticket, the CI gate and the Factory check are not Factory runs.
