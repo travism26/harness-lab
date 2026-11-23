@@ -72,6 +72,14 @@ _Avoid_: Onboarding, runbook
 The short run that answers the owner's `factory-check` label, proving the factory's credentials work. The live check at the end of the setup guide.
 _Avoid_: Smoke test, ping
 
+**Builder**:
+The planning bot that turns a goal issue into a spec issue and Tickets. It never starts the factory.
+_Avoid_: Planner, Grok bot
+
+**Scout**:
+The bot that proposes goal issues for the Builder to plan.
+_Avoid_: Researcher, finder
+
 **Switch rule**:
 The condition under which the factory's Claude Code moves from the owner's subscription token to an OpenRouter key.
 _Avoid_: Fallback, migration
