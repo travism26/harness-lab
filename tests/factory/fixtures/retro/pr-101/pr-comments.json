@@ -1,0 +1,8 @@
+[
+  {
+    "user": {
+      "login": "travism26-factory[bot]"
+    },
+    "body": "<!-- factory:review -->\n<!-- factory:gate head=1111111111111111111111111111111111111111 charged=1 source=review -->\n## Factory review: BLOCKED\n\nReviewed `111111111111` against Ticket #7.\nSent to rework: round 1 of 2.\n\n### Spec: BLOCKER\n\nspec bad\n- **missing_requirement** The retry cap is never read (`factory/x.py`). Fix: Read it in run()\n\n### Standards: PASS\n\nstandards ok\n\nA Spec blocker or a failing required CI run on a factory draft sends a PR to rework. The merge is a human's.\n"
+  }
+]

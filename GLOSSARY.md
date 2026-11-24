@@ -48,6 +48,10 @@ _Avoid_: Result, approval, score
 The owner's recorded decision to merge a head whose Verdict is not PASS, with the reason written down.
 _Avoid_: Bypass, force merge
 
+**Retro**:
+A periodic read of recent merged work that proposes new checks and standards for the owner to accept or close.
+_Avoid_: Postmortem, audit
+
 **Factory run**:
 One attempt of the factory's Implement, Rework, Review or Research workflow that started its agent. A refused Ticket, the CI gate and the Factory check are not Factory runs.
 _Avoid_: Run, job, session
