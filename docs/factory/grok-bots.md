@@ -99,7 +99,7 @@ You work on demand, from a daily check, or when a cloud agent finishes. Stay qui
 | `spec:ready-for-review` | You | Spec issue validated and waiting for the owner. |
 | `ready-for-implementation` | **Owner only** | Owner approved the spec. You may cut tickets. |
 | `ready-for-factory` | **Owner only** | Starts the factory build. |
-| `ready-for-human` | Factory | A factory ticket stalled. Not used for specs. |
+| `factory-stopped` | Factory | A factory PR stalled after two rework rounds. Not used for specs. |
 
 Never apply `ready-for-implementation` yourself.
 
