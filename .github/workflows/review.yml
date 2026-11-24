@@ -24,7 +24,7 @@
 name: Review
 
 # pull_request_target, not pull_request: the workflow file and the factory's
-# scripts always come from the base branch, so a PR cannot rewrite the brake
+# scripts always come from the default branch, so a PR cannot rewrite the brake
 # that judges it. The PR's code is checked out under pr/ as data and never run.
 on:
   pull_request_target:
@@ -62,12 +62,12 @@ jobs:
       contents: read
       actions: read # the daily run cap counts this workflow's runs
     steps:
-      # The factory's scripts come from the base branch, so a PR cannot change
+      # The factory's scripts come from the default branch, so a PR cannot change
       # the code judging it. The PR's own code goes under pr/.
-      - name: Check out the factory (base branch)
+      - name: Check out the factory (default branch)
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Preflight (configuration, daily cap, App token)
@@ -170,7 +170,7 @@ jobs:
       # Runs after the agent step started, whatever happened, and holds the App token.
       # It takes the run's identity from this workflow's context, never from review-out/,
       # reads the verdict and gate back from the report `apply` posted, and runs only the
-      # factory's own scripts from the base-branch checkout, never code under pr/. It adds
+      # factory's own scripts from the default-branch checkout, never code under pr/. It adds
       # no secret and no model call. The Review step's outcome goes in as the agent outcome,
       # and apply's as the publish outcome.
       - name: Leave the run record
