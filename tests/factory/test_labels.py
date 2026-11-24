@@ -10,7 +10,7 @@ from factory.check import LABEL as CHECK_LABEL
 def test_the_set_holds_every_label_the_factory_uses():
     names = {label.name for label in load_labels()}
     used = {START_LABEL, PROGRESS_LABEL, REWORK_LABEL, HUMAN_LABEL, CHECK_LABEL,
-            "project:harness", "project:agent-identity",
+            "project:harness", "project:agent-identity", "standards-findings",
             *(f"rework:{n}" for n in range(1, MAX_REWORK + 1))}
     assert used <= names
 
