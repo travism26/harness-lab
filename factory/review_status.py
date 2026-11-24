@@ -10,7 +10,6 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 CONTEXT = "factory/review"
 VERDICTS = ("PASS", "BLOCKED")
@@ -25,7 +24,7 @@ _REASON_TEXT = {
 }
 
 
-def status_for(outcome: Optional[str], reason: Optional[str]) -> Tuple[str, str]:
+def status_for(outcome: str | None, reason: str | None) -> tuple[str, str]:
     """(state, description) for a Verdict (`PASS`, `BLOCKED`) or, with none, a reason code."""
     if outcome == "PASS":
         return "success", "Review passed"
@@ -38,7 +37,7 @@ def status_for(outcome: Optional[str], reason: Optional[str]) -> Tuple[str, str]
 
 def pick(
     verdict: str, reason: str, review_result: str
-) -> Tuple[Optional[str], Optional[str]]:
+) -> tuple[str | None, str | None]:
     """The (outcome, reason) for the status job.
 
     A handed-over reason or Verdict wins. With neither, the reason comes from how the
@@ -113,7 +112,7 @@ def resolve(
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     sub = parser.add_subparsers(dest="step", required=True)
     h = sub.add_parser("handoff")

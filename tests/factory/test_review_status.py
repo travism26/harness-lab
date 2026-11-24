@@ -1,7 +1,6 @@
 """The commit status `factory/review`: the pure mapping, the handoff and the workflow's shape."""
 
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
@@ -57,7 +56,7 @@ def test_pick_uses_what_was_handed_over_else_how_review_ended(
     verdict: str,
     reason: str,
     result: str,
-    expected: tuple[Optional[str], Optional[str]],
+    expected: tuple[str | None, str | None],
 ) -> None:
     assert pick(verdict, reason, result) == expected
 
