@@ -391,14 +391,19 @@ Ticket moves](#how-a-ticket-moves).
 | `in-progress` | Factory | The factory is building or reworking this Ticket. Removed when Review has passed the current head and CI is green, so a finished draft does not hold the one-at-a-time lock. |
 | `rework`, `rework:1`, `rework:2` | Factory (Review or CI gate) | A Spec blocker or a failed required CI run; the counter is the rework round, one charge per head |
 | `ready-for-human` | Factory (Review or CI gate) | Two rework rounds were not enough; the factory has stopped |
-| `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds. The row is in `factory/labels.json`. See [Starting a Project](#starting-a-project) |
+| `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds. Every folder under `projects/` has a row in `factory/labels.json` (`harness`, `agent-identity`, `ai-gateway`, `agents`, `go-sandbox`, `spring-sandbox`, `ts-sandbox`); a test fails when one lacks it. A Project with an executable `check` is accepted whatever the file says; add a row only for a folder that has a `check`. See [Starting a Project](#starting-a-project) |
+| `ready-for-builder` | Scout | A Goal issue ready for the Builder to plan. It does not start the factory |
+| `builder:claimed` | Builder | The Builder has claimed this Goal issue and is planning it |
+| `spec:ready-for-review` | Builder | The spec is validated and waits for owner review. It does not start the factory |
+| `ready-for-implementation` | Owner | On a spec issue: the Builder writes the Tickets and labels them `ready-for-agent` |
+| `wayfinder:map`, `wayfinder:research`, `wayfinder:grilling`, `wayfinder:prototype`, `wayfinder:task` | Owner or a skill | Wayfinder issue kinds. They do not start the factory |
 | `factory-check` | Owner | Run the live check |
 | `ready-for-agent` | Owner or a skill | Triage only: fully specified. It does not start the factory, so a Ticket can carry it and still be built on the laptop |
 | `needs-triage`, `needs-info`, `wontfix` | Owner | Triage, see [triage-labels.md](../agents/triage-labels.md) |
 
 To change a label, edit `factory/labels.json` and run
 `uv run python -m factory.sync_labels --apply`. Run it without `--apply` first to see the dry run.
-It never deletes a label.
+It never deletes a label. The owner runs it after merge, dry run first; the factory never runs it.
 
 ## Knobs
 
