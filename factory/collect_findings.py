@@ -23,16 +23,19 @@ from factory.switch_rule import default_app_slug, is_factory_app
 
 LABEL = "standards-findings"
 ISSUE_TITLE = "Standards findings from merged pull requests"
-ISSUE_BODY = ("The Review's non-blocking Standards Findings (`repo_standard`, `baseline_smell`) "
-              "of each merged pull request, one comment per pull request. Nothing acts on them "
-              "automatically.\n")
+ISSUE_BODY = (
+    "The Review's non-blocking Standards Findings (`repo_standard`, `baseline_smell`) "
+    "of each merged pull request, one comment per pull request. Nothing acts on them "
+    "automatically.\n"
+)
 
 _ZWSP = "​"
 Finding = Tuple[str, str, str, str]  # kind, description, path, fix
 
 _LINE_RE = re.compile(
     r"^- \*\*(?P<kind>[a-z_]+)\*\* (?P<desc>.*?)"
-    r"(?: \(`(?P<path>[^`]*)`\))?\. Fix: (?P<fix>.*)$")
+    r"(?: \(`(?P<path>[^`]*)`\))?\. Fix: (?P<fix>.*)$"
+)
 _HEADING_RE = re.compile(r"^###\s+(?P<name>\w+)")
 _MENTION_RE = re.compile(r"@(?=\w)")
 _NUMBER_RE = re.compile(r"#(?=\d)")
@@ -52,7 +55,9 @@ def marker(pr: int) -> str:
     return f"<!-- factory:findings pr={int(pr)} -->"
 
 
-def review_for_head(comments: Sequence[dict], head: str, bot_login: str) -> Optional[str]:
+def review_for_head(
+    comments: Sequence[dict], head: str, bot_login: str
+) -> Optional[str]:
     """The body of the newest Review comment by the App whose gate line names this head."""
     slug = bot_login[:-5] if bot_login.lower().endswith("[bot]") else bot_login
     found: Optional[str] = None
@@ -79,18 +84,30 @@ def standards_findings(body: str) -> List[Finding]:
             continue
         match = _LINE_RE.match(line) if in_standards else None
         if match and match.group("kind") in STANDARDS_KINDS:
-            out.append((match.group("kind"), match.group("desc"), match.group("path") or "",
-                        match.group("fix")))
+            out.append(
+                (
+                    match.group("kind"),
+                    match.group("desc"),
+                    match.group("path") or "",
+                    match.group("fix"),
+                )
+            )
     return out
 
 
 def section(pr: int, title: str, findings: Sequence[Finding]) -> str:
     """One issue comment: the marker, the pull request, then one line per Finding."""
-    lines = [marker(pr), f"### Pull request #{int(pr)}: {neutralize(title).strip()}", ""]
+    lines = [
+        marker(pr),
+        f"### Pull request #{int(pr)}: {neutralize(title).strip()}",
+        "",
+    ]
     for kind, description, path, fix in findings:
         where = f" (`{neutralize(path)}`)" if path else ""
-        lines.append(f"- **{neutralize(kind)}** {neutralize(description)}{where}. "
-                     f"Fix: {neutralize(fix)}")
+        lines.append(
+            f"- **{neutralize(kind)}** {neutralize(description)}{where}. "
+            f"Fix: {neutralize(fix)}"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -107,11 +124,18 @@ def collect(gh: Any, repo: str, pr: int, head: str, app_slug: str) -> str:
         if issues:
             issue = min(issues)
             seen = marker(pr)
-            if any((c.get("body") or "").startswith(seen) for c in gh.pr_comments(repo, issue)):
+            if any(
+                (c.get("body") or "").startswith(seen)
+                for c in gh.pr_comments(repo, issue)
+            ):
                 return f"already collected on #{issue}"
         else:
-            issue = gh.create_issue(repo, ISSUE_TITLE,
-                                    write_comment(Path(tmp), "issue.md", ISSUE_BODY), (LABEL,))
+            issue = gh.create_issue(
+                repo,
+                ISSUE_TITLE,
+                write_comment(Path(tmp), "issue.md", ISSUE_BODY),
+                (LABEL,),
+            )
         gh.comment(repo, issue, write_comment(Path(tmp), "findings.md", text))
     return f"added {len(findings)} Finding(s) to #{issue}"
 
@@ -121,12 +145,23 @@ def main(argv: Optional[List[str]] = None, gh: Optional[Any] = None) -> int:
     parser.add_argument("--repo", required=True)
     parser.add_argument("--pr", type=int, required=True)
     parser.add_argument("--head", required=True, help="the head commit that merged")
-    parser.add_argument("--app-slug", dest="app_slug", default="",
-                        help="the factory App's slug; default OWNER-factory")
+    parser.add_argument(
+        "--app-slug",
+        dest="app_slug",
+        default="",
+        help="the factory App's slug; default OWNER-factory",
+    )
     args = parser.parse_args(argv)
     try:
-        print(collect(gh or GitHub(), args.repo, args.pr, args.head,
-                      args.app_slug or default_app_slug(args.repo)))
+        print(
+            collect(
+                gh or GitHub(),
+                args.repo,
+                args.pr,
+                args.head,
+                args.app_slug or default_app_slug(args.repo),
+            )
+        )
     except GitHubError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

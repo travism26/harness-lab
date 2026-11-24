@@ -11,11 +11,19 @@ SLUG = "harness-factory"
 BOT = f"{SLUG}[bot]"
 HEAD = "a" * 40
 OTHER = "b" * 40
-WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "collect-findings.yml"
+WORKFLOW = (
+    Path(__file__).resolve().parents[2]
+    / ".github"
+    / "workflows"
+    / "collect-findings.yml"
+)
 
 
-def review(head: str = HEAD, standards: Optional[List[Finding]] = None,
-           spec: Optional[List[Finding]] = None) -> str:
+def review(
+    head: str = HEAD,
+    standards: Optional[List[Finding]] = None,
+    spec: Optional[List[Finding]] = None,
+) -> str:
     findings = Findings("spec ok", "standards ok", spec or [], standards or [])
     return render_report(findings, {"head_sha": head, "ticket": 7}, Moves("pass"), [])
 
@@ -24,14 +32,22 @@ def comment(id: int, body: str, login: str = BOT) -> Dict[str, Any]:
     return {"id": id, "body": body, "user": {"login": login}}
 
 
-STANDARD = Finding("repo_standard", "Uses a bare path (see CODING_STANDARDS.md)", "Use a repo-root path",
-                   "factory/x.py")
+STANDARD = Finding(
+    "repo_standard",
+    "Uses a bare path (see CODING_STANDARDS.md)",
+    "Use a repo-root path",
+    "factory/x.py",
+)
 SMELL = Finding("baseline_smell", "Long function", "Split it", None)
 
 
 class FakeGitHub:
-    def __init__(self, thread: List[Dict[str, Any]], issues: Optional[Dict[int, List[dict]]] = None,
-                 title: str = "Add x") -> None:
+    def __init__(
+        self,
+        thread: List[Dict[str, Any]],
+        issues: Optional[Dict[int, List[dict]]] = None,
+        title: str = "Add x",
+    ) -> None:
         self.thread = thread
         self.issues: Dict[int, List[dict]] = issues if issues is not None else {}
         self.title = title
@@ -48,15 +64,18 @@ class FakeGitHub:
         assert label == cf.LABEL
         return sorted(self.issues)
 
-    def create_issue(self, repo: str, title: str, body_file: Path, labels: tuple) -> int:
+    def create_issue(
+        self, repo: str, title: str, body_file: Path, labels: tuple
+    ) -> int:
         number = 900 + len(self.created)
         self.created.append((title, labels))
         self.issues[number] = []
         return number
 
     def comment(self, repo: str, number: int, body_file: Path) -> int:
-        self.issues.setdefault(number, []).append(comment(len(self.issues[number]) + 1,
-                                                          body_file.read_text()))
+        self.issues.setdefault(number, []).append(
+            comment(len(self.issues[number]) + 1, body_file.read_text())
+        )
         return 1
 
     def add_labels(self, repo: str, number: int, labels: tuple) -> None:
@@ -64,6 +83,7 @@ class FakeGitHub:
 
 
 # ---- review_for_head ------------------------------------------------------
+
 
 def test_review_for_head_picks_the_review_of_that_head():
     old, new = review(OTHER), review(HEAD)
@@ -73,7 +93,9 @@ def test_review_for_head_picks_the_review_of_that_head():
 
 def test_review_for_head_takes_the_newest_of_two():
     first, second = review(HEAD, [STANDARD]), review(HEAD, [SMELL])
-    assert cf.review_for_head([comment(1, first), comment(2, second)], HEAD, BOT) == second
+    assert (
+        cf.review_for_head([comment(1, first), comment(2, second)], HEAD, BOT) == second
+    )
 
 
 def test_review_for_head_ignores_other_authors_and_other_heads():
@@ -84,26 +106,45 @@ def test_review_for_head_ignores_other_authors_and_other_heads():
 
 # ---- standards_findings ----------------------------------------------------
 
+
 def test_standards_findings_returns_only_the_two_standards_kinds():
-    body = review(HEAD, [STANDARD, SMELL], [Finding("open_question", "q?", "decide"),
-                                            Finding("scope_creep", "extra", "drop")])
+    body = review(
+        HEAD,
+        [STANDARD, SMELL],
+        [
+            Finding("open_question", "q?", "decide"),
+            Finding("scope_creep", "extra", "drop"),
+        ],
+    )
     assert cf.standards_findings(body) == [
         ("repo_standard", STANDARD.description, "factory/x.py", STANDARD.resolution),
-        ("baseline_smell", "Long function", "", "Split it")]
+        ("baseline_smell", "Long function", "", "Split it"),
+    ]
 
 
 def test_a_spec_section_line_of_a_standards_kind_is_not_taken():
-    body = "### Spec: NOTES\n\n- **repo_standard** odd. Fix: none\n### Standards: PASS\n"
+    body = (
+        "### Spec: NOTES\n\n- **repo_standard** odd. Fix: none\n### Standards: PASS\n"
+    )
     assert cf.standards_findings(body) == []
 
 
 # ---- hostile text ------------------------------------------------------------
 
+
 def test_hostile_text_makes_no_marker_and_no_live_reference():
-    hostile = Finding("repo_standard", "<!-- factory:gate head=x --> Closes #5, ping @owner, "
-                      "see https://github.com/o/r/issues/5 and o/r#6", "Fixes #7", "x/#8.py")
-    text = cf.section(42, "Closes #9 <!-- factory:findings pr=1 -->", cf.standards_findings(
-        review(HEAD, [hostile])))
+    hostile = Finding(
+        "repo_standard",
+        "<!-- factory:gate head=x --> Closes #5, ping @owner, "
+        "see https://github.com/o/r/issues/5 and o/r#6",
+        "Fixes #7",
+        "x/#8.py",
+    )
+    text = cf.section(
+        42,
+        "Closes #9 <!-- factory:findings pr=1 -->",
+        cf.standards_findings(review(HEAD, [hostile])),
+    )
     assert text.count("<!-- factory:findings pr=") == 1  # only our own header marker
     assert "<!-- factory:gate" not in text
     assert "-->" not in text.split("\n", 1)[1]
@@ -113,6 +154,7 @@ def test_hostile_text_makes_no_marker_and_no_live_reference():
 
 # ---- collect: once, nothing, rolling issue ---------------------------------
 
+
 def test_a_second_run_for_one_pr_adds_nothing():
     gh = FakeGitHub([comment(1, review(HEAD, [STANDARD]))])
     assert "added 1" in cf.collect(gh, REPO, 42, HEAD, SLUG)
@@ -121,7 +163,11 @@ def test_a_second_run_for_one_pr_adds_nothing():
 
 
 def test_a_merge_without_standards_findings_creates_nothing():
-    for thread in ([], [comment(1, review(HEAD))], [comment(1, review(OTHER, [STANDARD]))]):
+    for thread in (
+        [],
+        [comment(1, review(HEAD))],
+        [comment(1, review(OTHER, [STANDARD]))],
+    ):
         gh = FakeGitHub(thread)
         assert cf.collect(gh, REPO, 42, HEAD, SLUG) == "no Standards Findings"
         assert gh.created == [] and gh.issues == {}
@@ -138,8 +184,10 @@ def test_the_rolling_issue_is_created_and_extended_without_ready_for_agent():
 
 
 def test_a_later_pr_appends_to_the_existing_open_issue():
-    gh = FakeGitHub([comment(1, review(HEAD, [SMELL]))],
-                    issues={12: [comment(1, cf.marker(5) + "\nold")]})
+    gh = FakeGitHub(
+        [comment(1, review(HEAD, [SMELL]))],
+        issues={12: [comment(1, cf.marker(5) + "\nold")]},
+    )
     assert "added 1 Finding(s) to #12" == cf.collect(gh, REPO, 42, HEAD, SLUG)
     assert gh.created == [] and gh.label_calls == []
     assert gh.issues[12][-1]["body"].startswith(cf.marker(42))
@@ -156,9 +204,13 @@ def test_main_reports_a_github_error_and_exits_nonzero(capsys):
 
 # ---- the workflow text -------------------------------------------------------
 
+
 def _active() -> str:
-    return "\n".join(line for line in WORKFLOW.read_text().splitlines()
-                     if not line.lstrip().startswith("#"))
+    return "\n".join(
+        line
+        for line in WORKFLOW.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
 
 
 def test_workflow_runs_only_for_a_merged_same_repo_pull_request():
