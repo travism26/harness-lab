@@ -32,6 +32,10 @@ _Avoid_: Retry, iteration
 The factory's read of a pull request against its Ticket and the Lab's standards. It ends in a Verdict.
 _Avoid_: Code review, judge, second read
 
+**Finding**:
+Something a Review reports about a pull request. A Finding either blocks the Verdict or does not.
+_Avoid_: Issue, comment, nit
+
 **Verdict**:
 The result of a Review for one head commit: PASS or BLOCKED.
 _Avoid_: Result, approval, score

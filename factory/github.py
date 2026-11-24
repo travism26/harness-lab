@@ -42,6 +42,12 @@ class GitHub:
                         "--limit", "100", "--json", "number"])
         return [i["number"] for i in json.loads(out)]
 
+    def create_issue(self, repo: str, title: str, body_file: Path, labels: tuple) -> int:
+        out = self._gh(["issue", "create", "-R", repo, "--title", title,
+                        "--body-file", str(body_file),
+                        *[x for label in labels for x in ("--label", label)]])
+        return int(out.strip().splitlines()[-1].rsplit("/", 1)[-1])
+
     def pr(self, repo: str, number: int) -> dict:
         return json.loads(self._gh(["pr", "view", str(number), "-R", repo, "--json",
                                     "number,title,body,state,isDraft,author,headRefName,"
