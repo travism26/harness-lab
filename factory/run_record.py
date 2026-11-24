@@ -33,6 +33,7 @@ from factory.record import (
     failure_reason,
     leave_record,
     opened_pr,
+    read_check,
     read_numbers,
 )
 from factory.review_pr import rework_round
@@ -89,6 +90,7 @@ def write_rework(args, gh: GitHub, out: Path) -> int:
     next, on the pull request. The pull request and round come from the workflow's context;
     a round the event's labels do not hold is read from the pull request."""
     numbers = read_numbers(out)
+    check, touched_check = read_check(out)
     ok = args.publish_outcome == "success" and args.job_status != "cancelled"
     round_ = _event_round(args.pr_labels)
     if round_ is None:
@@ -108,6 +110,8 @@ def write_rework(args, gh: GitHub, out: Path) -> int:
         pr=args.pr,
         head_sha=head_sha,
         round_=round_,
+        check=check,
+        touched_check=touched_check,
     )
     label = f"Rework round {'unknown' if record['round'] is None else record['round']}"
     if record["outcome"] == "ok":
@@ -123,6 +127,8 @@ def write_implement(args, gh: GitHub, out: Path, workflow: str = "implement") ->
     on the comment the run posted on the Ticket, the "opened a draft PR" comment or the "failed"
     one, or on a one-line comment when it posted none (a cancelled run)."""
     numbers = read_numbers(out)
+    # The research run has its own check and leaves both fields null.
+    check, touched_check = read_check(out) if workflow == "implement" else (None, None)
     ok = args.publish_outcome == "success" and args.job_status != "cancelled"
     prefix = OPENED_PREFIX if ok else failed_prefix(args.run_url)
     pr = head_sha = target = None
@@ -149,6 +155,8 @@ def write_implement(args, gh: GitHub, out: Path, workflow: str = "implement") ->
         pr=pr,
         head_sha=head_sha,
         round_=0,
+        check=check,
+        touched_check=touched_check,
     )
     leave_record(
         gh,

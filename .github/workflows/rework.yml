@@ -147,9 +147,8 @@ jobs:
           go-version-file: work/projects/${{ steps.project.outputs.name }}/go.mod
           cache-dependency-path: work/projects/${{ steps.project.outputs.name }}/go.sum
 
-      - name: Run the new Project check
+      - name: Run the check
         id: verify
-        if: steps.project.outputs.bootstrap == 'true'
         env:
           GH_TOKEN: ""
           GITHUB_TOKEN: ""

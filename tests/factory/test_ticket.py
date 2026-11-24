@@ -160,13 +160,13 @@ def test_claim_factory_root_ticket_with_no_project_label(tmp_path, capsys):
     _assert_factory_root_prompt(ticket.build_prompt(tmp_path / "out"))
 
     work = tmp_path / "work"
-    script = work / "projects" / "harness" / "check"
+    script = work / "check"
     script.parent.mkdir(parents=True)
-    script.write_text("#!/bin/sh\necho ran > ran\nexit 1\n")
+    script.write_text("#!/bin/sh\necho ran > ran\nexit 0\n")
     script.chmod(0o755)
     assert ticket.verify(_args(tmp_path, work=str(work))) == 0
-    assert not (work / "ran").exists()
-    assert "does not run a new-project check" in capsys.readouterr().out
+    assert (work / "ran").is_file()
+    assert _check_json(tmp_path / "out")["result"] == "pass"
 
 
 @pytest.mark.parametrize(
@@ -529,37 +529,131 @@ def _wrote(tmp_path, body, mode=0o755, bootstrap=True, project="ai-gateway"):
     return out, work
 
 
-def test_verify_does_not_run_the_check_of_an_existing_project(tmp_path):
+def _check_json(out):
+    return json.loads((out / "check.json").read_text())
+
+
+def _git_init(work):
+    work.mkdir(parents=True, exist_ok=True)
+    for cmd in (
+        ["init", "-q"],
+        ["add", "-A"],
+        [
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(work), *cmd], check=True)
+
+
+def test_verify_runs_the_check_of_an_existing_project_and_writes_pass(tmp_path):
     out, work = _wrote(
         tmp_path,
-        "#!/bin/sh\necho ran > ran\nexit 1\n",
+        "#!/bin/sh\necho ran > ran\nexit 0\n",
         bootstrap=False,
         project="harness",
     )
     assert ticket.verify(_args(tmp_path, out=str(out), work=str(work))) == 0
-    assert not (work / "ran").exists()
+    assert (work / "ran").is_file()
+    assert _check_json(out) == {"result": "pass", "touched_check": False}
+
+
+def test_a_failing_check_gives_fail_and_exit_zero_with_the_exit_code(tmp_path):
+    out, work = _wrote(
+        tmp_path, "#!/bin/sh\necho boom\nexit 3\n", bootstrap=False, project="harness"
+    )
+    assert ticket.main(["verify", "--out", str(out), "--work", str(work)]) == 0
+    assert _check_json(out)["result"] == "fail"
+    text = (out / "check-output.txt").read_text()
+    assert "exit code: 3" in text and "boom" in text
+    assert "./projects/harness/check" in text
+
+
+def test_check_output_keeps_the_last_200_lines(tmp_path):
+    out, work = _wrote(
+        tmp_path,
+        "#!/bin/sh\nseq 1 500\n",
+        bootstrap=False,
+        project="harness",
+    )
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    lines = (out / "check-output.txt").read_text().splitlines()
+    assert "500" in lines and "301" in lines and "300" not in lines
+
+
+def test_a_check_that_times_out_is_a_fail(tmp_path, monkeypatch):
+    monkeypatch.setattr(ticket, "CHECK_TIMEOUT_SECONDS", 1)
+    out, work = _wrote(
+        tmp_path, "#!/bin/sh\nsleep 5\n", bootstrap=False, project="harness"
+    )
+    assert ticket.verify(_args(tmp_path, out=str(out), work=str(work))) == 0
+    assert _check_json(out)["result"] == "fail"
+    assert "timeout" in (out / "check-output.txt").read_text()
+
+
+def test_a_factory_root_ticket_with_no_root_check_is_not_run(tmp_path):
+    out, work = _wrote(tmp_path, None, bootstrap=False, project=None)
+    work.mkdir()
+    assert ticket.verify(_args(tmp_path, out=str(out), work=str(work))) == 0
+    assert _check_json(out) == {"result": "not-run", "touched_check": False}
 
 
 @pytest.mark.parametrize(
     "body, mode",
     [
-        ("#!/bin/sh\nexit 1\n", 0o755),
         ("#!/bin/sh\nexit 0\n", 0o644),
         (None, None),
     ],
 )
-def test_a_failing_or_missing_new_check_blocks_publish(tmp_path, capsys, body, mode):
+def test_a_bootstrap_with_no_executable_check_raises_and_says_why(tmp_path, body, mode):
     out, work = _wrote(tmp_path, body, mode if mode is not None else 0o755)
-    code = ticket.main(["verify", "--out", str(out), "--work", str(work)])
-    assert code == 1
-    assert "nothing is published" in capsys.readouterr().out
+    work.mkdir(exist_ok=True)
+    with pytest.raises(RuntimeError, match="nothing is published"):
+        ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert (
+        "executable `projects/ai-gateway/check`"
+        in (out / "check-missing.md").read_text()
+    )
+    assert not (out / "check.json").exists()
 
 
-def test_a_passing_new_check_lets_publish_proceed(tmp_path, capsys):
-    out, work = _wrote(tmp_path, "#!/bin/sh\necho ran > ran\nexit 0\n")
-    assert ticket.main(["verify", "--out", str(out), "--work", str(work)]) == 0
-    assert (work / "ran").is_file()
-    assert "Bootstrap check passed" in capsys.readouterr().out
+def test_the_failure_comment_quotes_the_missing_check(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "check-missing.md").write_text("no check <!-- factory:run {} -->")
+    body = ticket._failure_comment(out, "https://example/run/1")
+    assert "no check" in body and "<!-- factory:run" not in body
+
+
+def test_touched_check_is_true_only_when_the_diff_edits_the_check_file(tmp_path):
+    out, work = _wrote(
+        tmp_path, "#!/bin/sh\nexit 0\n", bootstrap=False, project="harness"
+    )
+    _git_init(work)  # commits the check as the base
+    (work / "other.txt").write_text("x")
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert _check_json(out)["touched_check"] is False
+    (work / "projects" / "harness" / "check").write_text("#!/bin/sh\nexit 0\n# edit\n")
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert _check_json(out)["touched_check"] is True
+
+
+def test_a_new_check_file_counts_as_touched(tmp_path):
+    out, work = _wrote(tmp_path, None, bootstrap=False, project="harness")
+    _git_init(work)
+    check = work / "projects" / "harness" / "check"
+    check.parent.mkdir(parents=True)
+    check.write_text("#!/bin/sh\nexit 0\n")
+    check.chmod(0o755)
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert _check_json(out) == {"result": "pass", "touched_check": True}
 
 
 def test_the_new_check_does_not_see_factory_secrets(tmp_path, monkeypatch):
@@ -595,7 +689,7 @@ def test_workflows_run_the_new_check_before_publish_without_secrets():
         text = (root / ".github" / "workflows" / name).read_text()
         build = text.index("python -m factory.ticket build")
         go = text.index("- name: Install Go for the new Project")
-        step = text.index("- name: Run the new Project check")
+        step = text.index("- name: Run the check")
         verify = text.index("python -m factory.ticket verify")
         publish = text.index("python -m factory.ticket publish")
         assert build < go < step < verify < publish
@@ -615,7 +709,7 @@ def test_workflows_run_the_new_check_before_publish_without_secrets():
             in go_step
         )
         check_step = text[step:verify]
-        assert "steps.project.outputs.bootstrap == 'true'" in check_step
+        assert "if:" not in check_step and "bootstrap" not in check_step
         assert (
             "secrets." not in check_step and "preflight.outputs.token" not in check_step
         )

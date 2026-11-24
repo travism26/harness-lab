@@ -25,9 +25,10 @@ GitHub token:
            does the work checkout's own git exclude, so a branch cut before the
            gitignore line still does not commit the copy. The prompt names that
            path inside --work.
-  verify   (no token) for a bootstrap only: runs the new `projects/<name>/check`
-           in --work. A missing or failing check publishes nothing. An existing
-           Project is left alone.
+  verify   (no token) runs the Project's `check` (or the root `check`)
+           in --work and records the result in
+           --out (check.json, check-output.txt). A failing check still
+           publishes. A bootstrap with no check publishes nothing.
   publish  (App token) commits what the agent changed in --work, pushes the
            branch and, for a new Ticket, opens a draft PR that closes it. An
            unchanged work checkout fails.
@@ -199,8 +200,8 @@ When you are done, reply with a short summary of what you changed, for the \
 pull request description."""
 )
 
-# A Ticket with no `project:` label. The run is not a bootstrap, so verify does
-# not run a new-project check. The agent edits the factory itself.
+# A Ticket with no `project:` label. The run is not a bootstrap, so verify runs
+# the root `check`, if there is one. The agent edits the factory itself.
 _FACTORY_ROOT = (
     _CHECKOUT
     + """Before you change anything, read `CLAUDE.md`, `GLOSSARY-MAP.md` and the \
@@ -499,46 +500,104 @@ def build(args, run_agent=claude.run) -> int:
             )
 
 
-def verify(args) -> int:
-    """Run a bootstrap Project's new check. The workflow calls this before publish.
+CHECK_TIMEOUT_SECONDS = 600  # the same limit as CI (ci.yml)
+CHECK_TAIL_LINES = 200
+CHECK_RESULT_FILE = "check.json"
+CHECK_OUTPUT_FILE = "check-output.txt"
+CHECK_MISSING_FILE = "check-missing.md"
 
-    It holds no GitHub token and no Claude login, and the check's environment
-    has those credentials removed. A missing or failing check exits non-zero,
-    so the job never reaches publish. An existing Project and a factory-root
-    Ticket (`bootstrap` false) are unchanged, and no new-project check is run.
-    """
-    ctx = _load(Path(args.out))
-    if not ctx.get("bootstrap"):
-        if ctx.get("project"):
-            print("Existing Project: the factory does not run its check")
-        else:
-            print("Factory-root Ticket: the factory does not run a new-project check")
-        return 0
-    name = ctx.get("project") or ""
-    if _SLUG.fullmatch(name) is None:
-        raise RuntimeError(
-            f"`{name}` is not a safe project name, so nothing is published"
-        )
-    rel = f"{PROJECTS_DIR}/{name}/check"
-    script = Path(args.work) / rel
-    if not (script.is_file() and os.access(script, os.X_OK)):
-        raise RuntimeError(
-            f"bootstrap produced no executable `{rel}`, so nothing is published"
-        )
+
+def _check_env() -> dict:
     # Same credentials the agent step drops (factory/claude.py). The script was
-    # just written by the agent.
-    env = {
+    # just written or edited by the agent.
+    return {
         k: v
         for k, v in os.environ.items()
         if k not in claude._DROPPED and not k.startswith("ANTHROPIC_")
     }
-    result = subprocess.run([f"./{rel}"], check=False, cwd=args.work, env=env)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"`{rel}` failed (exit {result.returncode}), so nothing is published"
+
+
+def _touched(work: str, rel: str) -> bool:
+    """True when `git status --porcelain` in the work checkout lists the check file."""
+    try:
+        out = _git(work, "status", "--porcelain", "--untracked-files=all")
+    except RuntimeError:
+        return False
+    for line in out.splitlines():
+        path = line[3:].split(" -> ")[-1].strip().strip('"')
+        if path == rel:
+            return True
+    return False
+
+
+def verify(args) -> int:
+    """Run the Project's check (or the Lab's, for a factory-root Ticket) after the agent.
+
+    The workflow calls this before publish. It holds no GitHub token and no Claude
+    login, and the check's environment has those credentials removed. Once the
+    check ran, this exits 0 whatever the result, so publish still opens the draft
+    and CI's red run starts a Rework round. The result goes in
+    <out>/check.json (`result`: pass, fail or not-run, and `touched_check`) and
+    <out>/check-output.txt (the command, the exit code, the last lines of output).
+    A bootstrap run with no executable check raises, after writing
+    <out>/check-missing.md for the failure comment.
+    """
+    out = Path(args.out)
+    ctx = _load(out)
+    name = ctx.get("project") or ""
+    if name:
+        if _SLUG.fullmatch(name) is None:
+            raise RuntimeError(
+                f"`{name}` is not a safe project name, so nothing is published"
+            )
+        rel = f"{PROJECTS_DIR}/{name}/check"
+    else:
+        rel = "check"
+    script = Path(args.work) / rel
+    if not (script.is_file() and os.access(script, os.X_OK)):
+        if ctx.get("bootstrap"):
+            message = (
+                f"bootstrap produced no executable `{rel}`, so nothing is published"
+            )
+            (out / CHECK_MISSING_FILE).write_text(message + "\n")
+            raise RuntimeError(message)
+        _save_check(out, "not-run", False)
+        print(f"No executable `{rel}`: the check did not run")
+        return 0
+    command = f"./{rel}"
+    try:
+        r = subprocess.run(
+            [command],
+            check=False,
+            cwd=args.work,
+            env=_check_env(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            timeout=CHECK_TIMEOUT_SECONDS,
         )
-    print(f"Bootstrap check passed: {rel}")
+        code: int | str = r.returncode
+        text = r.stdout or ""
+    except subprocess.TimeoutExpired as e:
+        code = f"timeout after {CHECK_TIMEOUT_SECONDS}s"
+        raw = e.stdout or ""
+        text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+    tail = "\n".join(text.splitlines()[-CHECK_TAIL_LINES:])
+    (out / CHECK_OUTPUT_FILE).write_text(
+        f"command: {command}\nexit code: {code}\n\n{tail}\n"
+    )
+    result = "pass" if code == 0 else "fail"
+    _save_check(out, result, _touched(args.work, rel))
+    print(f"Check {result}: {rel} (exit {code})")
     return 0
+
+
+def _save_check(out: Path, result: str, touched: bool) -> None:
+    (out / CHECK_RESULT_FILE).write_text(
+        json.dumps({"result": result, "touched_check": touched})
+    )
 
 
 def _git(work: str, *args: str) -> str:
@@ -690,6 +749,9 @@ def _failure_comment(out: Path, run_url: str) -> str:
         f"{failed_prefix(run_url)}. "
         f"`{PROGRESS_LABEL}` has been removed; re-apply `{START_LABEL}` to try again.\n"
     )
+    missing = out / CHECK_MISSING_FILE
+    if missing.is_file():
+        body += f"\n{neutralize_comments(missing.read_text().strip())}\n"
     unchanged = out / UNCHANGED_FILE
     if unchanged.is_file():
         # The file holds paths from the checkout and the summary is the agent's own text:
