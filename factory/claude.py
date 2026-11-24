@@ -179,6 +179,7 @@ def run(
             text=True,
             cwd=cwd,
             env=env,
+            check=False,
         )
     msg = result_message(transcript.read_text(errors="replace"))
     ok = (

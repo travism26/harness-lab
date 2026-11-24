@@ -453,6 +453,7 @@ def test_replay_frozen_check_blob_is_the_start_commits_file():
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         if got.returncode:
             pytest.skip("the start commit is not in this checkout")

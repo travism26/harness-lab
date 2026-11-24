@@ -68,7 +68,7 @@ def plan_changes(desired: list[Label], existing: list[Label]) -> list[Change]:
 
 
 def _gh(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(["gh", *args], capture_output=True, text=True)
+    return subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
 
 
 def origin_repo() -> str | None:

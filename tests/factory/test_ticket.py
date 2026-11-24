@@ -734,7 +734,7 @@ def test_an_unchanged_work_tree_posts_the_agent_summary(tmp_path, capsys):
     _publish_out(out, "I edited the other checkout.\n")
     ticket.stage_ticket(out, work)
     ignored = subprocess.run(
-        ["git", "check-ignore", "-q", ".factory/ticket.md"], cwd=work
+        ["git", "check-ignore", "-q", ".factory/ticket.md"], cwd=work, check=False
     )
     assert ignored.returncode == 0
     gh = FakeGitHub(issue=_issue(labels=("in-progress",)))
@@ -867,6 +867,7 @@ def test_a_branch_without_the_gitignore_line_does_not_commit_the_staged_ticket(
         cwd=work,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert ignored.returncode == 0
     assert "info/exclude" in ignored.stdout

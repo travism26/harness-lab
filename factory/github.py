@@ -30,7 +30,7 @@ def select_head_run(runs: list[dict], sha: str) -> dict | None:
 
 class GitHub:
     def _gh(self, args: list[str]) -> str:
-        r = subprocess.run(["gh", *args], capture_output=True, text=True)
+        r = subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
         if r.returncode != 0:
             raise GitHubError(f"gh {' '.join(args[:3])} failed: {r.stderr.strip()}")
         return r.stdout

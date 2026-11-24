@@ -410,7 +410,7 @@ def test_scrubbed_env_has_exactly_three_keys(monkeypatch):
 def test_parent_environment_does_not_reach_checks(tmp_path, monkeypatch):
     monkeypatch.setenv("EXPERIMENT_DUMMY_TOKEN", "dummy-value")
     cmd = 'test -z "${EXPERIMENT_DUMMY_TOKEN+x}"'
-    leaked = subprocess.run(["/bin/sh", "-c", cmd])
+    leaked = subprocess.run(["/bin/sh", "-c", cmd], check=False)
     assert leaked.returncode != 0
     (result,) = _quiet([_check(cmd)], tmp_path)
     assert result.result == "pass"

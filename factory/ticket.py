@@ -528,7 +528,7 @@ def verify(args) -> int:
         for k, v in os.environ.items()
         if k not in claude._DROPPED and not k.startswith("ANTHROPIC_")
     }
-    result = subprocess.run([f"./{rel}"], cwd=args.work, env=env)
+    result = subprocess.run([f"./{rel}"], cwd=args.work, env=env, check=False)
     if result.returncode != 0:
         raise RuntimeError(
             f"`{rel}` failed (exit {result.returncode}), so nothing is published"
@@ -538,7 +538,9 @@ def verify(args) -> int:
 
 
 def _git(work: str, *args: str) -> str:
-    r = subprocess.run(["git", "-C", work, *args], capture_output=True, text=True)
+    r = subprocess.run(
+        ["git", "-C", work, *args], capture_output=True, text=True, check=False
+    )
     if r.returncode != 0:
         raise RuntimeError(f"git {args[0]} failed: {r.stderr.strip()}")
     return r.stdout

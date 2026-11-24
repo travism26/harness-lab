@@ -201,7 +201,9 @@ def secrets(step_env: Mapping[str, str]) -> list[str]:
 
 
 def _git(*args: str, cwd: Path) -> str:
-    p = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    p = subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+    )
     if p.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {p.stderr.strip()}")
     return p.stdout.strip()
@@ -247,6 +249,7 @@ def score_check(clone: Path, case: dict, env: dict) -> str:
             env=env,
             capture_output=True,
             text=True,
+            check=False,
         )
     except OSError:
         return "fail"
@@ -320,6 +323,7 @@ def run_standin(
                 env=env,
                 stdout=log,
                 stderr=subprocess.STDOUT,
+                check=False,
             )
         crashed = proc.returncode != 0
     except OSError:
@@ -480,6 +484,7 @@ def baseline_standin(step_env: Mapping[str, str] | None = None) -> int:
             stderr=subprocess.PIPE,
             text=True,
             env=_api_env(step_env),
+            check=False,
         )
     msg = claude.result_message(transcript.read_text(errors="replace"))
     usage = msg.get("usage") or {}
@@ -535,6 +540,7 @@ def live_review(step_env: Mapping[str, str] | None = None) -> Callable:
                 text=True,
                 cwd=cwd,
                 env=_api_env(step_env),
+                check=False,
             )
         msg = claude.result_message(transcript.read_text(errors="replace"))
         ok = (
@@ -554,7 +560,9 @@ def live_review(step_env: Mapping[str, str] | None = None) -> Callable:
 
 def installed_version() -> str | None:
     try:
-        p = subprocess.run(["claude", "--version"], capture_output=True, text=True)
+        p = subprocess.run(
+            ["claude", "--version"], capture_output=True, text=True, check=False
+        )
     except OSError:
         return None
     words = p.stdout.split()

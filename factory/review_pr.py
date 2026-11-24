@@ -569,6 +569,7 @@ def prepare(args, gh: GitHub | None = None) -> int:
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
     if diff.returncode != 0:
         raise RuntimeError(
