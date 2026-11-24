@@ -158,7 +158,7 @@ def test_prompt_names_ci_md_as_untrusted_evidence(tmp_path):
 def test_prompt_without_ci_md_is_the_old_text(tmp_path):
     prompt = review_pr.build_prompt(_ctx(), tmp_path)
     assert "ci.md" not in prompt
-    assert prompt.endswith('"file_path": "path:line or null"}]}')
+    assert prompt.endswith('"door_reason": "<one sentence>"}')
 
 
 def _step_positions():

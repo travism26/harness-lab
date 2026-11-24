@@ -72,6 +72,12 @@ fails with a message naming what is missing. It never goes green without doing a
 3. **Review** (`.github/workflows/review.yml`) runs on the new PR. A fresh agent with read-only
    tools reviews the diff along two axes: Spec (does it do what the Ticket asks?) and Standards
    (does it follow `CLAUDE.md`, the glossaries and the decision records?). It posts one report on the PR.
+   Review also makes its own **Door** call (`two-way` or `one-way`, with one sentence of reason),
+   without seeing the agent's: the factory block is stripped from the PR body before Review reads
+   it. The answer is saved as `door.json`; a missing or invalid value reads `one-way (not stated)`.
+   The report shows `Door: <value>. <reason>`, and when the PR body states a Door that differs, a
+   line says so and names one-way as the more cautious. The Door changes no verdict, label or
+   rework round.
 4. **CI** (`.github/workflows/ci.yml`) runs on the PR with no secrets. When CI or Review
    finishes, **CI gate** (`.github/workflows/ci-gate.yml`) runs from the default branch, and only for an open
    pull request whose branch is `factory/issue-<N>`, whose head repository is this one, and whose
