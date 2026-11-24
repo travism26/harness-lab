@@ -627,6 +627,9 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
         with open(summary, "a") as f:
             f.write(report)
     comment_id = gh.comment(args.repo, args.pr, path)
+    # The last step of the job hands these to the `status` job (factory/review_status.py).
+    (out / "comment-id.txt").write_text(f"{comment_id}\n")
+    (out / "outcome.txt").write_text(f"{moves.outcome}\n")
     applied = moves
     if nonce and not charge_won(gh.pr_comments(args.repo, args.pr), ctx["head_sha"], nonce):
         # The comment was posted as the charge. Another comment won, so this
