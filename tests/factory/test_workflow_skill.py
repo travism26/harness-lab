@@ -44,7 +44,7 @@ def test_skill_names_the_command_and_the_skip_rule():
 def board_skips() -> dict[str, list[str]]:
     """Each `###` scenario heading in section 3 mapped to the items of its `- Skip:` line."""
     section = BOARD.read_text().split("## 3. Scenarios", 1)[1].split("\n## ", 1)[0]
-    skips = {}
+    skips: dict[str, list[str]] = {}
     for block in section.split("\n### ")[1:]:
         name, _, body = block.partition("\n")
         skips[name.strip()] = []

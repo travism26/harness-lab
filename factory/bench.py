@@ -299,7 +299,8 @@ def review_case(
         findings, results = review_pr.review_with_retry(
             run, limits.review_cap_usd, run_dir / "review.jsonl"
         )
-    except Exception as e:  # the agent's failure is a Review error; keep the trace
+    except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+        # the agent's failure is a Review error; keep the trace
         (run_dir / "review-error.txt").write_text(f"{type(e).__name__}: {e}\n")
         return "error", limits.review_cap_usd
     cost = sum(
@@ -612,7 +613,7 @@ def replay(
 ) -> tuple[list[tuple[str, list[dict]]], str | None]:
     """Every case `repeats` times, one Bench run at a time, in order. Stops at the
     first ledger refusal and returns (rows per case, the refusal or None)."""
-    results = [(name, []) for name, _ in cases]
+    results: list[tuple[str, list[dict]]] = [(name, []) for name, _ in cases]
     for (name, case), (_, rows) in zip(cases, results):
         for repeat in range(1, repeats + 1):
             try:

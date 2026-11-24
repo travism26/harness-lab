@@ -120,6 +120,7 @@ def describe(change: Change) -> str:
     if change.action == "create":
         return f"create  {change.label.name}  #{change.label.color}  {change.label.description}"
     cur = change.current
+    assert cur is not None, "an update change carries the current label"
     diffs = []
     if cur.color.lower() != change.label.color:
         diffs.append(f"colour #{cur.color} -> #{change.label.color}")

@@ -195,7 +195,7 @@ def _tokens(numbers: dict) -> dict:
     well-typed and all zero, they are summed from `modelUsage` instead (the CLI reports zero
     there when it stops at its budget cap)."""
     usage = numbers.get("usage")
-    counts = {
+    counts: dict[str, int | None] = {
         k: _int(usage.get(k)) if isinstance(usage, dict) else None
         for k in claude.TOKEN_KEYS
     }
@@ -213,7 +213,7 @@ def _tokens(numbers: dict) -> dict:
                     summed[key] += value
                     seen = True
         if seen:
-            counts = summed
+            counts = dict(summed)
     return counts
 
 
@@ -240,11 +240,8 @@ def build_record(
 
     now = now or datetime.now(UTC)
     tokens = _tokens(numbers)
-    models = (
-        numbers.get("model_usage")
-        if isinstance(numbers.get("model_usage"), dict)
-        else {}
-    )
+    raw_models = numbers.get("model_usage")
+    models = raw_models if isinstance(raw_models, dict) else {}
     model_ids = [m for m in models if _text(m, _MODEL_ID_RE)][:10]
     if len(model_ids) != len(models):
         warn.bad("model_ids")

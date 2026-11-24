@@ -27,7 +27,7 @@ import re
 import secrets
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -126,7 +126,7 @@ class Decision:
     nonce: str | None = None
 
 
-def env_secrets(env: dict) -> list[str]:
+def env_secrets(env: Mapping[str, str]) -> list[str]:
     return [env[name] for name in _SECRET_ENV if len(env.get(name) or "") >= 8]
 
 
@@ -336,7 +336,7 @@ def _duplicate(event: GateEvent, meta) -> Decision:
         return Decision("ignore", "duplicate ci run")
     labels = list(event.labels)
     missing = tuple(label for label in meta.add if label not in labels)
-    remove = ()
+    remove: tuple[str, ...] = ()
     if HUMAN_LABEL in meta.add and REWORK_LABEL in labels:
         remove = (REWORK_LABEL,)
     if not missing and not remove:
@@ -574,7 +574,7 @@ def apply(args, gh: GitHub | None = None) -> int:
     if decision.action == "ignore":
         print(f"CI gate ignored: {decision.reason}")
         return 0
-    comment_id = None
+    comment_id: int | None = None
     if decision.comment:
         path = write_comment(out, "comment.md", decision.comment)
         if claude.scrub(out, env_secrets(os.environ)):
@@ -589,7 +589,8 @@ def apply(args, gh: GitHub | None = None) -> int:
         # Posted as the charge before the other comment was visible. Rewrite it
         # so it does not claim a round it did not take.
         joined = write_comment(out, "comment.md", _join_comment(event))
-        gh.update_comment(event.repo, comment_id, joined)
+        if comment_id is not None:
+            gh.update_comment(event.repo, comment_id, joined)
         print("CI gate joined a round already charged; labels unchanged")
         return 0
     move_labels(gh, event.repo, event.pr, decision.add, decision.remove)

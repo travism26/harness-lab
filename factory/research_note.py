@@ -52,7 +52,7 @@ def strip_comments(text: str) -> str:
 
 def sections(text: str) -> list[Section]:
     """Every level-2 heading in order, with its body. A line in a fenced code block is no heading."""
-    found = []  # type: List[list]
+    found: list[list] = []
     in_fence = False
     for number, line in enumerate(text.split("\n"), start=1):
         if line.startswith("```"):
@@ -91,7 +91,7 @@ def _is_placeholder(body: str) -> bool:
 
 
 def _source_problems(section: Section) -> list[str]:
-    problems = []  # type: List[str]
+    problems: list[str] = []
     valid = 0
     for index, line in enumerate(section.body.split("\n")):
         if not line.strip():
@@ -101,19 +101,17 @@ def _source_problems(section: Section) -> list[str]:
         tags = set(_TAG_RE.findall(line))
         if "http://" in line:
             problems.append(
-                "Sources line %d: an `http://` URL; a source must be `https://`"
-                % number
+                f"Sources line {number}: an `http://` URL; a source must be `https://`"
             )
         elif _LIST_ITEM_RE.match(line) and not has_url:
-            problems.append("Sources line %d: no `https://` URL" % number)
+            problems.append(f"Sources line {number}: no `https://` URL")
         elif has_url and not tags:
             problems.append(
-                "Sources line %d: the source is not tagged `[vendor]` or `[independent]`"
-                % number
+                f"Sources line {number}: the source is not tagged `[vendor]` or `[independent]`"
             )
         elif has_url and len(tags) > 1:
             problems.append(
-                "Sources line %d: the source carries both tags; pick one" % number
+                f"Sources line {number}: the source carries both tags; pick one"
             )
         elif has_url:
             valid += 1
@@ -123,7 +121,7 @@ def _source_problems(section: Section) -> list[str]:
 
 
 def _cost_problems(body: str) -> list[str]:
-    problems = []  # type: List[str]
+    problems: list[str] = []
     spends = _SPEND_RE.findall(body)
     caps = _CAP_RE.findall(body)
     if not spends:
@@ -146,7 +144,7 @@ def _cost_problems(body: str) -> list[str]:
 
 def check_text(text: str) -> list[str]:
     """The problems with a note; an empty list means it passes."""
-    problems = []  # type: List[str]
+    problems: list[str] = []
     found = sections(strip_comments(text))
     for name in REQUIRED:
         matches = [s for s in found if s.heading == name]
@@ -172,7 +170,7 @@ def check_text(text: str) -> list[str]:
     for number, line in enumerate(text.split("\n"), start=1):
         if CREDENTIAL_RE.search(line):
             problems.append(
-                "line %d: a credential-shaped string; a note holds no secrets" % number
+                f"line {number}: a credential-shaped string; a note holds no secrets"
             )
     return problems
 

@@ -86,7 +86,7 @@ def test_only_spec_requirement_findings_block():
     ],
 )
 def test_parse_findings_rejects_bad_answers(text):
-    with pytest.raises((ValueError, KeyError)):
+    with pytest.raises((ValueError, KeyError, TypeError)):
         parse_findings(text)
 
 

@@ -556,7 +556,11 @@ def test_replay_wrong_version_refuses_with_install_line(
     cases = fake_cases(bench_case, tmp_path)
     for found in ("2.1.320", None):
         code = replay_main(
-            tmp_path, cases, "true", step_env=KEY_ENV, version_fn=lambda: found
+            tmp_path,
+            cases,
+            "true",
+            step_env=KEY_ENV,
+            version_fn=lambda found=found: found,
         )
         err = capsys.readouterr().err
         assert code != 0 and "npm install -g @anthropic-ai/claude-code@2.1.319" in err

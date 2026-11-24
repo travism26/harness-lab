@@ -81,7 +81,8 @@ def test_live_mode_reads_the_same_facts_through_gh(capsys, monkeypatch):
         return json.loads(path.read_text()) if path.is_file() else default
 
     class FakeGitHub:
-        calls = []
+        def __init__(self):
+            self.calls = []
 
         def repo_comments(self, repo):
             return [

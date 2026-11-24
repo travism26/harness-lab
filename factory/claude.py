@@ -218,10 +218,10 @@ def save_numbers(out: Path, message: dict) -> None:
     """
     if not message:
         return
-    usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
-    models = (
-        message.get("modelUsage") if isinstance(message.get("modelUsage"), dict) else {}
-    )
+    raw_usage = message.get("usage")
+    usage = raw_usage if isinstance(raw_usage, dict) else {}
+    raw_models = message.get("modelUsage")
+    models = raw_models if isinstance(raw_models, dict) else {}
     numbers = {
         k: message.get(k)
         for k in ("subtype", "is_error", "num_turns", "duration_ms", "total_cost_usd")

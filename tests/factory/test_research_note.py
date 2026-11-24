@@ -69,7 +69,7 @@ def test_a_credential_shaped_string_is_rejected_without_being_repeated(token):
     number = len(text.split("\n")) - 1
     problems = check_text(text)
     assert problems == [
-        "line %d: a credential-shaped string; a note holds no secrets" % number
+        f"line {number}: a credential-shaped string; a note holds no secrets"
     ]
     assert all(token not in p for p in problems)
 

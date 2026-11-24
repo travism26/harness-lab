@@ -24,7 +24,7 @@ import json
 import re
 import statistics
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -217,7 +217,7 @@ class Facts:
     runs: list[dict] = field(default_factory=list)
     main_subjects: list[str] = field(default_factory=list)
 
-    def by_bot(self, login: str) -> bool:
+    def by_bot(self, login: str | None) -> bool:
         return is_factory_app(login or "", self.app_slug)
 
     def bot_added(self) -> list[str]:
@@ -289,7 +289,9 @@ class Facts:
             and self.by_bot((e.get("actor") or {}).get("login"))
         ]
         before = [t for t in removed if t and created and t <= created]
-        return int((created - max(before)).total_seconds()) if before else None
+        return (
+            int((created - max(before)).total_seconds()) if before and created else None
+        )
 
     @property
     def reverts(self) -> int:
@@ -341,7 +343,7 @@ class Ticket:
         return min(reviews, key=lambda r: (r.get("ts") or "", r.get("run_id") or 0))
 
 
-def tickets_from(records: list[dict], claimed: list[int] = ()) -> list[Ticket]:
+def tickets_from(records: list[dict], claimed: Sequence[int] = ()) -> list[Ticket]:
     """A factory Ticket is one the factory bot claimed (`claimed`) or one an Implement record
     names, since a record proves a claim. Its records are those naming its issue, or its pull
     request when the record names no issue."""
@@ -524,13 +526,11 @@ def render(tickets: list[Ticket]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument(
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
         "--repo", help="read live through gh, for example travism26/harness-lab"
     )
-    source.add_argument(
-        "--fixtures", help="read a fixtures directory instead of GitHub"
-    )
+    group.add_argument("--fixtures", help="read a fixtures directory instead of GitHub")
     parser.add_argument(
         "--app-slug",
         default=None,
@@ -543,6 +543,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     app_slug = args.app_slug or default_app_slug(args.repo or FIXTURES_REPO)
+    source: FixtureSource | LiveSource
     try:
         if args.fixtures:
             comments = read_fixtures(Path(args.fixtures))

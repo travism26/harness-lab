@@ -151,7 +151,7 @@ def parse_findings(text: str) -> Findings:
 
     for key in ("spec_summary", "standards_summary"):
         if not isinstance(raw.get(key), str):
-            raise ValueError(f"the answer has no {key}")
+            raise TypeError(f"the answer has no {key}")
     return Findings(
         raw["spec_summary"].strip(),
         raw["standards_summary"].strip(),
@@ -647,7 +647,7 @@ def total_message(results: Sequence[claude.Result]) -> dict:
         return {k: add([d.get(k) for d in dicts]) for k in keys}
 
     usages = [m["usage"] for m in messages if isinstance(m.get("usage"), dict)]
-    by_model = {}
+    by_model: dict[str, list] = {}
     for m in messages:
         if isinstance(m.get("modelUsage"), dict):
             for model, v in m["modelUsage"].items():
@@ -694,7 +694,7 @@ def review(args, run_agent=claude.run) -> int:
             )
         if findings is None:
             try:
-                parse_findings(last.text)
+                findings = parse_findings(last.text)
             except PARSE_ERRORS as e:
                 tried = " (tried twice)" if len(results) == 2 else ""
                 raise RuntimeError(

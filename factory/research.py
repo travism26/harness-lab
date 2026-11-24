@@ -113,8 +113,8 @@ def request_budget(body: str, knob_usd: float) -> float:
     for heading in _REQUIRED_NONBLANK:
         if research_note.is_blank(by_name[heading].body):
             raise Refused(f"the request's `## {heading}` is empty")
-    for match in _SCHEME_RE.finditer(by_name["Public starting points"].body):
-        if match.group(1).lower() != "https":
+    for scheme in _SCHEME_RE.finditer(by_name["Public starting points"].body):
+        if scheme.group(1).lower() != "https":
             raise Refused("a URL under `## Public starting points` is not `https://`")
     cap = by_name["Cost cap (USD)"].body.strip()
     if not cap:
@@ -298,7 +298,7 @@ def compose(reply: str, spend_usd: float, cap_usd: float) -> str:
     text = note_from_reply(reply)
     lines = text.split("\n")
     found = research_note.sections(text)
-    drop = set()
+    drop: set[int] = set()
     for i, section in enumerate(found):
         if section.heading == "Cost":
             end = found[i + 1].line - 1 if i + 1 < len(found) else len(lines)

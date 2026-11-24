@@ -332,7 +332,8 @@ def _record(gh, args, a: RunAttempt, repo_comments) -> dict:
             else _report_in_window(comments, args.app_slug, a.window)
         )
         if report:
-            head_sha = head_sha or review_pr.parse_gate(report["body"]).head
+            mark = review_pr.parse_gate(report["body"])
+            head_sha = head_sha or (mark.head if mark else None)
             verdict = review_pr.review_verdict(report["body"])
             if verdict not in ("PASS", "BLOCKED"):
                 verdict = None
