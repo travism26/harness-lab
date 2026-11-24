@@ -37,6 +37,10 @@ Scout ──Goal issue──► Builder ──spec──► human approves ─�
 | [harness](projects/harness/) | A small agent harness built in public, one blog post per episode. |
 | [agent-identity](projects/agent-identity/) | Giving an AI agent its own SPIFFE identity. The Model only proposes, a Warden decides from fixed rules, and a Broker holds the model key so the Agent never does. Runs offline with `cd projects/agent-identity && go run ./cmd/demo tour`. None of it is production security. |
 | [ai-gateway](projects/ai-gateway/) | A loopback gateway between Claude Code and the Anthropic API. It appends one Call record per Call and holds no credential. |
+| [go-sandbox](projects/go-sandbox/) | A Sandbox: a small Go HTTP service kept correct on purpose, a fixture for measuring verification on the Go stack. |
+| [ts-sandbox](projects/ts-sandbox/) | A Sandbox: a small Node.js/TypeScript HTTP service kept correct on purpose, a fixture for measuring verification on that stack. |
+| [spring-sandbox](projects/spring-sandbox/) | A Sandbox: a small Spring Boot service kept correct on purpose, a fixture for measuring verification on the JVM stack. |
+| [agents](projects/agents/) | A for-fun layout for small single-job agents: one folder each, with its own prompt, two or three tools, a pinned cheap model, hard caps, an eval set and a run log. |
 
 Most of this code was written by the factory from Tickets. Browse the [closed issues](https://github.com/travism26/harness-lab/issues?q=is%3Aissue+is%3Aclosed) and [merged PRs](https://github.com/travism26/harness-lab/pulls?q=is%3Apr+is%3Amerged) to follow the full idea → spec → ticket → PR history, including the agents' grill rounds and review reports.
 
