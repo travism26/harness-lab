@@ -86,8 +86,9 @@ fails with a message naming what is missing. It never goes green without doing a
    Claude Code fixes what the review named, including a CI failure in the comment, and pushes.
    The push starts Review and CI again.
 6. A second blocker, from Review or from CI, labels the PR `rework:2` and starts a second rework
-   round. The blocker after that labels the PR `ready-for-human`, and the factory stops: Review,
-   Rework and the CI gate skip the PR from then on.
+   round. The blocker after that labels the PR `ready-for-human`, and the factory stops: Rework
+   and the CI gate skip the PR from then on. Review still reads each push and posts its report,
+   and changes no labels.
 7. When Review has passed the current head and CI is green, the draft waits. The owner reads it,
    marks it ready and merges it. The merge closes the Ticket. `in-progress` is already gone, so
    the next Ticket can start without waiting for that merge.
@@ -426,7 +427,7 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 | A factory draft's CI is red and no rework starts | Open the CI gate run. It ignores a PR that is not a draft, not opened by the factory App, or not on `factory/issue-<N>`, and it stops at the daily cap. A `timed_out` or `cancelled` CI run is not a failure. |
 | A comment says the factory did not start the research request | Read the reason, fix the request or wait for the other Ticket, then re-apply `ready-for-research`. |
 | A comment says the note failed its check | No PR was opened and `in-progress` is gone. The comment lists what the check found. Change the request if that helps, then re-apply `ready-for-research`. |
-| A PR is labelled `ready-for-human` | Finish it by hand, or close it. The factory will not touch it again. |
+| A PR is labelled `ready-for-human` | Finish it by hand, or close it. Review still reads your pushes and posts a report with no label changes; Rework and the CI gate stay off. |
 | A Rework run failed | The PR keeps `rework`. Fix it by hand and push, or re-add `rework` to retry. |
 
 ## Not built yet

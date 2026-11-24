@@ -8,6 +8,9 @@
 # (.github/workflows/ci-gate.yml): this step does not open a second round for it. It never
 # approves and never merges.
 #
+# A PR labelled `ready-for-human` is still reviewed on each push, but Review
+# changes no labels on it (factory/review_pr.py). Rework and the CI gate skip it.
+#
 # PRs from forks are never reviewed here: this workflow holds secrets, and fork
 # PRs never get them (docs/adr/0005). CI still runs their tests without secrets.
 #
@@ -31,13 +34,12 @@ permissions: {}
 
 concurrency:
   # One review running and at most one pending per PR, and a review in flight
-  # is never cancelled. Events the job skips (forks, handed to a human) get a
+  # is never cancelled. Events the job skips (forks) get a
   # throwaway group of their own so they can never displace a pending review.
   # Keep this condition identical to the job's `if:` below.
   group: >-
     ${{
-      (github.event.pull_request.head.repo.full_name == github.repository
-        && !contains(github.event.pull_request.labels.*.name, 'ready-for-human'))
+      github.event.pull_request.head.repo.full_name == github.repository
       && format('review-{0}', github.event.pull_request.number)
       || format('review-ignored-{0}', github.run_id)
     }}
@@ -49,11 +51,11 @@ env:
 
 jobs:
   review:
-    # PRs from a branch of this repository (never a fork) that are not yet
-    # handed to a human. Pushing a branch here needs write access.
+    # PRs from a branch of this repository (never a fork), including one
+    # labelled `ready-for-human`: Review still reads its pushes and posts a
+    # report, and moves no labels there. Pushing a branch here needs write access.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository
-      && !contains(github.event.pull_request.labels.*.name, 'ready-for-human')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
