@@ -8,6 +8,9 @@
 # (.github/workflows/ci-gate.yml): this step does not open a second round for it. It never
 # approves and never merges.
 #
+# A PR labelled `ready-for-human` is still reviewed on each push, but Review
+# changes no labels on it (factory/review_pr.py). Rework and the CI gate skip it.
+#
 # PRs from forks are never reviewed here: this workflow holds secrets, and fork
 # PRs never get them (docs/adr/0005). CI still runs their tests without secrets.
 #
@@ -21,7 +24,7 @@
 name: Review
 
 # pull_request_target, not pull_request: the workflow file and the factory's
-# scripts always come from the base branch, so a PR cannot rewrite the brake
+# scripts always come from the default branch, so a PR cannot rewrite the brake
 # that judges it. The PR's code is checked out under pr/ as data and never run.
 on:
   pull_request_target:
@@ -31,13 +34,12 @@ permissions: {}
 
 concurrency:
   # One review running and at most one pending per PR, and a review in flight
-  # is never cancelled. Events the job skips (forks, handed to a human) get a
+  # is never cancelled. Events the job skips (forks) get a
   # throwaway group of their own so they can never displace a pending review.
   # Keep this condition identical to the job's `if:` below.
   group: >-
     ${{
-      (github.event.pull_request.head.repo.full_name == github.repository
-        && !contains(github.event.pull_request.labels.*.name, 'ready-for-human'))
+      github.event.pull_request.head.repo.full_name == github.repository
       && format('review-{0}', github.event.pull_request.number)
       || format('review-ignored-{0}', github.run_id)
     }}
@@ -49,23 +51,23 @@ env:
 
 jobs:
   review:
-    # PRs from a branch of this repository (never a fork) that are not yet
-    # handed to a human. Pushing a branch here needs write access.
+    # PRs from a branch of this repository (never a fork), including one
+    # labelled `ready-for-human`: Review still reads its pushes and posts a
+    # report, and moves no labels there. Pushing a branch here needs write access.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository
-      && !contains(github.event.pull_request.labels.*.name, 'ready-for-human')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       actions: read # the daily run cap counts this workflow's runs
     steps:
-      # The factory's scripts come from the base branch, so a PR cannot change
+      # The factory's scripts come from the default branch, so a PR cannot change
       # the code judging it. The PR's own code goes under pr/.
-      - name: Check out the factory (base branch)
+      - name: Check out the factory (default branch)
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Preflight (configuration, daily cap, App token)
@@ -138,7 +140,7 @@ jobs:
       # Runs after the agent step started, whatever happened, and holds the App token.
       # It takes the run's identity from this workflow's context, never from review-out/,
       # reads the verdict and gate back from the report `apply` posted, and runs only the
-      # factory's own scripts from the base-branch checkout, never code under pr/. It adds
+      # factory's own scripts from the default-branch checkout, never code under pr/. It adds
       # no secret and no model call. The Review step's outcome goes in as the agent outcome,
       # and apply's as the publish outcome.
       - name: Leave the run record
