@@ -36,7 +36,7 @@ jobs:
       - name: Install
         run: uv sync --locked
       - name: Test
-        run: uv run pytest tests/factory
+        run: ./check
       - name: Choose the Projects to check
         id: choose
         env:

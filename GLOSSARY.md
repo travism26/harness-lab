@@ -16,6 +16,10 @@ _Avoid_: App, module, package
 The one command a Project provides that says whether its code is sound. It is not the Factory check, which proves the factory's credentials work.
 _Avoid_: Factory check, test script, verify
 
+**Lab check**:
+The one command that says whether the Lab's own code outside any Project is sound.
+_Avoid_: root test script, lint script, CI script
+
 **Factory**:
 The GitHub Actions setup that turns labelled issues into draft PRs against this repo, with a review step. It builds the lab's projects, not the harness.
 _Avoid_: Pipeline, CI bot, automation
