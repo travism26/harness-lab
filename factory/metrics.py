@@ -18,15 +18,16 @@ prints it, cut down to the fields the report reads:
 and, at the top, `main-subjects.json`: the commit subjects on main, newest first. A new column is a
 new file and a new entry in COLUMNS.
 """
+
 import argparse
 import json
 import re
 import statistics
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Optional
 
 from factory.github import GitHub, GitHubError
 from factory.record import BACKFILL_FILE, SCHEMA, TOKEN_RE, record_text
@@ -48,7 +49,8 @@ class MetricsError(RuntimeError):
 
 # ---- reading ---------------------------------------------------------------------
 
-def records_in(comments: List[dict], app_slug: str) -> List[dict]:
+
+def records_in(comments: list[dict], app_slug: str) -> list[dict]:
     """The Run records in the markers of the bot's own comments. Only a marker that is the whole
     final line of a comment counts; one anywhere else is somebody's quotation and is ignored. A
     marker whose JSON cannot be read is skipped with a warning."""
@@ -61,23 +63,28 @@ def records_in(comments: List[dict], app_slug: str) -> List[dict]:
         try:
             record = json.loads(text)
         except ValueError:
-            print(f"warning: comment {comment.get('id')} holds a Run record that is not JSON",
-                  file=sys.stderr)
+            print(
+                f"warning: comment {comment.get('id')} holds a Run record that is not JSON",
+                file=sys.stderr,
+            )
             continue
         if isinstance(record, dict):
             found.append(record)
     return found
 
 
-def claimed_issues(comments: List[dict], app_slug: str) -> List[int]:
+def claimed_issues(comments: list[dict], app_slug: str) -> list[int]:
     """The Tickets the factory bot claimed: the issue of each comment the bot wrote that starts
     with the claim's text. A comment names its issue in `issue_url`, which ends in `/issues/<N>`."""
     found = set()
     for comment in comments:
         login = (comment.get("user") or {}).get("login") or ""
         body = comment.get("body")
-        if not (isinstance(body, str) and body.startswith(STARTED_PREFIX)
-                and is_factory_app(login, app_slug)):
+        if not (
+            isinstance(body, str)
+            and body.startswith(STARTED_PREFIX)
+            and is_factory_app(login, app_slug)
+        ):
             continue
         number = re.search(r"/issues/(\d+)$", str(comment.get("issue_url") or ""))
         if number:
@@ -85,7 +92,7 @@ def claimed_issues(comments: List[dict], app_slug: str) -> List[int]:
     return sorted(found)
 
 
-def read_backfill(path: Path) -> List[dict]:
+def read_backfill(path: Path) -> list[dict]:
     records = []
     for number, line in enumerate(path.read_text().splitlines(), 1):
         if not line.strip():
@@ -99,7 +106,7 @@ def read_backfill(path: Path) -> List[dict]:
     return records
 
 
-def read_fixtures(directory: Path) -> List[dict]:
+def read_fixtures(directory: Path) -> list[dict]:
     """Every comment under `directory`, after refusing a token-shaped string in any file."""
     if not directory.is_dir():
         raise MetricsError(f"{directory} is not a directory")
@@ -115,14 +122,16 @@ def read_fixtures(directory: Path) -> List[dict]:
     return comments
 
 
-def check_schema(records: List[dict]) -> None:
+def check_schema(records: list[dict]) -> None:
     for record in records:
         if record.get("schema") != SCHEMA:
-            raise MetricsError(f"a Run record has schema {record.get('schema')!r}; "
-                               f"this report reads schema {SCHEMA} only")
+            raise MetricsError(
+                f"a Run record has schema {record.get('schema')!r}; "
+                f"this report reads schema {SCHEMA} only"
+            )
 
 
-def merge(*groups: List[dict]) -> List[dict]:
+def merge(*groups: list[dict]) -> list[dict]:
     """One record per run id and attempt; the first group to hold it wins."""
     seen, merged = set(), []
     for group in groups:
@@ -146,14 +155,18 @@ class FixtureSource:
     def facts(self, issue: int, pr: int, app_slug: str) -> "Facts":
         d = self.directory / f"ticket-{issue}"
         runs = self._json(d / "ci-runs.json", {})
-        return Facts(app_slug,
-                     events=(self._json(d / "issue-timeline.json", [])
-                             + self._json(d / "pr-timeline.json", [])),
-                     pr=self._json(d / "pr.json", {}),
-                     commits=self._json(d / "pr-commits.json", []),
-                     runs=runs.get("workflow_runs", []))
+        return Facts(
+            app_slug,
+            events=(
+                self._json(d / "issue-timeline.json", [])
+                + self._json(d / "pr-timeline.json", [])
+            ),
+            pr=self._json(d / "pr.json", {}),
+            commits=self._json(d / "pr-commits.json", []),
+            runs=runs.get("workflow_runs", []),
+        )
 
-    def main_subjects(self) -> List[str]:
+    def main_subjects(self) -> list[str]:
         return self._json(self.directory / "main-subjects.json", [])
 
 
@@ -166,18 +179,22 @@ class LiveSource:
         self.gh, self.repo = gh, repo
 
     def facts(self, issue: int, pr: int, app_slug: str) -> "Facts":
-        return Facts(app_slug,
-                     events=(self.gh.label_events(self.repo, issue)
-                             + self.gh.label_events(self.repo, pr)),
-                     pr=self.gh.pull_api(self.repo, pr),
-                     commits=self.gh.pull_commits(self.repo, pr),
-                     runs=self.gh.branch_runs(self.repo, f"factory/issue-{issue}"))
+        return Facts(
+            app_slug,
+            events=(
+                self.gh.label_events(self.repo, issue)
+                + self.gh.label_events(self.repo, pr)
+            ),
+            pr=self.gh.pull_api(self.repo, pr),
+            commits=self.gh.pull_commits(self.repo, pr),
+            runs=self.gh.branch_runs(self.repo, f"factory/issue-{issue}"),
+        )
 
-    def main_subjects(self) -> List[str]:
+    def main_subjects(self) -> list[str]:
         return self.gh.main_subjects(self.repo)
 
 
-def attach_facts(tickets: List["Ticket"], source, app_slug: str) -> None:
+def attach_facts(tickets: list["Ticket"], source, app_slug: str) -> None:
     """Give every Ticket that opened a draft its facts."""
     subjects = source.main_subjects() if any(t.pr for t in tickets) else []
     for ticket in tickets:
@@ -188,23 +205,29 @@ def attach_facts(tickets: List["Ticket"], source, app_slug: str) -> None:
 
 # ---- grouping --------------------------------------------------------------------
 
+
 @dataclass
 class Facts:
     """What the labels, the pull request, its commits and CI say about one Ticket's draft."""
+
     app_slug: str
-    events: List[dict] = field(default_factory=list)
+    events: list[dict] = field(default_factory=list)
     pr: dict = field(default_factory=dict)
-    commits: List[dict] = field(default_factory=list)
-    runs: List[dict] = field(default_factory=list)
-    main_subjects: List[str] = field(default_factory=list)
+    commits: list[dict] = field(default_factory=list)
+    runs: list[dict] = field(default_factory=list)
+    main_subjects: list[str] = field(default_factory=list)
 
     def by_bot(self, login: str) -> bool:
         return is_factory_app(login or "", self.app_slug)
 
-    def bot_added(self) -> List[str]:
+    def bot_added(self) -> list[str]:
         """The labels the factory bot added. A label anyone else added does not count."""
-        return [e["label"]["name"] for e in self.events
-                if e.get("event") == "labeled" and self.by_bot((e.get("actor") or {}).get("login"))]
+        return [
+            e["label"]["name"]
+            for e in self.events
+            if e.get("event") == "labeled"
+            and self.by_bot((e.get("actor") or {}).get("login"))
+        ]
 
     @property
     def rework_rounds(self) -> int:
@@ -213,9 +236,14 @@ class Facts:
     @property
     def owner_commits(self) -> int:
         """Commits on the factory branch the bot did not author."""
-        return sum(1 for c in self.commits
-                   if not self.by_bot((c.get("author") or {}).get("login")
-                                      or ((c.get("commit") or {}).get("author") or {}).get("name")))
+        return sum(
+            1
+            for c in self.commits
+            if not self.by_bot(
+                (c.get("author") or {}).get("login")
+                or ((c.get("commit") or {}).get("author") or {}).get("name")
+            )
+        )
 
     @property
     def escalated(self) -> bool:
@@ -226,8 +254,11 @@ class Facts:
     @property
     def human_labelled(self) -> bool:
         """Anyone, the bot or a person, put the human label on the pull request or its Ticket."""
-        return any(e.get("event") == "labeled" and (e.get("label") or {}).get("name") == HUMAN_LABEL
-                   for e in self.events)
+        return any(
+            e.get("event") == "labeled"
+            and (e.get("label") or {}).get("name") == HUMAN_LABEL
+            for e in self.events
+        )
 
     @property
     def state(self) -> str:
@@ -237,21 +268,26 @@ class Facts:
         return "closed" if self.pr.get("state") == "closed" else "open"
 
     @property
-    def first_ci(self) -> Optional[str]:
+    def first_ci(self) -> str | None:
         """The conclusion of the first CI run on the branch (Review and the CI gate are not CI)."""
-        ci = sorted((r for r in self.runs if r.get("name") == CI_WORKFLOW),
-                    key=lambda r: r.get("created_at") or "")
+        ci = sorted(
+            (r for r in self.runs if r.get("name") == CI_WORKFLOW),
+            key=lambda r: r.get("created_at") or "",
+        )
         return (ci[0].get("conclusion") or "pending") if ci else None
 
     @property
-    def start_to_draft(self) -> Optional[int]:
+    def start_to_draft(self) -> int | None:
         """Seconds from the bot removing a start label (the last time, at or before the draft)
         to the pull request's creation."""
         created = _when(self.pr.get("created_at"))
-        removed = [_when(e.get("created_at")) for e in self.events
-                   if e.get("event") == "unlabeled"
-                   and (e.get("label") or {}).get("name") in START_LABELS
-                   and self.by_bot((e.get("actor") or {}).get("login"))]
+        removed = [
+            _when(e.get("created_at"))
+            for e in self.events
+            if e.get("event") == "unlabeled"
+            and (e.get("label") or {}).get("name") in START_LABELS
+            and self.by_bot((e.get("actor") or {}).get("login"))
+        ]
         before = [t for t in removed if t and created and t <= created]
         return int((created - max(before)).total_seconds()) if before else None
 
@@ -262,62 +298,83 @@ class Facts:
         if self.state != "merged" or not number:
             return 0
         named = re.compile(rf"#{number}(?!\d)")
-        return sum(1 for subject in self.main_subjects
-                   if subject.startswith("Revert") and named.search(subject))
+        return sum(
+            1
+            for subject in self.main_subjects
+            if subject.startswith("Revert") and named.search(subject)
+        )
 
     @property
     def untouched(self) -> bool:
         """Merged with no commit from anyone but the bot, and nobody put the human label on."""
-        return self.state == "merged" and not self.owner_commits and not self.human_labelled
+        return (
+            self.state == "merged"
+            and not self.owner_commits
+            and not self.human_labelled
+        )
 
 
 @dataclass
 class Ticket:
     issue: int
-    records: List[dict] = field(default_factory=list)
-    facts: Optional[Facts] = None
+    records: list[dict] = field(default_factory=list)
+    facts: Facts | None = None
 
     @property
-    def implement(self) -> List[dict]:
+    def implement(self) -> list[dict]:
         return [r for r in self.records if r.get("workflow") == "implement"]
 
     @property
-    def pr(self) -> Optional[int]:
+    def pr(self) -> int | None:
         prs = [r["pr"] for r in self.implement if r.get("pr")]
         return prs[-1] if prs else None
 
     @property
-    def first_review(self) -> Optional[dict]:
-        reviews = [r for r in self.records
-                   if r.get("workflow") == "review" and r.get("pr") == self.pr]
+    def first_review(self) -> dict | None:
+        reviews = [
+            r
+            for r in self.records
+            if r.get("workflow") == "review" and r.get("pr") == self.pr
+        ]
         if not reviews:
             return None
         return min(reviews, key=lambda r: (r.get("ts") or "", r.get("run_id") or 0))
 
 
-def tickets_from(records: List[dict], claimed: List[int] = ()) -> List[Ticket]:
+def tickets_from(records: list[dict], claimed: list[int] = ()) -> list[Ticket]:
     """A factory Ticket is one the factory bot claimed (`claimed`) or one an Implement record
     names, since a record proves a claim. Its records are those naming its issue, or its pull
     request when the record names no issue."""
-    issues = sorted({r["issue"] for r in records
-                     if r.get("workflow") == "implement" and isinstance(r.get("issue"), int)}
-                    | set(claimed))
+    issues = sorted(
+        {
+            r["issue"]
+            for r in records
+            if r.get("workflow") == "implement" and isinstance(r.get("issue"), int)
+        }
+        | set(claimed)
+    )
     tickets = [Ticket(i, [r for r in records if r.get("issue") == i]) for i in issues]
     for ticket in tickets:
-        ticket.records += [r for r in records if r.get("issue") is None and r.get("pr")
-                           and r["pr"] == ticket.pr]
+        ticket.records += [
+            r
+            for r in records
+            if r.get("issue") is None and r.get("pr") and r["pr"] == ticket.pr
+        ]
     return tickets
 
 
 # ---- the table -------------------------------------------------------------------
 
+
 def _rate(n: int, d: int) -> str:
     return f"{n}/{d} ({round(100 * n / d)}%)" if d else "n/a"
 
 
-def _cost(tickets: List[Ticket]) -> str:
+def _cost(tickets: list[Ticket]) -> str:
     records = [r for t in tickets for r in t.records]
-    costs = [r["cost_usd"] for r in records if isinstance(r.get("cost_usd"), (int, float))]
+    costs = [
+        r["cost_usd"] for r in records if isinstance(r.get("cost_usd"), (int, float))
+    ]
     if not costs:
         return "n/a"
     logins = sorted({r["login"] for r in records if r.get("login")})
@@ -328,17 +385,21 @@ def _clock(seconds: int) -> str:
     return f"{seconds // 60}m {seconds % 60:02d}s"
 
 
-def _time(tickets: List[Ticket]) -> str:
-    times = [r["duration_ms"] for t in tickets for r in t.records
-             if isinstance(r.get("duration_ms"), int)]
+def _time(tickets: list[Ticket]) -> str:
+    times = [
+        r["duration_ms"]
+        for t in tickets
+        for r in t.records
+        if isinstance(r.get("duration_ms"), int)
+    ]
     return _clock(round(sum(times) / 1000)) if times else "n/a"
 
 
-def _drafts(tickets: List[Ticket]) -> List[Ticket]:
+def _drafts(tickets: list[Ticket]) -> list[Ticket]:
     return [t for t in tickets if t.pr]
 
 
-def _first_pass(tickets: List[Ticket]) -> str:
+def _first_pass(tickets: list[Ticket]) -> str:
     drafts = _drafts(tickets)
     passed = sum(1 for t in drafts if (t.first_review or {}).get("verdict") == "PASS")
     return _rate(passed, len(drafts))
@@ -348,7 +409,7 @@ def _first_pass(tickets: List[Ticket]) -> str:
 class Column:
     header: str
     cell: Callable[[Ticket], str]
-    total: Callable[[List[Ticket]], str]
+    total: Callable[[list[Ticket]], str]
 
 
 def _verdict(ticket: Ticket) -> str:
@@ -357,11 +418,11 @@ def _verdict(ticket: Ticket) -> str:
     return (ticket.first_review or {}).get("verdict") or "none"
 
 
-def _when(text: Optional[str]) -> Optional[datetime]:
+def _when(text: str | None) -> datetime | None:
     return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ") if text else None
 
 
-def _wait_total(facts: List[Facts]) -> str:
+def _wait_total(facts: list[Facts]) -> str:
     waits = [f.start_to_draft for f in facts if f.start_to_draft is not None]
     return _clock(round(statistics.median(waits))) if waits else "n/a"
 
@@ -375,44 +436,84 @@ def _facts_cell(render: Callable[[Facts], str]) -> Callable[[Ticket], str]:
     return lambda t: render(t.facts) if t.pr and t.facts else "-"
 
 
-def _facts_total(render: Callable[[List[Facts]], str]) -> Callable[[List[Ticket]], str]:
+def _facts_total(render: Callable[[list[Facts]], str]) -> Callable[[list[Ticket]], str]:
     return lambda ts: render([t.facts for t in _drafts(ts) if t.facts])
 
 
 COLUMNS = [
-    Column("Draft", lambda t: "yes" if t.pr else "no", lambda ts: _rate(len(_drafts(ts)), len(ts))),
+    Column(
+        "Draft",
+        lambda t: "yes" if t.pr else "no",
+        lambda ts: _rate(len(_drafts(ts)), len(ts)),
+    ),
     Column("First-pass review", _verdict, _first_pass),
     Column("Cost (estimate)", lambda t: _cost([t]), _cost),
     Column("Agent time", lambda t: _time([t]), _time),
-    Column("Rework rounds", _facts_cell(lambda f: str(f.rework_rounds)),
-           _facts_total(lambda fs: str(sum(f.rework_rounds for f in fs)))),
-    Column("Owner commits", _facts_cell(lambda f: str(f.owner_commits)),
-           _facts_total(lambda fs: str(sum(f.owner_commits for f in fs)))),
-    Column("Human escalation", _facts_cell(lambda f: _yes(f.escalated)),
-           _facts_total(lambda fs: _rate(sum(f.escalated for f in fs), len(fs)))),
-    Column("CI on first push",
-           _facts_cell(lambda f: {"success": "yes", None: "none",
-                                  "pending": "pending"}.get(f.first_ci, "no")),
-           _facts_total(lambda fs: _rate(sum(f.first_ci == "success" for f in fs), len(fs)))),
-    Column("Start label to draft",
-           _facts_cell(lambda f: ("n/a" if f.start_to_draft is None
-                                  else _clock(f.start_to_draft))),
-           _facts_total(_wait_total)),
-    Column("Merge", _facts_cell(lambda f: f.state),
-           _facts_total(lambda fs: _rate(sum(f.state == "merged" for f in fs),
-                                         sum(f.state != "open" for f in fs)))),
-    Column("Untouched merge", _facts_cell(lambda f: _yes(f.untouched)),
-           _facts_total(lambda fs: _rate(sum(f.untouched for f in fs), len(fs)))),
-    Column("Post-merge reverts", _facts_cell(lambda f: str(f.reverts)),
-           _facts_total(lambda fs: str(sum(f.reverts for f in fs)))),
+    Column(
+        "Rework rounds",
+        _facts_cell(lambda f: str(f.rework_rounds)),
+        _facts_total(lambda fs: str(sum(f.rework_rounds for f in fs))),
+    ),
+    Column(
+        "Owner commits",
+        _facts_cell(lambda f: str(f.owner_commits)),
+        _facts_total(lambda fs: str(sum(f.owner_commits for f in fs))),
+    ),
+    Column(
+        "Human escalation",
+        _facts_cell(lambda f: _yes(f.escalated)),
+        _facts_total(lambda fs: _rate(sum(f.escalated for f in fs), len(fs))),
+    ),
+    Column(
+        "CI on first push",
+        _facts_cell(
+            lambda f: {"success": "yes", None: "none", "pending": "pending"}.get(
+                f.first_ci, "no"
+            )
+        ),
+        _facts_total(
+            lambda fs: _rate(sum(f.first_ci == "success" for f in fs), len(fs))
+        ),
+    ),
+    Column(
+        "Start label to draft",
+        _facts_cell(
+            lambda f: "n/a" if f.start_to_draft is None else _clock(f.start_to_draft)
+        ),
+        _facts_total(_wait_total),
+    ),
+    Column(
+        "Merge",
+        _facts_cell(lambda f: f.state),
+        _facts_total(
+            lambda fs: _rate(
+                sum(f.state == "merged" for f in fs), sum(f.state != "open" for f in fs)
+            )
+        ),
+    ),
+    Column(
+        "Untouched merge",
+        _facts_cell(lambda f: _yes(f.untouched)),
+        _facts_total(lambda fs: _rate(sum(f.untouched for f in fs), len(fs))),
+    ),
+    Column(
+        "Post-merge reverts",
+        _facts_cell(lambda f: str(f.reverts)),
+        _facts_total(lambda fs: str(sum(f.reverts for f in fs))),
+    ),
 ]
 
 
-def render(tickets: List[Ticket]) -> str:
+def render(tickets: list[Ticket]) -> str:
     headers = ["Ticket"] + [c.header for c in COLUMNS]
-    lines = ["| " + " | ".join(headers) + " |", "|" + "|".join("---" for _ in headers) + "|"]
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "|" + "|".join("---" for _ in headers) + "|",
+    ]
     for t in tickets:
-        lines.append("| " + " | ".join([f"#{t.issue}"] + [c.cell(t) for c in COLUMNS]) + " |")
+        lines.append(
+            "| " + " | ".join([f"#{t.issue}"] + [c.cell(t) for c in COLUMNS]) + " |"
+        )
     totals = [f"Total ({len(tickets)})"] + [c.total(tickets) for c in COLUMNS]
     lines.append("| " + " | ".join(totals) + " |")
     return "\n".join(lines) + "\n"
@@ -420,16 +521,26 @@ def render(tickets: List[Ticket]) -> str:
 
 # ---- entry point -----------------------------------------------------------------
 
-def main(argv: Optional[List[str]] = None) -> int:
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--repo", help="read live through gh, for example travism26/harness-lab")
-    source.add_argument("--fixtures", help="read a fixtures directory instead of GitHub")
-    parser.add_argument("--app-slug", default=None,
-                        help="the factory App whose comments carry records; "
-                             "default OWNER-factory, from --repo")
-    parser.add_argument("--backfill",
-                        help=f"a backfill JSONL file; live runs read {BACKFILL_FILE} if it exists")
+    source.add_argument(
+        "--repo", help="read live through gh, for example travism26/harness-lab"
+    )
+    source.add_argument(
+        "--fixtures", help="read a fixtures directory instead of GitHub"
+    )
+    parser.add_argument(
+        "--app-slug",
+        default=None,
+        help="the factory App whose comments carry records; "
+        "default OWNER-factory, from --repo",
+    )
+    parser.add_argument(
+        "--backfill",
+        help=f"a backfill JSONL file; live runs read {BACKFILL_FILE} if it exists",
+    )
     args = parser.parse_args(argv)
     app_slug = args.app_slug or default_app_slug(args.repo or FIXTURES_REPO)
     try:

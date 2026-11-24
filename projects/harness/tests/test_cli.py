@@ -62,7 +62,9 @@ def test_tool_call_run(env, capsys):
 
 
 def test_refused_path(env, capsys):
-    with StandInModel([tool_use_reply("read_file", {"path": "../pyproject.toml"}), text_reply("no")]) as m:
+    with StandInModel(
+        [tool_use_reply("read_file", {"path": "../pyproject.toml"}), text_reply("no")]
+    ) as m:
         assert go(m) == 1
     assert "refused" in capsys.readouterr().err
     assert stop(env) == "refused_tool_call"
@@ -142,7 +144,10 @@ def test_provider_error(env, capsys):
     assert "Key limit exceeded" in capsys.readouterr().err
     assert stop(env) == "provider_error"
     evs = events(env)
-    assert "Key limit exceeded" in [e for e in evs if e["event"] == "provider_error"][0]["error"]
+    assert (
+        "Key limit exceeded"
+        in [e for e in evs if e["event"] == "provider_error"][0]["error"]
+    )
     assert "Key limit exceeded" in evs[-1]["error"]
 
 
@@ -168,5 +173,9 @@ def test_no_cost_when_not_reported(env):
 
 
 def test_module_runs_with_help():
-    out = subprocess.run([sys.executable, "-m", "harness_lab.cli", "--help"], capture_output=True, text=True)
+    out = subprocess.run(
+        [sys.executable, "-m", "harness_lab.cli", "--help"],
+        capture_output=True,
+        text=True,
+    )
     assert out.returncode == 0 and "question" in out.stdout

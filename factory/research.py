@@ -33,15 +33,26 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 from factory import claude, record, research_note, review_pr
-from factory.github import (GitHub, GitHubError, author, label_names, neutralize_comments,
-                            write_comment)
+from factory.github import (
+    GitHub,
+    GitHubError,
+    author,
+    label_names,
+    neutralize_comments,
+    write_comment,
+)
 from factory.review_pr import READ_TOOLS
 from factory.switch_rule import LOGINS, refusal
-from factory.ticket import (BASE_BRANCH, OPENED_PREFIX, PROGRESS_LABEL, _git, blocking_tickets,
-                            failed_prefix)
+from factory.ticket import (
+    BASE_BRANCH,
+    OPENED_PREFIX,
+    PROGRESS_LABEL,
+    _git,
+    blocking_tickets,
+    failed_prefix,
+)
 
 START_LABEL = "ready-for-research"
 BRANCH_PREFIX = "research/"
@@ -52,7 +63,13 @@ WEB_TOOLS = ["WebFetch", "WebSearch"]
 # no shell, no write tool, no helpers, and no /proc, where the agent's own login lives.
 ALLOWED_TOOLS = READ_TOOLS + WEB_TOOLS
 DENIED_TOOLS = [t for t in review_pr.DENIED_TOOLS if t not in WEB_TOOLS]
-REQUEST_HEADINGS = ("Question", "Scope", "Public starting points", "Cost cap (USD)", "Out of scope")
+REQUEST_HEADINGS = (
+    "Question",
+    "Scope",
+    "Public starting points",
+    "Cost cap (USD)",
+    "Out of scope",
+)
 # Not `factory.ticket.STARTED_PREFIX`: `factory.metrics` counts a comment with that prefix as a
 # build Ticket, and a Research request is not one.
 STARTED_PREFIX = "The factory started this research request."
@@ -80,11 +97,15 @@ def request_budget(body: str, knob_usd: float) -> float:
     """Check a request (the issue body) and return the run's cap. Raises Refused on the first
     problem."""
     if research_note.CREDENTIAL_RE.search(body or ""):
-        raise Refused("the request holds a credential-shaped string; a request holds no secrets")
+        raise Refused(
+            "the request holds a credential-shaped string; a request holds no secrets"
+        )
     found = research_note.sections(research_note.strip_comments(body or ""))
     missing = [h for h in REQUEST_HEADINGS if not any(s.heading == h for s in found)]
     if missing:
-        raise Refused("the request is missing " + ", ".join(f"`## {h}`" for h in missing))
+        raise Refused(
+            "the request is missing " + ", ".join(f"`## {h}`" for h in missing)
+        )
     for heading in REQUEST_HEADINGS:
         if sum(1 for s in found if s.heading == heading) > 1:
             raise Refused(f"the request has `## {heading}` more than once")
@@ -105,8 +126,10 @@ def request_budget(body: str, knob_usd: float) -> float:
     if value <= 0:
         raise Refused("the cost cap must be above zero")
     if value > knob_usd:
-        raise Refused(f"the request's cost cap (${value:g}) is above `{BUDGET_VAR}` "
-                      f"(${knob_usd:g}); a request can lower the cap, not raise it")
+        raise Refused(
+            f"the request's cost cap (${value:g}) is above `{BUDGET_VAR}` "
+            f"(${knob_usd:g}); a request can lower the cap, not raise it"
+        )
     return value
 
 
@@ -156,13 +179,18 @@ secret or a token. Do not wrap the note in a code fence, and write nothing befor
 
 
 def prompt(request: str, budget_usd: float) -> str:
-    return _PROMPT.format(open=REQUEST_OPEN, close=REQUEST_CLOSE, request=request.strip(),
-                          budget=f"{budget_usd:g}")
+    return _PROMPT.format(
+        open=REQUEST_OPEN,
+        close=REQUEST_CLOSE,
+        request=request.strip(),
+        budget=f"{budget_usd:g}",
+    )
 
 
 # ---- steps -----------------------------------------------------------------
 
-def claim(args, gh: Optional[GitHub] = None) -> int:
+
+def claim(args, gh: GitHub | None = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -176,18 +204,24 @@ def claim(args, gh: Optional[GitHub] = None) -> int:
         reason = refusal(args.login, [author(issue)], owner, args.app_slug)
         reason = f"switch rule: {reason}" if reason else None
     if not reason:
-        others = blocking_tickets(gh.open_issues_labelled(args.repo, PROGRESS_LABEL), args.issue)
+        others = blocking_tickets(
+            gh.open_issues_labelled(args.repo, PROGRESS_LABEL), args.issue
+        )
         if others:
-            reason = (f"one Ticket at a time: {', '.join(f'#{n}' for n in others)} is still "
-                      f"`{PROGRESS_LABEL}`. Re-apply `{START_LABEL}` here when it is done")
+            reason = (
+                f"one Ticket at a time: {', '.join(f'#{n}' for n in others)} is still "
+                f"`{PROGRESS_LABEL}`. Re-apply `{START_LABEL}` here when it is done"
+            )
     if not reason:
         try:
             budget = request_budget(issue.get("body") or "", args.max_budget_usd)
         except Refused as e:
             reason = str(e)
     if reason:
-        body = (f"The factory did not start this research request: {reason}.\n\n"
-                f"`{START_LABEL}` has been removed. [Run]({args.run_url})\n")
+        body = (
+            f"The factory did not start this research request: {reason}.\n\n"
+            f"`{START_LABEL}` has been removed. [Run]({args.run_url})\n"
+        )
         gh.comment(args.repo, args.issue, write_comment(out, "refused.md", body))
         if START_LABEL in label_names(issue):
             gh.remove_labels(args.repo, args.issue, (START_LABEL,))
@@ -196,11 +230,21 @@ def claim(args, gh: Optional[GitHub] = None) -> int:
     if START_LABEL in label_names(issue):
         gh.remove_labels(args.repo, args.issue, (START_LABEL,))
     gh.add_labels(args.repo, args.issue, (PROGRESS_LABEL,))
-    gh.comment(args.repo, args.issue, write_comment(
-        out, "started.md", f"{STARTED_PREFIX} [Run]({args.run_url})\n"))
-    (out / "request.md").write_text(f"# {issue.get('title', '')}\n\n{issue.get('body') or ''}\n")
-    ctx = {"repo": args.repo, "issue": args.issue, "title": issue.get("title", ""),
-           "branch": branch_for(args.issue), "budget": budget}
+    gh.comment(
+        args.repo,
+        args.issue,
+        write_comment(out, "started.md", f"{STARTED_PREFIX} [Run]({args.run_url})\n"),
+    )
+    (out / "request.md").write_text(
+        f"# {issue.get('title', '')}\n\n{issue.get('body') or ''}\n"
+    )
+    ctx = {
+        "repo": args.repo,
+        "issue": args.issue,
+        "title": issue.get("title", ""),
+        "branch": branch_for(args.issue),
+        "budget": budget,
+    }
     (out / "context.json").write_text(json.dumps(ctx, indent=2) + "\n")
     print(f"Claimed research request {args.repo}#{args.issue}")
     return 0
@@ -211,20 +255,30 @@ def answer(args, run_agent=claude.run) -> int:
     try:
         request = (out / "request.md").read_text()
         # No `may_edit`: the agent gets no bypassPermissions, and no tool that writes.
-        result = run_agent(prompt(request, args.max_budget_usd), login=args.login,
-                           model=args.model, max_budget_usd=args.max_budget_usd,
-                           cwd=os.getcwd(), transcript=out / "agent.jsonl",
-                           disallowed_tools=DENIED_TOOLS, allowed_tools=ALLOWED_TOOLS)
+        result = run_agent(
+            prompt(request, args.max_budget_usd),
+            login=args.login,
+            model=args.model,
+            max_budget_usd=args.max_budget_usd,
+            cwd=os.getcwd(),
+            transcript=out / "agent.jsonl",
+            disallowed_tools=DENIED_TOOLS,
+            allowed_tools=ALLOWED_TOOLS,
+        )
         claude.save_numbers(out, result.message)
         if not result.success:
-            raise RuntimeError(claude.failure_message(result, args.max_budget_usd, BUDGET_VAR))
+            raise RuntimeError(
+                claude.failure_message(result, args.max_budget_usd, BUDGET_VAR)
+            )
         (out / "reply.md").write_text(result.text.strip() + "\n")
         print(f"The agent finished: ${result.cost_usd:.2f}")
         return 0
     finally:
         if claude.scrub(out, claude.secret_values(os.environ)):
-            print("::warning title=Secret scrubbed::The run's files held a secret value; "
-                  "it was redacted")
+            print(
+                "::warning title=Secret scrubbed::The run's files held a secret value; "
+                "it was redacted"
+            )
 
 
 def note_from_reply(reply: str) -> str:
@@ -250,10 +304,15 @@ def compose(reply: str, spend_usd: float, cap_usd: float) -> str:
             end = found[i + 1].line - 1 if i + 1 < len(found) else len(lines)
             drop.update(range(section.line - 1, end))
     body = "\n".join(line for n, line in enumerate(lines) if n not in drop)
-    return body.rstrip() + "\n\n## Cost\n\n" + research_note.cost_section(spend_usd, cap_usd) + "\n"
+    return (
+        body.rstrip()
+        + "\n\n## Cost\n\n"
+        + research_note.cost_section(spend_usd, cap_usd)
+        + "\n"
+    )
 
 
-def _spend(out: Path) -> Optional[float]:
+def _spend(out: Path) -> float | None:
     value = record.read_numbers(out).get("total_cost_usd")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -280,22 +339,26 @@ def check(args) -> int:
 
 
 def pr_body(issue: int) -> str:
-    return (f"Closes #{issue}\n\n"
-            f"Adds the Research note `{note_path(issue)}`, the factory's answer to the Research "
-            f"request in #{issue}. The note passed the factory's deterministic check "
-            "(`factory/research_note.py`): its sections, its tagged `https://` sources, its "
-            "unknowns and its spend against the cap. That check does not judge whether the "
-            "sources support the findings.\n\n"
-            "Opened by the factory as a draft. The factory's review runs on it; a human merges. "
-            "Closing this pull request and deleting its branch undoes the run.\n")
+    return (
+        f"Closes #{issue}\n\n"
+        f"Adds the Research note `{note_path(issue)}`, the factory's answer to the Research "
+        f"request in #{issue}. The note passed the factory's deterministic check "
+        "(`factory/research_note.py`): its sections, its tagged `https://` sources, its "
+        "unknowns and its spend against the cap. That check does not judge whether the "
+        "sources support the findings.\n\n"
+        "Opened by the factory as a draft. The factory's review runs on it; a human merges. "
+        "Closing this pull request and deleting its branch undoes the run.\n"
+    )
 
 
-def publish(args, gh: Optional[GitHub] = None) -> int:
+def publish(args, gh: GitHub | None = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
     note_file = out / "note.md"
     if not note_file.is_file():
-        raise RuntimeError("the check step left no note, so there is nothing to publish")
+        raise RuntimeError(
+            "the check step left no note, so there is nothing to publish"
+        )
     note = note_file.read_text()
     # Whatever ran before, this step never commits a note that fails.
     problems = research_note.check_text(note)
@@ -309,19 +372,41 @@ def publish(args, gh: Optional[GitHub] = None) -> int:
     work = str(args.work)
     _git(work, "add", "--", rel)
     if not _git(work, "status", "--porcelain", "--", rel).strip():
-        raise RuntimeError("the note is the same as the file already on the base branch, "
-                           "so there is nothing to publish")
+        raise RuntimeError(
+            "the note is the same as the file already on the base branch, "
+            "so there is nothing to publish"
+        )
     bot = f"{args.app_slug}[bot]"
     email = f"{gh.bot_user_id(args.app_slug)}+{bot}@users.noreply.github.com"
-    _git(work, "-c", f"user.name={bot}", "-c", f"user.email={email}", "commit", "-q",
-         "-m", f"research: {title} (note, #{args.issue})", "--", rel)
+    _git(
+        work,
+        "-c",
+        f"user.name={bot}",
+        "-c",
+        f"user.email={email}",
+        "commit",
+        "-q",
+        "-m",
+        f"research: {title} (note, #{args.issue})",
+        "--",
+        rel,
+    )
     token = os.environ["GH_TOKEN"]
     remote = f"https://x-access-token:{token}@github.com/{args.repo}.git"
     branch = branch_for(args.issue)
     _git(work, "push", "-q", remote, f"HEAD:refs/heads/{branch}")
-    url = gh.create_draft_pr(args.repo, BASE_BRANCH, branch, f"Research note: {title}",
-                             write_comment(out, "pr-body.md", pr_body(args.issue)))
-    gh.comment(args.repo, args.issue, write_comment(out, "opened.md", f"{OPENED_PREFIX}{url}\n"))
+    url = gh.create_draft_pr(
+        args.repo,
+        BASE_BRANCH,
+        branch,
+        f"Research note: {title}",
+        write_comment(out, "pr-body.md", pr_body(args.issue)),
+    )
+    gh.comment(
+        args.repo,
+        args.issue,
+        write_comment(out, "opened.md", f"{OPENED_PREFIX}{url}\n"),
+    )
     # The run is over: no Rework round follows, and the CI gate only releases `factory/` branches.
     if PROGRESS_LABEL in label_names(gh.issue(args.repo, args.issue)):
         gh.remove_labels(args.repo, args.issue, (PROGRESS_LABEL,))
@@ -329,26 +414,31 @@ def publish(args, gh: Optional[GitHub] = None) -> int:
     return 0
 
 
-def release(args, gh: Optional[GitHub] = None) -> int:
+def release(args, gh: GitHub | None = None) -> int:
     gh = gh or GitHub()
     issue = gh.issue(args.repo, args.issue)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    body = (f"{failed_prefix(args.run_url)}. `{PROGRESS_LABEL}` has been removed; "
-            f"re-apply `{START_LABEL}` to try again.\n")
+    body = (
+        f"{failed_prefix(args.run_url)}. `{PROGRESS_LABEL}` has been removed; "
+        f"re-apply `{START_LABEL}` to try again.\n"
+    )
     failed = out / CHECK_FAILED_FILE
     if failed.is_file():
         # The problems are the checker's own words, but the file came from a job that ran the
         # agent: it must not form a hidden marker in the bot's comment.
-        body += ("\nThe note failed its check, so no pull request was opened:\n\n"
-                 + neutralize_comments(failed.read_text().strip()) + "\n")
+        body += (
+            "\nThe note failed its check, so no pull request was opened:\n\n"
+            + neutralize_comments(failed.read_text().strip())
+            + "\n"
+        )
     gh.comment(args.repo, args.issue, write_comment(out, "failed.md", body))
     if PROGRESS_LABEL in label_names(issue):
         gh.remove_labels(args.repo, args.issue, (PROGRESS_LABEL,))
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="step", required=True)
 
@@ -385,8 +475,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     r.add_argument("--run-url", required=True)
 
     args = parser.parse_args(argv)
-    steps = {"claim": claim, "answer": answer, "check": check, "publish": publish,
-             "release": release}
+    steps = {
+        "claim": claim,
+        "answer": answer,
+        "check": check,
+        "publish": publish,
+        "release": release,
+    }
     try:
         return steps[args.step](args)
     except (RuntimeError, GitHubError, claude.ConfigError) as e:

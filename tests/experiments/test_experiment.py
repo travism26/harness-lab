@@ -117,8 +117,10 @@ def test_heading_inside_a_command_is_not_a_check():
 
 
 def test_five_checks_are_accepted():
-    checks = "\n".join(f"### {i}. C\n\n```sh\ntrue\n```\n\nPass means: ok.\n" for i in range(1, 6))
-    text = re.sub(r"### 1\..*?(?=## Cost)", checks + "\n", VALID, flags=re.S)
+    checks = "\n".join(
+        f"### {i}. C\n\n```sh\ntrue\n```\n\nPass means: ok.\n" for i in range(1, 6)
+    )
+    text = re.sub(r"### 1\..*?(?=## Cost)", checks + "\n", VALID, flags=re.DOTALL)
     assert _errors(text) == []
 
 
@@ -157,7 +159,9 @@ def test_check_without_pass_means():
 
 
 def test_pass_means_joins_following_lines():
-    text = VALID.replace("Pass means: the command exits 0.", "Pass means: the command\nexits 0.")
+    text = VALID.replace(
+        "Pass means: the command exits 0.", "Pass means: the command\nexits 0."
+    )
     request, errors = validate_text(text, Path("r.md"), README)
     assert errors == []
     assert request.checks[0].pass_means == "the command exits 0."
@@ -206,7 +210,10 @@ def test_bad_timeboxes(box):
 
 
 def test_bad_login():
-    assert any("Model / login" in e for e in _errors(VALID.replace("subscription", "free ride")))
+    assert any(
+        "Model / login" in e
+        for e in _errors(VALID.replace("subscription", "free ride"))
+    )
 
 
 def test_metered_key_login_with_notes():
@@ -270,7 +277,9 @@ def test_ceilings_are_read_from_the_given_readme(tmp_path):
 def test_unreadable_ceilings_fail_closed(tmp_path, content):
     readme = tmp_path / "README.md"
     readme.write_text(content)
-    assert any("ceilings" in e and "experiments/README.md" in e for e in _errors(VALID, readme))
+    assert any(
+        "ceilings" in e and "experiments/README.md" in e for e in _errors(VALID, readme)
+    )
     assert any("ceilings" in e for e in _errors(VALID, tmp_path / "missing.md"))
 
 
@@ -283,7 +292,7 @@ REJECT = [
     "ls --env-file-missing && env",
     "os.environ",
     "cat /proc/self/environ",
-    'python3 -c "import os; os.getenv(\'X\')"',
+    "python3 -c \"import os; os.getenv('X')\"",
     "node -e 'process.env'",
     "set",
     "set | grep X",
@@ -371,7 +380,9 @@ def test_token_shaped_string_is_rejected_without_echo():
 def test_token_shaped_string_is_the_only_error():
     # A bad source line is normally quoted in its error; with a token in it, it is not.
     token = "gh" + "p_" + "x" * 20
-    text = VALID.replace("https://example.com/release-notes", f"http://example.com/{token}")
+    text = VALID.replace(
+        "https://example.com/release-notes", f"http://example.com/{token}"
+    )
     errors = _errors(text)
     assert len(errors) == 1
     assert token not in errors[0] and "token" in errors[0]
@@ -384,7 +395,11 @@ def test_scrubbed_env_has_exactly_three_keys(monkeypatch):
     monkeypatch.setenv("EXPERIMENT_EXTRA", "1")
     monkeypatch.setenv("PATH", "/some/bin")
     monkeypatch.setenv("LANG", "xx")
-    assert scrubbed_env("/tmp/h") == {"PATH": "/some/bin", "HOME": "/tmp/h", "LANG": "xx"}
+    assert scrubbed_env("/tmp/h") == {
+        "PATH": "/some/bin",
+        "HOME": "/tmp/h",
+        "LANG": "xx",
+    }
     monkeypatch.delenv("PATH")
     monkeypatch.delenv("LANG")
     env = scrubbed_env("/tmp/h")
@@ -422,7 +437,11 @@ def test_check_timeout_kills_and_continues(tmp_path):
         [_check("sleep 30"), _check("true")], tmp_path, check_timeout_s=0.3
     )
     assert time.monotonic() - start < 5
-    assert (results[0].result, results[0].timed_out, results[0].exit_code) == ("fail", True, None)
+    assert (results[0].result, results[0].timed_out, results[0].exit_code) == (
+        "fail",
+        True,
+        None,
+    )
     assert results[1].result == "pass"
 
 
@@ -453,7 +472,9 @@ def test_timebox_stops_the_run(tmp_path):
 
 def test_zero_timebox_runs_nothing(tmp_path):
     log = io.StringIO()
-    results = run_checks([_check("touch ran.txt", "first"), _check("true")], tmp_path, 0, log=log)
+    results = run_checks(
+        [_check("touch ran.txt", "first"), _check("true")], tmp_path, 0, log=log
+    )
     assert [r.result for r in results] == ["not run", "not run"]
     assert "--- first: not run" in log.getvalue()
     assert not (tmp_path / "ran.txt").exists()
@@ -476,7 +497,9 @@ def test_exit_codes_through_the_cli(tmp_path, capsys):
     request = _copy("failing-check.md", tmp_path)
     out = tmp_path / "out.md"
     assert main(["run", str(request), "--out", str(out)]) == 1
-    rows = re.findall(r"^\| (\d) \| .*? \| (\d+) \| (pass|fail) \|", out.read_text(), re.M)
+    rows = re.findall(
+        r"^\| (\d) \| .*? \| (\d+) \| (pass|fail) \|", out.read_text(), re.MULTILINE
+    )
     assert [(c, r) for _, c, r in rows] == [("0", "pass"), ("1", "fail"), ("3", "fail")]
     assert "results:" in capsys.readouterr().out
 
@@ -505,8 +528,16 @@ def test_results_content_in_a_git_repo(tmp_path):
     _git(repo, "init", "-q")
     _git(repo, "add", ".")
     _git(
-        repo, "-c", "user.name=test", "-c", "user.email=test@example.com",
-        "-c", "commit.gpgsign=false", "commit", "-qm", "init",
+        repo,
+        "-c",
+        "user.name=test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-qm",
+        "init",
     )
     sha = _git(repo, "rev-parse", "HEAD")
     out = tmp_path / "out" / "results.md"
@@ -589,7 +620,9 @@ def test_invalid_request_runs_nothing(tmp_path, capsys):
 def test_elapsed_minutes_beyond_the_timebox(tmp_path):
     request = _copy("valid.md", tmp_path)
     out = tmp_path / "out.md"
-    assert main(["run", str(request), "--out", str(out), "--elapsed-minutes", "10"]) == 1
+    assert (
+        main(["run", str(request), "--out", str(out), "--elapsed-minutes", "10"]) == 1
+    )
     assert "Result: 0 pass, 0 fail, 2 not run." in out.read_text()
 
 
@@ -605,7 +638,8 @@ def test_slow_fixture_hits_the_timebox(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "flags", [["--check-timeout", "0"], ["--check-timeout", "-1"], ["--elapsed-minutes", "-1"]]
+    "flags",
+    [["--check-timeout", "0"], ["--check-timeout", "-1"], ["--elapsed-minutes", "-1"]],
 )
 def test_bad_run_flags(flags, tmp_path):
     request = _copy("valid.md", tmp_path)

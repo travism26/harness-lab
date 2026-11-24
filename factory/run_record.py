@@ -17,26 +17,36 @@ field that fails its check is written as null with a workflow warning, and the m
 still posted. The comment it edits is found among the bot's own comments on the Ticket,
 never from a file in --out.
 """
+
 import argparse
 import json
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 from factory.github import GitHub, GitHubError, label_names
-from factory.record import (RECORDED, Outcomes, RunContext, bot_comments, build_record,
-                            failure_reason, leave_record, opened_pr, read_numbers)
+from factory.record import (
+    RECORDED,
+    Outcomes,
+    RunContext,
+    bot_comments,
+    build_record,
+    failure_reason,
+    leave_record,
+    opened_pr,
+    read_numbers,
+)
 from factory.review_pr import rework_round
 from factory.run_record_review import write_review
 from factory.ticket import OPENED_PREFIX, UNCHANGED_FILE, failed_prefix
 
 
 def _outcomes(args) -> Outcomes:
-    return Outcomes(args.job_status, args.agent_outcome, args.verify_outcome,
-                    args.publish_outcome)
+    return Outcomes(
+        args.job_status, args.agent_outcome, args.verify_outcome, args.publish_outcome
+    )
 
 
-def _head_sha(gh: GitHub, repo: str, pr: int) -> Optional[str]:
+def _head_sha(gh: GitHub, repo: str, pr: int) -> str | None:
     try:
         return gh.pr(repo, pr).get("headRefOid")
     except GitHubError as e:
@@ -44,13 +54,15 @@ def _head_sha(gh: GitHub, repo: str, pr: int) -> Optional[str]:
         return None
 
 
-def _run_comment(comments: List[dict], app_slug: str, prefix: str) -> Optional[dict]:
+def _run_comment(comments: list[dict], app_slug: str, prefix: str) -> dict | None:
     """The newest comment by the factory bot that starts with `prefix` and holds no record."""
-    found = [c for c in bot_comments(comments, app_slug) if c["body"].startswith(prefix)]
+    found = [
+        c for c in bot_comments(comments, app_slug) if c["body"].startswith(prefix)
+    ]
     return max(found, key=lambda c: c["id"]) if found else None
 
 
-def _event_round(pr_labels: Optional[str]) -> Optional[int]:
+def _event_round(pr_labels: str | None) -> int | None:
     """The `rework:N` the pull request carried when the run started, or None."""
     try:
         labels = json.loads(pr_labels or "[]")
@@ -61,12 +73,14 @@ def _event_round(pr_labels: Optional[str]) -> Optional[int]:
     return rework_round([x for x in labels if isinstance(x, str)]) or None
 
 
-def _live_round(gh: GitHub, repo: str, pr: int) -> Optional[int]:
+def _live_round(gh: GitHub, repo: str, pr: int) -> int | None:
     """The `rework:N` the pull request carries now, for a run whose event labels had none."""
     try:
         return rework_round(label_names(gh.pr(repo, pr))) or None
     except GitHubError as e:
-        print(f"::warning title=Run record::could not read the pull request's labels: {e}")
+        print(
+            f"::warning title=Run record::could not read the pull request's labels: {e}"
+        )
         return None
 
 
@@ -75,16 +89,26 @@ def write_rework(args, gh: GitHub, out: Path) -> int:
     next, on the pull request. The pull request and round come from the workflow's context;
     a round the event's labels do not hold is read from the pull request."""
     numbers = read_numbers(out)
-    ok = (args.publish_outcome == "success" and args.job_status != "cancelled")
+    ok = args.publish_outcome == "success" and args.job_status != "cancelled"
     round_ = _event_round(args.pr_labels)
     if round_ is None:
         round_ = _live_round(gh, args.repo, args.pr)
-    reason = None if ok else failure_reason(_outcomes(args), numbers,
-                                            (out / UNCHANGED_FILE).is_file())
+    reason = (
+        None
+        if ok
+        else failure_reason(_outcomes(args), numbers, (out / UNCHANGED_FILE).is_file())
+    )
     head_sha = _head_sha(gh, args.repo, args.pr) if ok else None
-    record = build_record("rework", RunContext.from_args(args, args.issue), numbers,
-                          "ok" if ok else "fail", reason, pr=args.pr, head_sha=head_sha,
-                          round_=round_)
+    record = build_record(
+        "rework",
+        RunContext.from_args(args, args.issue),
+        numbers,
+        "ok" if ok else "fail",
+        reason,
+        pr=args.pr,
+        head_sha=head_sha,
+        round_=round_,
+    )
     label = f"Rework round {'unknown' if record['round'] is None else record['round']}"
     if record["outcome"] == "ok":
         said = f"{label} pushed `{(record['head_sha'] or 'unknown')[:7]}`."
@@ -99,26 +123,46 @@ def write_implement(args, gh: GitHub, out: Path, workflow: str = "implement") ->
     on the comment the run posted on the Ticket, the "opened a draft PR" comment or the "failed"
     one, or on a one-line comment when it posted none (a cancelled run)."""
     numbers = read_numbers(out)
-    ok = (args.publish_outcome == "success" and args.job_status != "cancelled")
+    ok = args.publish_outcome == "success" and args.job_status != "cancelled"
     prefix = OPENED_PREFIX if ok else failed_prefix(args.run_url)
     pr = head_sha = target = None
     try:
-        target = _run_comment(gh.pr_comments(args.repo, args.issue), args.app_slug, prefix)
+        target = _run_comment(
+            gh.pr_comments(args.repo, args.issue), args.app_slug, prefix
+        )
     except GitHubError as e:
         print(f"::warning title=Run record::could not read the Ticket's comments: {e}")
     if ok and target:
         pr = opened_pr(target["body"], args.repo, OPENED_PREFIX)
         head_sha = _head_sha(gh, args.repo, pr) if pr else None
-    reason = None if ok else failure_reason(_outcomes(args), numbers,
-                                            (out / UNCHANGED_FILE).is_file())
-    record = build_record(workflow, RunContext.from_args(args, args.issue), numbers,
-                          "ok" if ok else "fail", reason, pr=pr, head_sha=head_sha, round_=0)
-    leave_record(gh, args.repo, args.issue, out, record,
-                 f"The factory run for this Ticket ended: [run]({args.run_url}).", target)
+    reason = (
+        None
+        if ok
+        else failure_reason(_outcomes(args), numbers, (out / UNCHANGED_FILE).is_file())
+    )
+    record = build_record(
+        workflow,
+        RunContext.from_args(args, args.issue),
+        numbers,
+        "ok" if ok else "fail",
+        reason,
+        pr=pr,
+        head_sha=head_sha,
+        round_=0,
+    )
+    leave_record(
+        gh,
+        args.repo,
+        args.issue,
+        out,
+        record,
+        f"The factory run for this Ticket ended: [run]({args.run_url}).",
+        target,
+    )
     return 0
 
 
-def write(args, gh: Optional[GitHub] = None) -> int:
+def write(args, gh: GitHub | None = None) -> int:
     """Build the record, write <out>/run.json and put the marker on the run's comment."""
     gh = gh or GitHub()
     out = Path(args.out)
@@ -130,13 +174,13 @@ def write(args, gh: Optional[GitHub] = None) -> int:
     return write_implement(args, gh, out, args.workflow)
 
 
-def issue_arg(text: str) -> Optional[int]:
+def issue_arg(text: str) -> int | None:
     """`--issue`, or nothing when the run has no Ticket: a pull request that closes none, or a
     head branch that is not `factory/issue-<N>` (the workflow passes what is left of it)."""
     return int(text) if text.isascii() and text.isdigit() else None
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="step", required=True)
     w = sub.add_parser("write")
@@ -157,14 +201,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     w.add_argument("--app-slug", required=True)
     w.add_argument("--run-url", required=True)
     w.add_argument("--job-status", default="")
-    w.add_argument("--agent-outcome", dest="agent_outcome", required=True,
-                   help="how the agent step ended: Implement's Build, Rework's Rework, "
-                        "Review's Review")
-    w.add_argument("--verify-outcome", default="",
-                   help="how the new Project's check ended (Implement and Rework only)")
-    w.add_argument("--publish-outcome", dest="publish_outcome", required=True,
-                   help="how the step that publishes the work ended: Implement's commit, "
-                        "push and open, Rework's commit and push, Review's post of the report")
+    w.add_argument(
+        "--agent-outcome",
+        dest="agent_outcome",
+        required=True,
+        help="how the agent step ended: Implement's Build, Rework's Rework, "
+        "Review's Review",
+    )
+    w.add_argument(
+        "--verify-outcome",
+        default="",
+        help="how the new Project's check ended (Implement and Rework only)",
+    )
+    w.add_argument(
+        "--publish-outcome",
+        dest="publish_outcome",
+        required=True,
+        help="how the step that publishes the work ended: Implement's commit, "
+        "push and open, Rework's commit and push, Review's post of the report",
+    )
     args = parser.parse_args(argv)
     if args.project in ("null", ""):
         args.project = None

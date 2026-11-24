@@ -20,12 +20,22 @@ def test_tool_use_reply():
     with StandInModel([tool_use_reply("run", {"cmd": "ls"})]) as m:
         reply = ModelClient(m.endpoint, api_key="k").send(MSG, tools=tools)
     block = reply["content"][0]
-    assert (block["type"], block["name"], block["input"]) == ("tool_use", "run", {"cmd": "ls"})
+    assert (block["type"], block["name"], block["input"]) == (
+        "tool_use",
+        "run",
+        {"cmd": "ls"},
+    )
     assert m.requests[0]["body"]["tools"] == tools
 
 
-@pytest.mark.parametrize("status,message", [
-    (401, "No auth credentials found"), (429, "Rate limit exceeded"), (403, "Key limit exceeded")])
+@pytest.mark.parametrize(
+    "status,message",
+    [
+        (401, "No auth credentials found"),
+        (429, "Rate limit exceeded"),
+        (403, "Key limit exceeded"),
+    ],
+)
 def test_provider_error_is_readable(status, message):
     with StandInModel([error_reply(status, message)]) as m:
         with pytest.raises(ModelError) as e:
@@ -46,11 +56,15 @@ def test_key_from_env(monkeypatch):
     assert m.requests[0]["headers"]["authorization"] == "Bearer envkey"
 
 
-@pytest.mark.parametrize("name,full", [
-    ("haiku", "anthropic/claude-haiku-5.5"),
-    ("sonnet", "anthropic/claude-sonnet-5.5"),
-    ("opus", "anthropic/claude-opus-5.5"),
-    ("deepseek", "deepseek/deepseek-v4-flash")])
+@pytest.mark.parametrize(
+    "name,full",
+    [
+        ("haiku", "anthropic/claude-haiku-5.5"),
+        ("sonnet", "anthropic/claude-sonnet-5.5"),
+        ("opus", "anthropic/claude-opus-5.5"),
+        ("deepseek", "deepseek/deepseek-v4-flash"),
+    ],
+)
 def test_shortcuts(name, full):
     assert resolve_model(name, env={}) == full
 
@@ -60,8 +74,14 @@ def test_full_name_passes_through():
 
 
 def test_env_fallback_and_precedence():
-    assert resolve_model(None, env={"HARNESS_MODEL": "sonnet"}) == "anthropic/claude-sonnet-5.5"
-    assert resolve_model("opus", env={"HARNESS_MODEL": "sonnet"}) == "anthropic/claude-opus-5.5"
+    assert (
+        resolve_model(None, env={"HARNESS_MODEL": "sonnet"})
+        == "anthropic/claude-sonnet-5.5"
+    )
+    assert (
+        resolve_model("opus", env={"HARNESS_MODEL": "sonnet"})
+        == "anthropic/claude-opus-5.5"
+    )
     assert resolve_model(None, env={}) == "anthropic/claude-haiku-5.5"
 
 

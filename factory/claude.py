@@ -14,9 +14,9 @@ is not using.
 import json
 import os
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Mapping, Optional
 
 from factory.switch_rule import OPENROUTER, SUBSCRIPTION
 
@@ -31,8 +31,14 @@ OPENROUTER_MODELS = {
 MODELS = ("haiku", "sonnet", "opus")
 SECRET_VARS = ("FACTORY_SUBSCRIPTION_TOKEN", "FACTORY_OPENROUTER_KEY")
 # Never passed to the agent, whatever the login.
-_DROPPED = ("GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
-            "ACTIONS_ID_TOKEN_REQUEST_URL", "CLAUDE_CODE_OAUTH_TOKEN") + SECRET_VARS
+_DROPPED = (
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "ACTIONS_RUNTIME_TOKEN",
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    "ACTIONS_ID_TOKEN_REQUEST_URL",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+) + SECRET_VARS
 
 
 class ConfigError(RuntimeError):
@@ -40,19 +46,26 @@ class ConfigError(RuntimeError):
 
 
 def agent_env(login: str, step_env: Mapping[str, str]) -> dict:
-    env = {k: v for k, v in step_env.items()
-           if k not in _DROPPED and not k.startswith("ANTHROPIC_")}
+    env = {
+        k: v
+        for k, v in step_env.items()
+        if k not in _DROPPED and not k.startswith("ANTHROPIC_")
+    }
     if login == SUBSCRIPTION:
         token = step_env.get("FACTORY_SUBSCRIPTION_TOKEN") or ""
         if not token:
-            raise ConfigError("the login is subscription but the repository secret "
-                              "CLAUDE_CODE_OAUTH_TOKEN is empty")
+            raise ConfigError(
+                "the login is subscription but the repository secret "
+                "CLAUDE_CODE_OAUTH_TOKEN is empty"
+            )
         env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     elif login == OPENROUTER:
         key = step_env.get("FACTORY_OPENROUTER_KEY") or ""
         if not key:
-            raise ConfigError("the login is openrouter but the repository secret "
-                              "OPENROUTER_API_KEY is empty")
+            raise ConfigError(
+                "the login is openrouter but the repository secret "
+                "OPENROUTER_API_KEY is empty"
+            )
         env["ANTHROPIC_BASE_URL"] = OPENROUTER_BASE_URL
         env["ANTHROPIC_AUTH_TOKEN"] = key
         # OpenRouter's guide: must be explicitly empty, or Claude Code uses it.
@@ -63,11 +76,11 @@ def agent_env(login: str, step_env: Mapping[str, str]) -> dict:
     return env
 
 
-def secret_values(step_env: Mapping[str, str]) -> List[str]:
+def secret_values(step_env: Mapping[str, str]) -> list[str]:
     return [step_env[k] for k in SECRET_VARS if len(step_env.get(k) or "") >= 8]
 
 
-def scrub(out: Path, secrets: List[str]) -> int:
+def scrub(out: Path, secrets: list[str]) -> int:
     """Blank every secret value out of the files under out, before anything
     is posted or uploaded. Returns how many files changed."""
     changed = 0
@@ -93,15 +106,30 @@ class Result:
     message: dict = field(default_factory=dict)
 
 
-def command(model: str, max_budget_usd: float, allowed_tools: Optional[List[str]],
-            disallowed_tools: List[str], may_edit: bool) -> List[str]:
+def command(
+    model: str,
+    max_budget_usd: float,
+    allowed_tools: list[str] | None,
+    disallowed_tools: list[str],
+    may_edit: bool,
+) -> list[str]:
     if model not in MODELS:
         raise ConfigError(f"model must be one of {', '.join(MODELS)}, got {model!r}")
     if max_budget_usd <= 0:
         raise ConfigError("the budget cap must be positive")
-    cmd = ["claude", "-p", "--output-format", "stream-json", "--verbose",
-           "--model", model, "--max-budget-usd", f"{max_budget_usd:g}",
-           "--setting-sources", "project"]
+    cmd = [
+        "claude",
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--model",
+        model,
+        "--max-budget-usd",
+        f"{max_budget_usd:g}",
+        "--setting-sources",
+        "project",
+    ]
     if allowed_tools:
         cmd += ["--allowedTools", ",".join(allowed_tools)]
     if disallowed_tools:
@@ -126,28 +154,59 @@ def result_message(transcript_text: str) -> dict:
     return result
 
 
-def run(prompt: str, login: str, model: str, max_budget_usd: float, cwd: str,
-        transcript: Path, disallowed_tools: List[str],
-        allowed_tools: Optional[List[str]] = None, may_edit: bool = False,
-        step_env: Optional[Mapping[str, str]] = None) -> Result:
+def run(
+    prompt: str,
+    login: str,
+    model: str,
+    max_budget_usd: float,
+    cwd: str,
+    transcript: Path,
+    disallowed_tools: list[str],
+    allowed_tools: list[str] | None = None,
+    may_edit: bool = False,
+    step_env: Mapping[str, str] | None = None,
+) -> Result:
     step_env = os.environ if step_env is None else step_env
     env = agent_env(login, step_env)
     cmd = command(model, max_budget_usd, allowed_tools, disallowed_tools, may_edit)
     transcript.parent.mkdir(parents=True, exist_ok=True)
     with transcript.open("w") as out:
-        proc = subprocess.run(cmd, input=prompt, stdout=out, stderr=subprocess.PIPE,
-                              text=True, cwd=cwd, env=env)
+        proc = subprocess.run(
+            cmd,
+            input=prompt,
+            stdout=out,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=cwd,
+            env=env,
+        )
     msg = result_message(transcript.read_text(errors="replace"))
-    ok = proc.returncode == 0 and msg.get("subtype") == "success" and not msg.get("is_error")
-    text = msg.get("result") or proc.stderr.strip() or f"claude exited {proc.returncode}"
-    return Result(ok, text, msg.get("subtype", ""), float(msg.get("total_cost_usd") or 0), msg)
+    ok = (
+        proc.returncode == 0
+        and msg.get("subtype") == "success"
+        and not msg.get("is_error")
+    )
+    text = (
+        msg.get("result") or proc.stderr.strip() or f"claude exited {proc.returncode}"
+    )
+    return Result(
+        ok, text, msg.get("subtype", ""), float(msg.get("total_cost_usd") or 0), msg
+    )
 
 
 # The four counts, as the result line's `usage` names them and as its `modelUsage` does.
-TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens",
-              "cache_read_input_tokens")
-MODEL_TOKEN_KEYS = ("inputTokens", "outputTokens", "cacheCreationInputTokens",
-                    "cacheReadInputTokens")
+TOKEN_KEYS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+)
+MODEL_TOKEN_KEYS = (
+    "inputTokens",
+    "outputTokens",
+    "cacheCreationInputTokens",
+    "cacheReadInputTokens",
+)
 
 
 def save_numbers(out: Path, message: dict) -> None:
@@ -159,19 +218,28 @@ def save_numbers(out: Path, message: dict) -> None:
     if not message:
         return
     usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
-    models = message.get("modelUsage") if isinstance(message.get("modelUsage"), dict) else {}
-    numbers = {k: message.get(k) for k in ("subtype", "is_error", "num_turns", "duration_ms",
-                                           "total_cost_usd")}
+    models = (
+        message.get("modelUsage") if isinstance(message.get("modelUsage"), dict) else {}
+    )
+    numbers = {
+        k: message.get(k)
+        for k in ("subtype", "is_error", "num_turns", "duration_ms", "total_cost_usd")
+    }
     numbers["usage"] = {k: usage.get(k) for k in TOKEN_KEYS}
     numbers["model_usage"] = {
-        str(model): {k: (v.get(k) if isinstance(v, dict) else None) for k in MODEL_TOKEN_KEYS}
-        for model, v in models.items()}
+        str(model): {
+            k: (v.get(k) if isinstance(v, dict) else None) for k in MODEL_TOKEN_KEYS
+        }
+        for model, v in models.items()
+    }
     Path(out).mkdir(parents=True, exist_ok=True)
     (Path(out) / "result.json").write_text(json.dumps(numbers, indent=2) + "\n")
 
 
 def failure_message(result: Result, max_budget_usd: float, budget_var: str) -> str:
     if result.subtype == "error_max_budget_usd":
-        return (f"the agent stopped at its budget cap (${max_budget_usd:g}, spent "
-                f"${result.cost_usd:.2f}); raise {budget_var} if the work needs more")
+        return (
+            f"the agent stopped at its budget cap (${max_budget_usd:g}, spent "
+            f"${result.cost_usd:.2f}); raise {budget_var} if the work needs more"
+        )
     return f"the agent failed ({result.subtype or 'no result'}): {result.text[:500]}"

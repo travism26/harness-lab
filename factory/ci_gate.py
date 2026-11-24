@@ -27,16 +27,29 @@ import re
 import secrets
 import sys
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence, Tuple
 
 from factory import claude
 from factory.github import GitHub, GitHubError, author, label_names, write_comment
 from factory.review_pr import (
-    HUMAN_LABEL, MARKER, MAX_REWORK, REWORK_LABEL, Moves, charge_won,
-    drop_in_progress, gate_line, head_charged, label_moves, linked_ticket, mark_for_run,
-    move_labels, parse_gate, review_passed, rework_round,
+    HUMAN_LABEL,
+    MARKER,
+    MAX_REWORK,
+    REWORK_LABEL,
+    Moves,
+    charge_won,
+    drop_in_progress,
+    gate_line,
+    head_charged,
+    label_moves,
+    linked_ticket,
+    mark_for_run,
+    move_labels,
+    parse_gate,
+    review_passed,
+    rework_round,
 )
 
 CI_WORKFLOW = "ci.yml"
@@ -55,10 +68,18 @@ _TOKEN_RE = re.compile(
     r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{8,}"
     r"|github_pat_[A-Za-z0-9_]{8,}"
     r"|x-access-token:[^\s@]+"
-    r"|sk-(?:ant|or)-[A-Za-z0-9_\-]{8,}")
-_SECRET_ENV = ("GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN",
-               "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "FACTORY_SUBSCRIPTION_TOKEN",
-               "FACTORY_OPENROUTER_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "OPENROUTER_API_KEY")
+    r"|sk-(?:ant|or)-[A-Za-z0-9_\-]{8,}"
+)
+_SECRET_ENV = (
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "ACTIONS_RUNTIME_TOKEN",
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    "FACTORY_SUBSCRIPTION_TOKEN",
+    "FACTORY_OPENROUTER_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "OPENROUTER_API_KEY",
+)
 
 
 @dataclass(frozen=True)
@@ -70,6 +91,7 @@ class FailedJob:
 @dataclass(frozen=True)
 class GateEvent:
     """One CI completion plus the PR it belongs to. Tests build this directly."""
+
     conclusion: str
     event: str
     head_branch: str
@@ -78,18 +100,18 @@ class GateEvent:
     repo: str
     run_id: int
     run_url: str
-    pr: Optional[int] = None
+    pr: int | None = None
     pr_state: str = ""
     pr_draft: bool = False
     pr_author: str = ""
     pr_head_repo: str = ""
     pr_head_sha: str = ""
-    labels: Tuple[str, ...] = ()
+    labels: tuple[str, ...] = ()
     body: str = ""
-    comments: Tuple[dict, ...] = ()
-    failed_jobs: Tuple[FailedJob, ...] = ()
+    comments: tuple[dict, ...] = ()
+    failed_jobs: tuple[FailedJob, ...] = ()
     app_slug: str = ""
-    issue_labels: Tuple[str, ...] = ()
+    issue_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -97,14 +119,14 @@ class Decision:
     action: str  # ignore | rework | human | join | settle | finish
     reason: str
     comment: str = ""
-    add: Tuple[str, ...] = ()
-    remove: Tuple[str, ...] = ()
+    add: tuple[str, ...] = ()
+    remove: tuple[str, ...] = ()
     clear_in_progress: bool = False
-    issue: Optional[int] = None
-    nonce: Optional[str] = None
+    issue: int | None = None
+    nonce: str | None = None
 
 
-def env_secrets(env: dict) -> List[str]:
+def env_secrets(env: dict) -> list[str]:
     return [env[name] for name in _SECRET_ENV if len(env.get(name) or "") >= 8]
 
 
@@ -132,8 +154,9 @@ def bound_excerpt(log: str, hidden: Sequence[str] = ()) -> str:
     return text.strip()
 
 
-def failed_findings(jobs: Sequence[dict], logs: dict,
-                    hidden: Sequence[str] = ()) -> Tuple[FailedJob, ...]:
+def failed_findings(
+    jobs: Sequence[dict], logs: dict, hidden: Sequence[str] = ()
+) -> tuple[FailedJob, ...]:
     """One finding per job whose conclusion is failure. A missing log is still named."""
     found = []
     for job in jobs:
@@ -149,7 +172,7 @@ def _fence(text: str) -> str:
     return (text or "").replace("```", "'''")
 
 
-def _ignore_reason(event: GateEvent) -> Optional[str]:
+def _ignore_reason(event: GateEvent) -> str | None:
     # CI completes on pull_request. Review completes on pull_request_target.
     # Both are same-repo pull-request events; the workflow `if` admits both.
     if event.event not in ("pull_request", "pull_request_target"):
@@ -177,38 +200,67 @@ def _ignore_reason(event: GateEvent) -> Optional[str]:
     return None
 
 
-def _render_failure(event: GateEvent, moves: Moves, charged: bool, nonce: Optional[str],
-                    joining: bool) -> str:
+def _render_failure(
+    event: GateEvent, moves: Moves, charged: bool, nonce: str | None, joining: bool
+) -> str:
     labels = list(event.labels)
-    labels_after = [label for label in labels if label not in moves.remove] + list(moves.add)
+    labels_after = [label for label in labels if label not in moves.remove] + list(
+        moves.add
+    )
     issue = linked_ticket(event.body, event.repo)
     jobs = event.failed_jobs or (FailedJob("CI", NO_FAILED_JOB),)
-    gate = gate_line(event.head_sha, charged, "ci", ci_run=event.run_id,
-                     nonce=nonce if charged else None, add=moves.add if charged else ())
+    gate = gate_line(
+        event.head_sha,
+        charged,
+        "ci",
+        ci_run=event.run_id,
+        nonce=nonce if charged else None,
+        add=moves.add if charged else (),
+    )
     lines = [MARKER, gate, "## Factory review: BLOCKED", ""]
     against = f"Ticket #{issue}" if issue else "the pull request"
     lines.append(f"Reviewed `{event.head_sha[:12]}` against {against}.")
     if joining:
-        lines.append(f"CI failed on `{event.head_sha[:12]}`. This head is already in a "
-                     f"rework round, so the counter stays.")
+        lines.append(
+            f"CI failed on `{event.head_sha[:12]}`. This head is already in a "
+            f"rework round, so the counter stays."
+        )
     elif moves.outcome == "rework":
-        lines.append(f"Sent to rework: round {rework_round(labels_after)} of {MAX_REWORK}.")
+        lines.append(
+            f"Sent to rework: round {rework_round(labels_after)} of {MAX_REWORK}."
+        )
     elif moves.outcome == "human":
-        lines.append(f"CI blocked this PR again after {MAX_REWORK} rework rounds, "
-                     f"so it is labelled `{HUMAN_LABEL}` and the factory stops here.")
-    lines += ["", "### Spec: BLOCKER", "",
-              "Required CI failed. This is a blocker the rework round must fix."]
+        lines.append(
+            f"CI blocked this PR again after {MAX_REWORK} rework rounds, "
+            f"so it is labelled `{HUMAN_LABEL}` and the factory stops here."
+        )
+    lines += [
+        "",
+        "### Spec: BLOCKER",
+        "",
+        "Required CI failed. This is a blocker the rework round must fix.",
+    ]
     for job in jobs:
-        lines += ["",
-                  f"- **ci_failure** Job `{job.name}` failed ([run]({event.run_url})). "
-                  "Fix: make the Project check pass. Log excerpt:",
-                  "", "```", _fence(_TOKEN_RE.sub("[REDACTED]", job.excerpt)) or "(no log)", "```"]
-    lines += ["", "A failing required CI run sends this PR to rework, on the same "
-              "counter as a Spec blocker. The merge is a human's."]
+        lines += [
+            "",
+            f"- **ci_failure** Job `{job.name}` failed ([run]({event.run_url})). "
+            "Fix: make the Project check pass. Log excerpt:",
+            "",
+            "```",
+            _fence(_TOKEN_RE.sub("[REDACTED]", job.excerpt)) or "(no log)",
+            "```",
+        ]
+    lines += [
+        "",
+        "A failing required CI run sends this PR to rework, on the same "
+        "counter as a Spec blocker. The merge is a human's.",
+    ]
     return "\n".join(lines) + "\n"
 
 
-def conclusion_for_trigger(workflow: str, conclusion: str, ci_run: Optional[dict]) -> str:
+def conclusion_for_trigger(
+    workflow: str, conclusion: str, ci_run: dict | None
+) -> str:
     """The CI conclusion this gate should judge.
 
     A Review completion is not a CI result. When Review finishes, only an
@@ -245,8 +297,9 @@ def _decide_success(event: GateEvent) -> Decision:
     issue = linked_ticket(event.body, event.repo)
     if "in-progress" not in event.issue_labels:
         return Decision("ignore", "in-progress is already off")
-    return Decision("settle", "review passed and CI is green",
-                    clear_in_progress=True, issue=issue)
+    return Decision(
+        "settle", "review passed and CI is green", clear_in_progress=True, issue=issue
+    )
 
 
 def _decide_failure(event: GateEvent, nonce: str) -> Decision:
@@ -258,11 +311,21 @@ def _decide_failure(event: GateEvent, nonce: str) -> Decision:
     if posted is not None:
         return _duplicate(event, posted)
     if head_charged(event.comments, event.head_sha):
-        return Decision("join", "this head is already in a rework round", comment=_join_comment(event))
+        return Decision(
+            "join",
+            "this head is already in a rework round",
+            comment=_join_comment(event),
+        )
     moves = label_moves(list(event.labels), True)
     comment = _render_failure(event, moves, charged=True, nonce=nonce, joining=False)
-    return Decision(moves.outcome, "required CI failed", comment=comment,
-                    add=moves.add, remove=moves.remove, nonce=nonce)
+    return Decision(
+        moves.outcome,
+        "required CI failed",
+        comment=comment,
+        add=moves.add,
+        remove=moves.remove,
+        nonce=nonce,
+    )
 
 
 def _duplicate(event: GateEvent, meta) -> Decision:
@@ -276,11 +339,17 @@ def _duplicate(event: GateEvent, meta) -> Decision:
         remove = (REWORK_LABEL,)
     if not missing and not remove:
         return Decision("ignore", "duplicate ci run")
-    return Decision("finish", "duplicate ci run, labels were not applied",
-                    add=missing, remove=remove)
+    return Decision(
+        "finish",
+        "duplicate ci run, labels were not applied",
+        add=missing,
+        remove=remove,
+    )
 
 
-def _review_ready(review_run: Optional[dict], comments: Sequence, head_sha: str) -> bool:
+def _review_ready(
+    review_run: dict | None, comments: Sequence, head_sha: str
+) -> bool:
     for comment in comments:
         meta = parse_gate(comment.get("body") or "")
         if meta and meta.head == head_sha and meta.source == "review":
@@ -289,13 +358,19 @@ def _review_ready(review_run: Optional[dict], comments: Sequence, head_sha: str)
     return review_conclusion in ("success", "failure", "cancelled", "skipped")
 
 
-def _failure_comment_posted(ci_run: Optional[dict], comments: Sequence) -> bool:
+def _failure_comment_posted(ci_run: dict | None, comments: Sequence) -> bool:
     run_id = (ci_run or {}).get("databaseId")
-    return any(f"ci-run={run_id}" in (comment.get("body") or "") for comment in comments)
+    return any(
+        f"ci-run={run_id}" in (comment.get("body") or "") for comment in comments
+    )
 
 
-def inputs_ready(ci_run: Optional[dict], review_run: Optional[dict], comments: Sequence,
-                 head_sha: str) -> bool:
+def inputs_ready(
+    ci_run: dict | None,
+    review_run: dict | None,
+    comments: Sequence,
+    head_sha: str,
+) -> bool:
     """True when revise can read this head's CI result and its review.
 
     A failure is ready only once the gate's comment names that run, so the
@@ -312,8 +387,15 @@ def inputs_ready(ci_run: Optional[dict], review_run: Optional[dict], comments: S
     return _review_ready(review_run, comments, head_sha)
 
 
-def wait_for_inputs(fetch: Callable, sleep: Callable, monotonic: Callable, timeout: float,
-                    interval: float, head_sha: str, failure_grace: float = 120) -> str:
+def wait_for_inputs(
+    fetch: Callable,
+    sleep: Callable,
+    monotonic: Callable,
+    timeout: float,
+    interval: float,
+    head_sha: str,
+    failure_grace: float = 120,
+) -> str:
     """Poll until inputs_ready or the timeout. Returns 'ready' or 'timeout'.
 
     `fetch` returns `(ci_run, review_run, comments)` and may raise GitHubError.
@@ -330,15 +412,20 @@ def wait_for_inputs(fetch: Callable, sleep: Callable, monotonic: Callable, timeo
         try:
             ci_run, review_run, comments = fetch()
         except GitHubError:
-            print("::warning title=CI gate wait::GitHub could not be read; polling again")
+            print(
+                "::warning title=CI gate wait::GitHub could not be read; polling again"
+            )
             ci_run, review_run, comments = None, None, []
         else:
             if inputs_ready(ci_run, review_run, comments, head_sha):
                 return "ready"
         conclusion = (ci_run or {}).get("conclusion") or ""
         review_ready = _review_ready(review_run, comments, head_sha)
-        if (conclusion == "failure" and not _failure_comment_posted(ci_run, comments)
-                and review_ready):
+        if (
+            conclusion == "failure"
+            and not _failure_comment_posted(ci_run, comments)
+            and review_ready
+        ):
             if failure_since is None:
                 failure_since = monotonic()
             if monotonic() - failure_since >= failure_grace:
@@ -357,7 +444,7 @@ def wait_for_inputs(fetch: Callable, sleep: Callable, monotonic: Callable, timeo
         sleep(interval)
 
 
-def collect(args, gh: Optional[GitHub] = None) -> int:
+def collect(args, gh: GitHub | None = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -372,7 +459,7 @@ def collect(args, gh: Optional[GitHub] = None) -> int:
         if conclusion == "success" and ci_run:
             run_id = int(ci_run["databaseId"])
             run_url = ci_run.get("url") or run_url
-    jobs: Tuple[FailedJob, ...] = ()
+    jobs: tuple[FailedJob, ...] = ()
     if conclusion == "failure":
         logs = {}
         raw_jobs = gh.jobs(args.repo, args.run_id)
@@ -386,10 +473,17 @@ def collect(args, gh: Optional[GitHub] = None) -> int:
         jobs = failed_findings(raw_jobs, logs, hidden)
         if not jobs:
             jobs = (FailedJob("CI", NO_FAILED_JOB),)
-    payload = {"conclusion": conclusion, "event": args.event, "head_branch": args.head_branch,
-               "head_sha": args.head_sha, "head_repo": args.head_repo, "repo": args.repo,
-               "run_id": run_id, "run_url": run_url,
-               "failed_jobs": [{"name": job.name, "excerpt": job.excerpt} for job in jobs]}
+    payload = {
+        "conclusion": conclusion,
+        "event": args.event,
+        "head_branch": args.head_branch,
+        "head_sha": args.head_sha,
+        "head_repo": args.head_repo,
+        "repo": args.repo,
+        "run_id": run_id,
+        "run_url": run_url,
+        "failed_jobs": [{"name": job.name, "excerpt": job.excerpt} for job in jobs],
+    }
     (out / "event.json").write_text(json.dumps(payload, indent=2) + "\n")
     names = ", ".join(job.name for job in jobs) or "none"
     print(f"CI run {run_id} {conclusion}: failed jobs: {names}")
@@ -398,41 +492,76 @@ def collect(args, gh: Optional[GitHub] = None) -> int:
 
 def _load_facts(path: Path) -> dict:
     raw = json.loads(path.read_text())
-    raw["failed_jobs"] = tuple(FailedJob(job["name"], job["excerpt"]) for job in raw.get("failed_jobs") or [])
+    raw["failed_jobs"] = tuple(
+        FailedJob(job["name"], job["excerpt"]) for job in raw.get("failed_jobs") or []
+    )
     raw["run_id"] = int(raw["run_id"])
     return raw
 
 
 def _live_event(facts: dict, gh: GitHub, app_slug: str) -> GateEvent:
-    prs = [pr for pr in gh.open_prs_for_branch(facts["repo"], facts["head_branch"])
-           if pr.get("headRefOid") == facts["head_sha"]]
+    prs = [
+        pr
+        for pr in gh.open_prs_for_branch(facts["repo"], facts["head_branch"])
+        if pr.get("headRefOid") == facts["head_sha"]
+    ]
     if not prs:
-        return GateEvent(app_slug=app_slug, **{k: facts[k] for k in (
-            "conclusion", "event", "head_branch", "head_sha", "head_repo", "repo",
-            "run_id", "run_url", "failed_jobs")})
+        return GateEvent(
+            app_slug=app_slug,
+            **{
+                k: facts[k]
+                for k in (
+                    "conclusion",
+                    "event",
+                    "head_branch",
+                    "head_sha",
+                    "head_repo",
+                    "repo",
+                    "run_id",
+                    "run_url",
+                    "failed_jobs",
+                )
+            },
+        )
     number = prs[0]["number"]
     pr = gh.pr(facts["repo"], number)
     comments = tuple(gh.pr_comments(facts["repo"], number))
     head_repo = gh.pull_head_repo(facts["repo"], number)
     issue = linked_ticket(pr.get("body") or "", facts["repo"])
-    issue_labels: Tuple[str, ...] = ()
+    issue_labels: tuple[str, ...] = ()
     if issue is not None:
         issue_labels = tuple(label_names(gh.issue(facts["repo"], issue)))
     return GateEvent(
-        conclusion=facts["conclusion"], event=facts["event"], head_branch=facts["head_branch"],
-        head_sha=facts["head_sha"], head_repo=facts["head_repo"], repo=facts["repo"],
-        run_id=facts["run_id"], run_url=facts["run_url"], failed_jobs=facts["failed_jobs"],
-        pr=number, pr_state=pr.get("state") or "", pr_draft=bool(pr.get("isDraft")),
-        pr_author=author(pr), pr_head_repo=head_repo, pr_head_sha=pr.get("headRefOid") or "",
-        labels=tuple(label_names(pr)), body=pr.get("body") or "", comments=comments,
-        app_slug=app_slug, issue_labels=issue_labels)
+        conclusion=facts["conclusion"],
+        event=facts["event"],
+        head_branch=facts["head_branch"],
+        head_sha=facts["head_sha"],
+        head_repo=facts["head_repo"],
+        repo=facts["repo"],
+        run_id=facts["run_id"],
+        run_url=facts["run_url"],
+        failed_jobs=facts["failed_jobs"],
+        pr=number,
+        pr_state=pr.get("state") or "",
+        pr_draft=bool(pr.get("isDraft")),
+        pr_author=author(pr),
+        pr_head_repo=head_repo,
+        pr_head_sha=pr.get("headRefOid") or "",
+        labels=tuple(label_names(pr)),
+        body=pr.get("body") or "",
+        comments=comments,
+        app_slug=app_slug,
+        issue_labels=issue_labels,
+    )
 
 
 def _join_comment(event: GateEvent) -> str:
-    return _render_failure(event, Moves("pass"), charged=False, nonce=None, joining=True)
+    return _render_failure(
+        event, Moves("pass"), charged=False, nonce=None, joining=True
+    )
 
 
-def apply(args, gh: Optional[GitHub] = None) -> int:
+def apply(args, gh: GitHub | None = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
     facts = _load_facts(out / "event.json")
@@ -449,11 +578,14 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
     if decision.comment:
         path = write_comment(out, "comment.md", decision.comment)
         if claude.scrub(out, env_secrets(os.environ)):
-            print("::warning title=Secret scrubbed::The CI gate's files held a secret value; "
-                  "it was redacted")
+            print(
+                "::warning title=Secret scrubbed::The CI gate's files held a secret value; "
+                "it was redacted"
+            )
         comment_id = gh.comment(event.repo, event.pr, path)
-    if decision.nonce and not charge_won(gh.pr_comments(event.repo, event.pr), event.head_sha,
-                                         decision.nonce):
+    if decision.nonce and not charge_won(
+        gh.pr_comments(event.repo, event.pr), event.head_sha, decision.nonce
+    ):
         # Posted as the charge before the other comment was visible. Rewrite it
         # so it does not claim a round it did not take.
         joined = write_comment(out, "comment.md", _join_comment(event))
@@ -467,25 +599,38 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
     return 0
 
 
-def wait(args, gh: Optional[GitHub] = None, sleep=time.sleep, monotonic=time.monotonic) -> int:
+def wait(
+    args, gh: GitHub | None = None, sleep=time.sleep, monotonic=time.monotonic
+) -> int:
     gh = gh or GitHub()
 
     def fetch():
-        return (gh.workflow_run(args.repo, args.sha, CI_WORKFLOW),
-                gh.workflow_run(args.repo, args.sha, REVIEW_WORKFLOW),
-                gh.pr_comments(args.repo, args.pr))
+        return (
+            gh.workflow_run(args.repo, args.sha, CI_WORKFLOW),
+            gh.workflow_run(args.repo, args.sha, REVIEW_WORKFLOW),
+            gh.pr_comments(args.repo, args.pr),
+        )
 
-    status = wait_for_inputs(fetch, sleep, monotonic, args.timeout, args.interval, args.sha,
-                             args.failure_grace)
+    status = wait_for_inputs(
+        fetch,
+        sleep,
+        monotonic,
+        args.timeout,
+        args.interval,
+        args.sha,
+        args.failure_grace,
+    )
     if status == "timeout":
-        print("::warning title=CI gate wait ended::CI or Review did not finish before the "
-              "wait; rework continues with the comments posted so far")
+        print(
+            "::warning title=CI gate wait ended::CI or Review did not finish before the "
+            "wait; rework continues with the comments posted so far"
+        )
     else:
         print(f"Rework inputs for {args.sha[:12]} are ready")
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="step", required=True)
 

@@ -1,7 +1,6 @@
 """Keeps `.claude/skills/workflow/` in step with the board in `docs/skill-workflows.md`."""
 
 import json
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,7 +64,9 @@ def test_keys_are_unique_and_named_in_the_skill():
 
 
 def test_board_skip_items_reach_the_table():
-    entries = {entry["name"]: entry for entry in json.loads(TABLE.read_text())["scenarios"]}
+    entries = {
+        entry["name"]: entry for entry in json.loads(TABLE.read_text())["scenarios"]
+    }
     assert all(isinstance(e.get("skip"), list) for e in entries.values())
     skips = board_skips()
     assert any(skips.values()), "no Skip lines parsed from the board"
