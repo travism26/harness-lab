@@ -167,9 +167,9 @@ The factory is ready. The first real Ticket gets `ready-for-factory`.
 | The token step fails with a key error | The secret is not the whole `.pem` file | Paste the whole file, both `-----` lines included |
 | The **Ask Claude Code** step fails | The login's secret is wrong or expired, or the OpenRouter key is out of credit | Redo Step 3, or check the key on OpenRouter |
 | **Post the answer** fails with `are the labels synced?` | Step 5 was skipped | Run Step 5 |
-| **Daily run cap reached** | The workflow has started `FACTORY_DAILY_RUN_CAP` runs today (UTC) | Wait for tomorrow or raise the variable |
+| **Daily run cap reached** | The workflow has started `FACTORY_DAILY_RUN_CAP` runs today (UTC); for Review, `FACTORY_REVIEW_DAILY_RUN_CAP` (default 40), and the PR gets a comment saying so | Wait for tomorrow or raise the variable the message names |
 
-To stop the factory for a while, set `FACTORY_DAILY_RUN_CAP` to `0`. To cut it off completely,
+To stop the factory for a while, set `FACTORY_DAILY_RUN_CAP` and `FACTORY_REVIEW_DAILY_RUN_CAP` to `0`. To cut it off completely,
 remove `harness-lab` from the App's installation, or delete this repo's private key from the App's
 settings.
 
