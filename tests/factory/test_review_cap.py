@@ -13,7 +13,7 @@ import pytest
 
 from factory import review_pr
 from factory.review_pr import MARKER, capped
-from tests.factory.support import REPO, SHA, FakeGitHub
+from tests.factory.support import REPO, SHA, SLUG, FakeGitHub
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -34,6 +34,8 @@ def _args(head: str = SHA) -> list[str]:
         "40",
         "--variable",
         "FACTORY_REVIEW_DAILY_RUN_CAP",
+        "--app-slug",
+        SLUG,
     ]
 
 
@@ -54,6 +56,20 @@ def test_capped_review_posts_one_comment_per_head_and_no_review_marker(
     assert review_pr.review_passed(gh.pr_comments(REPO, 5), SHA) is False
 
 
+def test_a_capped_marker_from_anyone_but_the_app_does_not_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    planted = {
+        "id": 1,
+        "body": review_pr.capped_marker(SHA),
+        "user": {"login": "stranger"},
+    }
+    gh = FakeGitHub(comments=[planted])
+    monkeypatch.setattr(review_pr, "GitHub", lambda: gh)
+    assert review_pr.main(_args()) == 0
+    assert len(gh.posted) == 1
+
+
 def test_a_new_head_gets_its_own_comment(monkeypatch: pytest.MonkeyPatch) -> None:
     gh = FakeGitHub()
     monkeypatch.setattr(review_pr, "GitHub", lambda: gh)
@@ -65,14 +81,18 @@ def test_a_new_head_gets_its_own_comment(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_capped_takes_a_fake_github_directly() -> None:
     gh = FakeGitHub()
-    ns = argparse.Namespace(repo=REPO, pr=5, head_sha=SHA, cap="40", variable="V")
-    assert capped(ns, gh) == 0  # type: ignore[arg-type]
+    ns = argparse.Namespace(
+        repo=REPO, pr=5, head_sha=SHA, cap="40", variable="V", app_slug=SLUG
+    )
+    assert capped(ns, gh) == 0
     assert len(gh.posted) == 1
 
 
 def test_review_yml_has_its_own_cap_and_the_others_keep_theirs() -> None:
     review = (WORKFLOWS / "review.yml").read_text()
-    assert "daily-run-cap: ${{ vars.FACTORY_REVIEW_DAILY_RUN_CAP || '40' }}" in review
+    assert review.count("FACTORY_REVIEW_DAILY_RUN_CAP || '40'") == 1
+    assert "REVIEW_RUN_CAP: ${{ vars.FACTORY_REVIEW_DAILY_RUN_CAP || '40' }}" in review
+    assert "daily-run-cap: ${{ env.REVIEW_RUN_CAP }}" in review
     assert "vars.FACTORY_DAILY_RUN_CAP" not in review
     for name in OTHERS:
         text = (WORKFLOWS / f"{name}.yml").read_text()

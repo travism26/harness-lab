@@ -4,6 +4,7 @@ Only steps that run no agent use this. Tests pass a fake with the same methods.
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from urllib.parse import quote
@@ -374,11 +375,14 @@ class GitHub:
         self._gh(["pr", "edit", str(number), "-R", repo, "--body-file", str(body_file)])
 
     def pull_files(self, repo: str, number: int) -> list[str]:
-        """Every path the pull request changes (all pages)."""
-        return [
-            f["filename"]
-            for f in self._paged(f"repos/{repo}/pulls/{number}/files?per_page=100")
-        ]
+        """Every path the pull request changes (all pages). A rename lists both its new and
+        its old path, so a move out of a Project is not missed."""
+        paths: list[str] = []
+        for f in self._paged(f"repos/{repo}/pulls/{number}/files?per_page=100"):
+            paths.append(f["filename"])
+            if f.get("previous_filename"):
+                paths.append(f["previous_filename"])
+        return paths
 
     def bot_user_id(self, app_slug: str) -> int:
         return int(self._gh(["api", f"users/{app_slug}[bot]", "--jq", ".id"]).strip())
@@ -387,8 +391,28 @@ class GitHub:
 # The factory's block in a PR body (written by `factory/ticket.py`, which Review never reads).
 PR_BLOCK_START = "<!-- factory:pr-block -->"
 PR_BLOCK_END = "<!-- factory:pr-block-end -->"
+# The Door (two-way or one-way) of a change: the vocabulary, the file the agent's claim goes
+# in, and how much of its reason is kept.
+DOORS = ("two-way", "one-way")
+DOOR_FILE = "door.json"
+DOOR_REASON_MAX = 200
 # What a change that states no Door counts as.
 DOOR_NOT_STATED = "one-way (not stated)"
+# What replaces a secret value in text the factory posts.
+REDACTED = "[REDACTED]"
+
+
+def pr_block_span(body: str) -> tuple[int, int, bool] | None:
+    """Where the factory block sits in a PR body: (start, end, closed), with `end` just past
+    the end marker. A start marker with no end marker runs to the end of the body, not closed.
+    None when there is no start marker."""
+    start = body.find(PR_BLOCK_START)
+    if start < 0:
+        return None
+    end = body.find(PR_BLOCK_END, start + len(PR_BLOCK_START))
+    if end < 0:
+        return start, len(body), False
+    return start, end + len(PR_BLOCK_END), True
 
 
 def label_names(item: dict) -> list[str]:
@@ -406,6 +430,24 @@ def neutralize_comments(text: str) -> str:
     # A zero-width space breaks the opener and closer without the entity, which a code span
     # would show as literal `&lt;`.
     return (text or "").replace("<!--", "<!\u200b--").replace("-->", "--\u200b>")
+
+
+_ZWSP = "\u200b"
+_MENTION_RE = re.compile(r"@(?=\w)")
+_NUMBER_RE = re.compile(r"#(?=\d)")
+_GH_NUMBER_RE = re.compile(r"(GH-)(?=\d)", re.IGNORECASE)
+_ISSUE_URL_RE = re.compile(r"(/(?:issues|pull|pulls|discussions)/)(?=\d)")
+
+
+def neutralize(text: str) -> str:
+    """Untrusted text for a comment, issue or PR body: it cannot open or close an HTML comment,
+    mention anyone, or reference (so close) an issue by `#N`, `GH-N`, `owner/repo#N` or an
+    issue URL."""
+    out = neutralize_comments(text or "")
+    out = _NUMBER_RE.sub("#" + _ZWSP, out)
+    out = _GH_NUMBER_RE.sub(lambda m: m.group(1) + _ZWSP, out)
+    out = _MENTION_RE.sub("@" + _ZWSP, out)
+    return _ISSUE_URL_RE.sub(lambda m: m.group(1) + _ZWSP, out)
 
 
 def write_comment(out: Path, name: str, body: str) -> Path:

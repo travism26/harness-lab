@@ -6,6 +6,7 @@ from factory import review_pr
 from factory.claude import Result
 from factory.github import GitHubError
 from factory.review_pr import (
+    LEGACY_STOPPED_LABEL,
     Finding,
     Findings,
     Moves,
@@ -663,8 +664,18 @@ def test_review_yml_still_runs_on_ready_for_human_prs_but_never_on_forks():
         assert fork in part
 
 
-def test_a_pr_with_the_legacy_stopped_label_is_still_stopped():
-    assert label_moves(["factory-stopped", "rework:2"], True) == Moves("human-owned")
-    assert review_gate(["factory-stopped"], [], "abc", True, "success") == Moves(
-        "human-owned"
-    )
+@pytest.mark.parametrize("blocker", [True, False])
+def test_a_pr_with_the_legacy_stopped_label_is_still_stopped(blocker):
+    legacy = [LEGACY_STOPPED_LABEL, "rework:2"]
+    assert label_moves(legacy, blocker) == Moves("human-owned")
+    assert review_gate(legacy, [], "abc", blocker, "success") == Moves("human-owned")
+
+
+def test_the_human_owned_report_names_the_label_the_pr_carries():
+    ctx = {"head_sha": "a" * 40, "ticket": 7}
+    findings = Findings("s", "s")
+    for label in (LEGACY_STOPPED_LABEL, "factory-stopped"):
+        report = review_pr.render_report(
+            findings, ctx, Moves("human-owned"), [label], None
+        )
+        assert f"labelled `{label}`, so no labels" in report

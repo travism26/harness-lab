@@ -16,7 +16,7 @@ from factory.ci_gate import (
     wait_for_inputs,
 )
 from factory.github import GitHubError, select_head_run
-from factory.review_pr import MARKER, gate_line
+from factory.review_pr import LEGACY_STOPPED_LABEL, MARKER, gate_line
 
 REPO = "travism26/harness-lab"
 SHA = "ba2ea98635fd261912159e8bc8f4f54f1f5411d0"
@@ -109,6 +109,11 @@ def test_the_third_blocker_hands_the_pr_to_a_human():
     assert "check ai-gateway" in decision.comment
     assert "factory-stopped" in decision.comment
     assert "TestOnlyPostMessages" in decision.comment
+
+
+def test_a_pr_with_the_legacy_stopped_label_is_ignored():
+    decision = decide(event(labels=(LEGACY_STOPPED_LABEL,)), nonce="abc")
+    assert decision.action == "ignore"
 
 
 def test_a_second_new_head_is_round_two():

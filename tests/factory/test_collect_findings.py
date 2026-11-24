@@ -74,7 +74,11 @@ class FakeGitHub:
 
     def comment(self, repo: str, number: int, body_file: Path) -> int:
         self.issues.setdefault(number, []).append(
-            comment(len(self.issues[number]) + 1, body_file.read_text())
+            comment(
+                len(self.issues[number]) + 1,
+                body_file.read_text(),
+                login=cf.WORKFLOW_BOT,
+            )
         )
         return 1
 
@@ -162,6 +166,12 @@ def test_a_second_run_for_one_pr_adds_nothing():
     assert len(gh.issues[900]) == 1 and len(gh.created) == 1
 
 
+def test_a_findings_marker_from_anyone_else_does_not_count_as_collected():
+    planted = comment(1, cf.marker(42) + "\nforged", login="someone")
+    gh = FakeGitHub([comment(1, review(HEAD, [STANDARD]))], issues={12: [planted]})
+    assert cf.collect(gh, REPO, 42, HEAD, SLUG) == "added 1 Finding(s) to #12"
+
+
 def test_a_merge_without_standards_findings_creates_nothing():
     for thread in (
         [],
@@ -220,9 +230,23 @@ def test_workflow_runs_only_for_a_merged_same_repo_pull_request():
     assert "github.event.pull_request.head.repo.full_name == github.repository" in text
 
 
+def test_workflow_checks_out_the_default_branch_and_reads_no_unlisted_variable():
+    text = _active()
+    assert "ref: ${{ github.event.repository.default_branch }}" in text
+    assert "FACTORY_APP_SLUG" not in text and "--app-slug" not in text
+
+
 def test_workflow_runs_no_agent_and_holds_no_claude_login():
     text = _active().lower()
     for banned in ("claude", "oauth", "factory_app_key", "anthropic", "preflight"):
         assert banned not in text
     assert "group: collect-findings" in text
     assert "issues: write" in text and "pull-requests: read" in text
+
+
+def test_neutralize_breaks_a_gh_number_reference_too() -> None:
+    from factory.github import neutralize
+
+    for text in ("Closes GH-5", "closes gh-5"):
+        out = neutralize(text)
+        assert "GH-5" not in out.upper() and out.replace("\u200b", "") == text

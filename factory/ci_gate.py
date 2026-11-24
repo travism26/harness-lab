@@ -35,7 +35,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from factory import claude
-from factory.github import GitHub, GitHubError, author, label_names, write_comment
+from factory.github import (
+    REDACTED,
+    GitHub,
+    GitHubError,
+    author,
+    label_names,
+    write_comment,
+)
 from factory.review_pr import (
     MARKER,
     MAX_REWORK,
@@ -137,8 +144,8 @@ def env_secrets(env: Mapping[str, str]) -> list[str]:
 def redact(text: str, hidden: Sequence[str]) -> str:
     for secret in hidden:
         if len(secret) >= 8:
-            text = text.replace(secret, "[REDACTED]")
-    return _TOKEN_RE.sub("[REDACTED]", text)
+            text = text.replace(secret, REDACTED)
+    return _TOKEN_RE.sub(REDACTED, text)
 
 
 def bound_excerpt(log: str, hidden: Sequence[str] = ()) -> str:
@@ -253,7 +260,7 @@ def _render_failure(
             ),
             "",
             "```",
-            _fence(_TOKEN_RE.sub("[REDACTED]", job.excerpt)) or "(no log)",
+            _fence(_TOKEN_RE.sub(REDACTED, job.excerpt)) or "(no log)",
             "```",
         ]
     lines += [

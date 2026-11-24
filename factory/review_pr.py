@@ -37,20 +37,23 @@ import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from factory import claude
 from factory.github import (
+    DOOR_FILE,
     DOOR_NOT_STATED,
-    PR_BLOCK_END,
-    PR_BLOCK_START,
+    DOOR_REASON_MAX,
+    DOORS,
     GitHub,
     GitHubError,
     author,
     label_names,
     neutralize_comments,
+    pr_block_span,
     write_comment,
 )
-from factory.switch_rule import LOGINS, refusal
+from factory.switch_rule import LOGINS, is_factory_app, refusal
 
 REWORK_LABEL = "rework"
 STOPPED_LABEL = "factory-stopped"
@@ -135,7 +138,7 @@ class Findings:
 
 def parse_findings(text: str) -> Findings:
     """The agent's JSON answer, which may sit inside a ```json fence or prose.
-    Raises ValueError when it is missing or malformed."""
+    Raises ValueError when it is missing or malformed, and TypeError when a summary is missing."""
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end < start:
         raise ValueError("no JSON object in the agent's answer")
@@ -167,10 +170,8 @@ def parse_findings(text: str) -> Findings:
     )
 
 
-DOOR_REASON_MAX = 200
-DOOR_FILE = "door.json"
-_DOORS = ("two-way", "one-way")
-_DOOR_LINE_RE = re.compile(r"^\s*\*\*Door:\*\*\s*(two-way|one-way)\b", re.MULTILINE)
+_DOOR_LINE_RE = re.compile(r"^\s*\*\*Door:\*\*\s*(two-way|one-way)\b")
+_FENCE_RE = re.compile(r"^\s*(`{3,})")
 
 
 def parse_door(text: str) -> tuple[str, str]:
@@ -181,7 +182,7 @@ def parse_door(text: str) -> tuple[str, str]:
         door, reason = raw.get("door"), raw.get("door_reason")
     except (ValueError, AttributeError):
         return DOOR_NOT_STATED, ""
-    if door not in _DOORS:
+    if door not in DOORS:
         return DOOR_NOT_STATED, ""
     return door, reason.strip() if isinstance(reason, str) else ""
 
@@ -193,33 +194,54 @@ def read_door(out: Path) -> tuple[str, str]:
         door, reason = raw["door"], raw["reason"]
     except (OSError, ValueError, KeyError, TypeError):
         return DOOR_NOT_STATED, ""
-    if door not in _DOORS or not isinstance(reason, str):
+    if door not in DOORS or not isinstance(reason, str):
         return DOOR_NOT_STATED, ""
     return door, reason
 
 
 def strip_pr_block(body: str) -> str:
     """`body` without the factory block. A start marker with no end marker strips to the end."""
-    start = body.find(PR_BLOCK_START)
-    if start < 0:
-        return body
-    end = body.find(PR_BLOCK_END, start + len(PR_BLOCK_START))
-    if end < 0:
-        return body[:start]
-    return body[:start] + body[end + len(PR_BLOCK_END) :]
+    span = pr_block_span(body)
+    return body if span is None else body[: span[0]] + body[span[1] :]
+
+
+def _merge_danger_lines(block: str) -> list[str]:
+    """The lines of the block's `## Merge Danger` section, leaving out anything in a code
+    fence: the Evidence section quotes the check's output, which is not the factory's."""
+    lines: list[str] = []
+    fence = ""
+    in_section = False
+    for line in block.splitlines():
+        found = _FENCE_RE.match(line)
+        if fence:
+            if found and len(found.group(1)) >= len(fence) and not line.strip("` \t"):
+                fence = ""
+            continue
+        if found:
+            fence = found.group(1)
+            continue
+        if line.startswith("## "):
+            in_section = line.strip() == "## Merge Danger"
+        elif in_section:
+            lines.append(line)
+    return lines
 
 
 def door_in_body(body: str) -> str | None:
-    """The Door the PR body states: the factory block's `**Door:**` line, else a hand-written
-    one, else None. `one-way (not stated)` reads as one-way."""
-    start = body.find(PR_BLOCK_START)
-    if start >= 0:
-        end = body.find(PR_BLOCK_END, start + len(PR_BLOCK_START))
-        match = _DOOR_LINE_RE.search(body[start : end if end >= 0 else len(body)])
+    """The Door the PR body states: the `**Door:**` line in the factory block's Merge Danger
+    section, else a hand-written one outside the block, else None. `one-way (not stated)`
+    reads as one-way."""
+    span = pr_block_span(body)
+    if span:
+        for line in _merge_danger_lines(body[span[0] : span[1]]):
+            match = _DOOR_LINE_RE.match(line)
+            if match:
+                return match.group(1)
+    for line in strip_pr_block(body).splitlines():
+        match = _DOOR_LINE_RE.match(line)
         if match:
             return match.group(1)
-    match = _DOOR_LINE_RE.search(strip_pr_block(body))
-    return match.group(1) if match else None
+    return None
 
 
 def findings_from_json(text: str) -> Findings:
@@ -485,9 +507,8 @@ def render_report(
             f"so it is labelled `{STOPPED_LABEL}` and the factory stops here."
         )
     elif moves.outcome == "human-owned":
-        lines.append(
-            f"The PR is labelled `{STOPPED_LABEL}`, so no labels were changed."
-        )
+        carried = next((x for x in labels_after if x in STOPPED_LABELS), STOPPED_LABEL)
+        lines.append(f"The PR is labelled `{carried}`, so no labels were changed.")
     elif moves.outcome == "stale":
         lines.append(
             f"The PR has moved on to `{(stale_head or '')[:12]}` since this "
@@ -867,7 +888,7 @@ def ci_conclusion(args, gh: GitHub | None = None) -> int:
     return 0
 
 
-def apply(args, gh: GitHub | None = None) -> int:
+def apply(args, gh: Any | None = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
     ctx = json.loads((out / "context.json").read_text())
@@ -959,12 +980,18 @@ def capped_comment(head_sha: str, cap: str, variable: str) -> str:
     )
 
 
-def capped(args: argparse.Namespace, gh: GitHub | None = None) -> int:
+def capped(args: argparse.Namespace, gh: Any | None = None) -> int:
     """Say on the PR that the daily cap stopped Review for this head. Once per head. The
-    comment carries no review marker, so nothing reads it as a verdict."""
+    comment carries no review marker, so nothing reads it as a verdict. Only the factory App's
+    own comments count as having said it (docs/adr/0010)."""
     gh = gh or GitHub()
     marker = capped_marker(args.head_sha)
-    if any(marker in body for body in _bodies(gh.pr_comments(args.repo, args.pr))):
+    ours = [
+        c
+        for c in gh.pr_comments(args.repo, args.pr)
+        if is_factory_app(((c.get("user") or {}).get("login")) or "", args.app_slug)
+    ]
+    if any(marker in body for body in _bodies(ours)):
         print(
             f"PR {args.repo}#{args.pr}: already said the cap stopped {args.head_sha[:12]}"
         )
@@ -1017,6 +1044,7 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--head-sha", required=True)
     k.add_argument("--cap", required=True)
     k.add_argument("--variable", required=True)
+    k.add_argument("--app-slug", required=True)
 
     args = parser.parse_args(argv)
     try:

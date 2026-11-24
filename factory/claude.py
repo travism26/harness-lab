@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from factory.github import REDACTED
 from factory.switch_rule import OPENROUTER, SUBSCRIPTION
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api"
@@ -88,7 +89,7 @@ def scrub(out: Path, secrets: list[str]) -> int:
         text = f.read_text(errors="replace")
         clean = text
         for s in secrets:
-            clean = clean.replace(s, "[REDACTED]")
+            clean = clean.replace(s, REDACTED)
         if clean != text:
             f.write_text(clean)
             changed += 1

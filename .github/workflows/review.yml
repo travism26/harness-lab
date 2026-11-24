@@ -48,6 +48,7 @@ concurrency:
 env:
   CLAUDE_CODE_VERSION: "2.1.319"
   LOGIN: ${{ vars.FACTORY_CLAUDE_LOGIN || 'subscription' }}
+  REVIEW_RUN_CAP: ${{ vars.FACTORY_REVIEW_DAILY_RUN_CAP || '40' }}
 
 jobs:
   review:
@@ -86,7 +87,7 @@ jobs:
           openrouter-key: ${{ secrets.OPENROUTER_API_KEY }}
           # Review has its own cap: it runs on every push to every PR. Over the cap, the
           # run goes on only far enough to say so on the PR, then fails.
-          daily-run-cap: ${{ vars.FACTORY_REVIEW_DAILY_RUN_CAP || '40' }}
+          daily-run-cap: ${{ env.REVIEW_RUN_CAP }}
           cap-variable: FACTORY_REVIEW_DAILY_RUN_CAP
           continue-on-cap: "true"
 
@@ -101,10 +102,12 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          CAP: ${{ vars.FACTORY_REVIEW_DAILY_RUN_CAP || '40' }}
+          CAP: ${{ env.REVIEW_RUN_CAP }}
+          APP_SLUG: ${{ steps.preflight.outputs.app-slug }}
         run: >-
           uv run --no-dev python -m factory.review_pr capped --repo "$REPO" --pr "$PR"
           --head-sha "$HEAD_SHA" --cap "$CAP" --variable FACTORY_REVIEW_DAILY_RUN_CAP
+          --app-slug "$APP_SLUG"
 
       - name: Stop, red, because the daily cap was reached
         if: steps.preflight.outputs.capped == 'true'

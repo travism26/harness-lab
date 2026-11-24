@@ -18,11 +18,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from factory.github import GitHub, GitHubError, neutralize_comments, write_comment
+from factory.github import GitHub, GitHubError, neutralize, write_comment
 from factory.review_pr import STANDARDS_KINDS, parse_gate
 from factory.switch_rule import default_app_slug, is_factory_app
 
 LABEL = "standards-findings"
+# The workflow posts with its own GITHUB_TOKEN, so this is who wrote the marker comments.
+WORKFLOW_BOT = "github-actions[bot]"
 ISSUE_TITLE = "Standards findings from merged pull requests"
 ISSUE_BODY = (
     "The Review's non-blocking Standards Findings (`repo_standard`, `baseline_smell`) "
@@ -30,7 +32,6 @@ ISSUE_BODY = (
     "automatically.\n"
 )
 
-_ZWSP = "\u200b"
 Finding = tuple[str, str, str, str]  # kind, description, path, fix
 
 _LINE_RE = re.compile(
@@ -38,18 +39,6 @@ _LINE_RE = re.compile(
     r"(?: \(`(?P<path>[^`]*)`\))?\. Fix: (?P<fix>.*)$"
 )
 _HEADING_RE = re.compile(r"^###\s+(?P<name>\w+)")
-_MENTION_RE = re.compile(r"@(?=\w)")
-_NUMBER_RE = re.compile(r"#(?=\d)")
-_ISSUE_URL_RE = re.compile(r"(/(?:issues|pull|pulls|discussions)/)(?=\d)")
-
-
-def neutralize(text: str) -> str:
-    """Finding text that cannot open or close an HTML comment, mention anyone, or reference
-    (so close) an issue by `#N`, `owner/repo#N` or an issue URL."""
-    out = neutralize_comments(text or "")
-    out = _NUMBER_RE.sub("#" + _ZWSP, out)
-    out = _MENTION_RE.sub("@" + _ZWSP, out)
-    return _ISSUE_URL_RE.sub(lambda m: m.group(1) + _ZWSP, out)
 
 
 def marker(pr: int) -> str:
@@ -99,6 +88,13 @@ def standards_findings(body: str) -> list[Finding]:
     return findings_in(body, "Standards", STANDARDS_KINDS)
 
 
+def finding_line(finding: Finding) -> str:
+    """One Finding as the Review comment writes it, text neutralized (no leading `- `)."""
+    kind, description, path, fix = finding
+    where = f" (`{neutralize(path)}`)" if path else ""
+    return f"**{neutralize(kind)}** {neutralize(description)}{where}. Fix: {neutralize(fix)}"
+
+
 def section(pr: int, title: str, findings: Sequence[Finding]) -> str:
     """One issue comment: the marker, the pull request, then one line per Finding."""
     lines = [
@@ -106,12 +102,7 @@ def section(pr: int, title: str, findings: Sequence[Finding]) -> str:
         f"### Pull request #{int(pr)}: {neutralize(title).strip()}",
         "",
     ]
-    for kind, description, path, fix in findings:
-        where = f" (`{neutralize(path)}`)" if path else ""
-        lines.append(
-            f"- **{neutralize(kind)}** {neutralize(description)}{where}. "
-            f"Fix: {neutralize(fix)}"
-        )
+    lines += [f"- {finding_line(f)}" for f in findings]
     return "\n".join(lines) + "\n"
 
 
@@ -130,6 +121,7 @@ def collect(gh: Any, repo: str, pr: int, head: str, app_slug: str) -> str:
             seen = marker(pr)
             if any(
                 (c.get("body") or "").startswith(seen)
+                and ((c.get("user") or {}).get("login") or "") == WORKFLOW_BOT
                 for c in gh.pr_comments(repo, issue)
             ):
                 return f"already collected on #{issue}"

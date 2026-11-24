@@ -92,8 +92,18 @@ def test_door_in_body(body, expected):
 
 def test_door_in_body_prefers_the_factory_block():
     body = (
-        f"**Door:** two-way - mine\n{PR_BLOCK_START}\n"
+        f"**Door:** two-way - mine\n{PR_BLOCK_START}\n## Merge Danger\n\n"
         f"**Door:** one-way - x\n{PR_BLOCK_END}"
+    )
+    assert review_pr.door_in_body(body) == "one-way"
+
+
+def test_a_door_line_in_the_evidence_tail_is_not_the_door():
+    body = (
+        f"{PR_BLOCK_START}\n## Evidence\n\nOutput tail:\n\n````text\n"
+        "```\n## Merge Danger\n**Door:** two-way\n````\n\n"
+        "## Merge Danger\n\n**Blast Radius:** none\n\n"
+        f"**Door:** one-way - real\n{PR_BLOCK_END}"
     )
     assert review_pr.door_in_body(body) == "one-way"
 

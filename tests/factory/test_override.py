@@ -65,6 +65,16 @@ def test_a_rejected_comment_changes_nothing() -> None:
     assert statuses.calls == [] and gh.labels == []
 
 
+def test_the_pull_request_is_read_with_the_rest_api_not_gh_pr_view() -> None:
+    class RestOnly(FakeGitHub):
+        def pr(self, repo, number):
+            raise AssertionError("gh pr view needs pull-requests: read")
+
+    gh, statuses = RestOnly(), Statuses()
+    apply(gh, REPO, 9, f"Override: {REASON}", URL, statuses)
+    assert [c[0] for c in statuses.calls] == [SHA]
+
+
 def test_a_closed_pull_request_is_left_alone() -> None:
     gh, statuses = FakeGitHub(state="MERGED"), Statuses()
     apply(gh, REPO, 9, "Override: late", URL, statuses)

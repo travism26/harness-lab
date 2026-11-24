@@ -161,7 +161,8 @@ The factory is ready. The first real Ticket gets `ready-for-factory`.
 
 Every Review sets a commit status named `factory/review` on the head it read: `success` for a
 PASS Verdict, `failure` for BLOCKED, and `error` with a short reason when the Review ends
-without a Verdict (capped, crashed, timed out, no Verdict, or the head moved on). The `status`
+without a Verdict (capped, crashed, no Verdict, or the head moved on). A Review that timed out
+shows as crashed: GitHub does not say what a timed-out job's result is. The `status`
 job in `.github/workflows/review.yml` sets it with the workflow's own token, so the App needs no
 Statuses permission ([ADR 0012](../adr/0012-review-verdict-is-a-commit-status-with-a-recorded-override.md)).
 
@@ -183,7 +184,8 @@ Only a comment by the repository owner counts; an edit does nothing.
 The workflow `.github/workflows/override.yml` then sets `factory/review` to `success` and adds the
 `review-override` label. The reason stays in your comment, which the status links to. It applies
 to the head at the time of the comment: a later push gets a fresh status from Review. Known
-limit: a Review still running when the Override lands can overwrite it. Comment again.
+limit: a Review still running when the Override lands can overwrite it. Comment again. The label is added with a token holding `issues: write` only, so confirm it
+lands on a pull request in the first live Override.
 
 ## If something goes wrong
 

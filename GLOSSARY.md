@@ -64,6 +64,10 @@ _Avoid_: Reversibility, rollback
 How much of the Lab a change can affect: one Project, several Projects, or the shared code. The factory computes it from the changed paths.
 _Avoid_: Impact, scope
 
+**Merge danger**:
+The Door and the Blast radius of a change, shown together in a factory PR body.
+_Avoid_: Risk, danger level
+
 **Run record**:
 The one small record a Factory run leaves: what ran, on which Ticket or pull request, how it ended and what it cost. It holds facts and numbers, never text from the model.
 _Avoid_: Run log, Call record, ledger row

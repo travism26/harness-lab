@@ -299,8 +299,14 @@ def review_case(
         findings, results = review_pr.review_with_retry(
             run, limits.review_cap_usd, run_dir / "review.jsonl"
         )
-    except (RuntimeError, OSError, subprocess.SubprocessError) as e:
-        # the agent's failure is a Review error; keep the trace
+    except (
+        RuntimeError,
+        OSError,
+        subprocess.SubprocessError,
+        ValueError,
+        TypeError,
+    ) as e:
+        # the agent's failure, or a malformed result line, is a Review error; keep the trace
         (run_dir / "review-error.txt").write_text(f"{type(e).__name__}: {e}\n")
         return "error", limits.review_cap_usd
     cost = sum(

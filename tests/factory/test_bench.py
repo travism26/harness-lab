@@ -226,6 +226,26 @@ def test_tracer_review_unparseable_twice_is_error(bench_case, tmp_path):
     assert row["review_cost_usd"] == pytest.approx(0.5)
 
 
+@pytest.mark.parametrize("error", [ValueError("bad cost"), TypeError("bad cost")])
+def test_a_malformed_result_line_is_a_review_error_not_an_abort(
+    bench_case, tmp_path, error
+):
+    def broken(prompt, **kw):
+        raise error
+
+    setup = {
+        "setup_id": "s1",
+        "harness_command": standin(tmp_path, GOOD),
+        "model": "sonnet",
+        "review_model": "sonnet",
+        "repeat": 1,
+    }
+    row = bench.bench_run(
+        bench_case, setup, tmp_path / "out", bench.Limits(), broken, SOURCE, step_env={}
+    )
+    assert row["review"] == "error" and row["outcome"] == "fail"
+
+
 def test_tracer_standin_env_and_scratch_clone(bench_case, tmp_path):
     seen = tmp_path / "seen.json"
     script = f"""
