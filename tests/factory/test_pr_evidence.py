@@ -22,7 +22,7 @@ def test_evidence_tail_cannot_form_a_marker_close_the_fence_or_close_an_issue(tm
     assert block.count(ticket.PR_BLOCK_START) == 1
     assert block.count(ticket.PR_BLOCK_END) == 1
     assert block.endswith(ticket.PR_BLOCK_END + "\n")
-    assert "#9" not in block and "#​9" in block
+    assert "#9" not in block and "#\u200b9" in block
     assert block.count("`" * 8) == 2
     assert "abc123" in block
     assert "- Result: fail" in block and "- Touched the check file: yes" in block

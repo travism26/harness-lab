@@ -619,7 +619,7 @@ def _untrusted(text: str) -> str:
     """Text from the agent's checkout or its check, made safe for the factory's PR body: it
     cannot form a marker or a hidden comment, and cannot close an issue (`#12` gets a
     zero-width space after the `#`)."""
-    return re.sub(r"#(?=\d)", "#​", neutralize_comments(text))
+    return re.sub(r"#(?=\d)", "#\u200b", neutralize_comments(text))
 
 
 def _fenced(text: str) -> str:
