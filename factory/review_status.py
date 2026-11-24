@@ -11,8 +11,10 @@ import os
 import sys
 from pathlib import Path
 
+from factory.record import VERDICTS
+from factory.review_pr import review_verdict
+
 CONTEXT = "factory/review"
-VERDICTS = ("PASS", "BLOCKED")
 REASONS = ("capped", "crashed", "timed-out", "no-verdict", "stale-head")
 
 _REASON_TEXT = {
@@ -76,12 +78,10 @@ def handoff(out: Path, capped: bool) -> int:
         comment_id = _read(out / "comment-id.txt")
         if not comment_id.isdigit():
             comment_id = ""
-        verdict = ""
         # A Verdict counts only once its comment is posted: report.md is written before the post.
-        for line in _read(out / "report.md").splitlines() if comment_id else []:
-            if line.startswith("## Factory review: "):
-                verdict = line[len("## Factory review: ") :].strip()
-                break
+        verdict = (
+            review_verdict(_read(out / "report.md")) if comment_id else None
+        ) or ""
         if verdict not in VERDICTS:
             verdict = ""
         reason = "stale-head" if outcome == "stale" else ""

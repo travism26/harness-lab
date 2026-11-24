@@ -103,8 +103,13 @@ def test_no_door_file_reads_as_not_stated(tmp_path):
 
 def test_door_json_does_not_change_a_run_record(tmp_path):
     from factory import run_record
-    from tests.factory.support import bot_comment, built, fixture_line, record_of
-    from tests.factory.support import step_args
+    from tests.factory.support import (
+        bot_comment,
+        built,
+        fixture_line,
+        record_of,
+        step_args,
+    )
 
     records = []
     for name, door in (

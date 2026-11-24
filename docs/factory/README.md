@@ -13,7 +13,7 @@ fails with a message naming what is missing. It never goes green without doing a
 ## How a Ticket moves
 
 1. The owner writes a Ticket (a GitHub issue) and applies `ready-for-factory`. A Ticket with no
-   `project:` label is factory-root work, scored by the factory tests (`uv run pytest tests/factory`).
+   `project:` label is factory-root work, scored by the Lab check (`./check`).
    A Project Ticket is unchanged: it also carries one `project:<name>` label. The label names the
    Project (`projects/<name>/`). The name is a safe slug: lowercase letters, digits and single
    hyphens. An existing Project has an executable `projects/<name>/check`, and that script, not a
@@ -35,10 +35,10 @@ fails with a message naming what is missing. It never goes green without doing a
    it edits that checkout, which publish never commits. For a Project Ticket the prompt names
    `projects/<name>/` and tells it to run `projects/<name>/check` until it passes, and to read that
    Project's glossary and decision records. For factory-root work the prompt tells the agent to run
-   `uv run pytest tests/factory` until it passes, and to limit edits to the factory package, its
+   `./check` until it passes, and to limit edits to the factory package, its
    tests, the factory doc, the lab glossary, the glossary map, the lab decision records and the root
    gitignore. It does not name a Project folder or a `projects/<name>/check`. The factory runs the
-   root `./check`, if there is one, after the agent (see below). A Project with a `go.mod` already on
+   Lab check, if there is one, after the agent (see below). A Project with a `go.mod` already on
    the branch gets Go first, at
    the version its `go.mod` names (Rework does the same). Rework of a factory-root Ticket uses the
    same prompt.
@@ -48,7 +48,7 @@ fails with a message naming what is missing. It never goes green without doing a
    lists any edits it finds in the factory checkout outside `work/`. A new Project is the
    exception: a new Project with no executable `check` publishes nothing. See
    [Starting a Project](#starting-a-project). On every Implement and Rework run, before that
-   commit, the factory itself runs the Project's `check` (the root `./check` for a factory-root
+   commit, the factory itself runs the Project's `check` (the Lab check for a factory-root
    Ticket), with a 600-second limit and no App token or Claude login. A failing check still
    publishes the draft, and CI's red run starts a Rework round. The result goes in the Run record
    (`check`: `pass`, `fail` or `not-run`, and `touched_check`).
@@ -58,9 +58,9 @@ fails with a message naming what is missing. It never goes green without doing a
    `run-out/check-output.txt` and the head SHA: the command, exit code, result, whether the
    agent touched the check file, and the output tail (at most 40 lines and 4000 characters,
    neutralized, with `#<digits>` broken and a fence longer than any backtick run in it).
-   The block also holds `## Merge Danger`: a **Blast Radius** the code computes from the
+   The block also holds `## Merge Danger` (the **Merge danger** of the change: its Door and its Blast radius): a **Blast Radius** the code computes from the
    changed paths (the Project's name, several names, or `shared` for any path outside
-   `projects/`; `git diff --cached --name-only` on Implement, `GitHub.pull_files` on a Rework
+   `projects/`; `git diff --cached --no-renames --name-only` on Implement, `GitHub.pull_files` on a Rework
    push) and a **Door** the agent proposes. The build prompt ends by asking for a last line
    `Door: two-way - <reason>` or `Door: one-way - <reason>`; `build` strips it from
    `summary.md` and writes `run-out/door.json` (reason capped at 200 characters and
@@ -346,6 +346,10 @@ factory's Claude Code.
 | Retro report | `factory/retro.py` (see [Running a retro](#running-a-retro)) |
 | Claude Code login | `factory/claude.py`, `factory/switch_rule.py` |
 | Run record | `factory/record.py` (the fields, the checks, the marker), `factory/run_record.py` (`write`) and `factory/run_record_review.py`, the last step of `.github/workflows/implement.yml`, `.github/workflows/rework.yml` and `.github/workflows/review.yml` |
+| Owner Override | `.github/workflows/override.yml`, `factory/override.py` |
+| Review status | `factory/review_status.py` (`handoff`, `resolve`), the `status` job of `.github/workflows/review.yml` |
+| Collect findings | `.github/workflows/collect-findings.yml`, `factory/collect_findings.py` |
+| Clear labels on close | `.github/workflows/clear-labels.yml` |
 | CI check | `.github/workflows/ci.yml`, `factory/ci_projects.py` (see [CI](#ci)) |
 
 The owner runs one Bench tracer, no model call and no GitHub call: `uv run python -m factory.bench --case CASE.json --setup-id ID --harness-command CMD --review-answer-file tests/factory/review-answer.json`.
@@ -402,7 +406,7 @@ Every rate in the columns from Rework rounds on is over factory Tickets that ope
 `.github/workflows/ci.yml` runs on every PR and on every push to `main`, with no secrets and
 `persist-credentials: false` ([ADR 0005](../adr/0005-label-only-factory-start-and-no-secrets-for-forks.md)).
 
-1. The **factory tests** job always runs `uv run pytest tests/factory`.
+1. The **factory tests** job always runs the Lab check, `./check` (the factory's tests, then ruff and mypy).
 2. That job then chooses which Projects to check (`factory/ci_projects.py`). It diffs the change
    against its base: a PR's base commit, or the commit before a push to `main`.
    - Each Project (`projects/<name>/` with a `check`) whose files changed is checked.
@@ -426,6 +430,8 @@ Ticket moves](#how-a-ticket-moves).
 | `in-progress` | Factory | The factory is building or reworking this Ticket. Removed when Review has passed the current head and CI is green, so a finished draft does not hold the one-at-a-time lock. Also removed when the Ticket closes (`.github/workflows/clear-labels.yml`). A Ticket closed mid-run frees the one-at-a-time lock while the run goes on. |
 | `factory-failed` | Factory | The last Implement run on this Ticket, or Rework run on this PR, failed. The next start of that Ticket or PR removes it. |
 | `rework`, `rework:1`, `rework:2` | Factory (Review or CI gate) | A Spec blocker or a failed required CI run; the counter is the rework round, one charge per head |
+| `standards-findings` | Factory | The one open issue that collects merged PRs' non-blocking Standards Findings, one comment per PR (`.github/workflows/collect-findings.yml`). Nothing acts on it. |
+| `review-override` | Factory (Override workflow) | The owner overrode the `factory/review` status on this PR. The reason stays in the owner's comment |
 | `factory-stopped` | Factory (Review or CI gate) | Two rework rounds were not enough; the factory has stopped. A PR label only; before 2026-11-24 the factory used `ready-for-human` here, and metrics still read it |
 | `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds. Every folder under `projects/` has a row in `factory/labels.json` (`harness`, `agent-identity`, `ai-gateway`, `agents`, `go-sandbox`, `spring-sandbox`, `ts-sandbox`); a test fails when one lacks it. A Project with an executable `check` is accepted whatever the file says; add a row only for a folder that has a `check`. See [Starting a Project](#starting-a-project) |
 | `ready-for-builder` | Scout | A Goal issue ready for the Builder to plan. It does not start the factory |
@@ -467,12 +473,11 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 | A comment says the factory did not start the Ticket | Read the reason. For "one Ticket at a time", finish or close the other Ticket. For "switch rule", switch to `openrouter`. Then re-apply `ready-for-factory`. |
 | A comment says the factory run failed | Open the run. A new Project whose `check` was missing looks like this; the comment quotes why. A `check` that merely failed does not: the draft is published, and the Run record says `check: fail`. The Ticket has lost `in-progress` and carries `factory-failed`, so it can be retried; the next start removes the label. |
 | A factory PR is closed without merging | Closing the PR removes `rework`. `in-progress` stays on the Ticket until the Ticket closes (closing it removes `in-progress`); if you keep the Ticket open, remove `in-progress` by hand, or one-at-a-time keeps every other Ticket waiting. |
-| A factory PR has `factory-failed` | Its last Rework run failed and left no comment. Open the run, then re-apply `rework` to try again; the next round removes `factory-failed`. |
 | A factory draft's CI is red and no rework starts | Open the CI gate run. It ignores a PR that is not a draft, not opened by the factory App, or not on `factory/issue-<N>`, and it stops at the daily cap. A `timed_out` or `cancelled` CI run is not a failure. |
 | A comment says the factory did not start the research request | Read the reason, fix the request or wait for the other Ticket, then re-apply `ready-for-research`. |
 | A comment says the note failed its check | No PR was opened and `in-progress` is gone. The comment lists what the check found. Change the request if that helps, then re-apply `ready-for-research`. |
 | A PR is labelled `factory-stopped` | Finish it by hand, or close it. Review still reads your pushes and posts a report with no label changes; Rework and the CI gate stay off. |
-| A Rework run failed | The PR keeps `rework`. Fix it by hand and push, or re-add `rework` to retry. |
+| A factory PR has `factory-failed` (a Rework run failed) | The run left no comment and the PR keeps `rework`. Open the run. Fix it by hand and push, or re-add `rework` to retry; the next round removes `factory-failed`. |
 
 ## Running a retro
 

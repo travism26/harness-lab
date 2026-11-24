@@ -53,7 +53,7 @@ from factory.github import (
     pr_block_span,
     write_comment,
 )
-from factory.switch_rule import LOGINS, refusal
+from factory.switch_rule import LOGINS, is_factory_app, refusal
 
 REWORK_LABEL = "rework"
 STOPPED_LABEL = "factory-stopped"
@@ -982,10 +982,16 @@ def capped_comment(head_sha: str, cap: str, variable: str) -> str:
 
 def capped(args: argparse.Namespace, gh: Any | None = None) -> int:
     """Say on the PR that the daily cap stopped Review for this head. Once per head. The
-    comment carries no review marker, so nothing reads it as a verdict."""
+    comment carries no review marker, so nothing reads it as a verdict. Only the factory App's
+    own comments count as having said it (docs/adr/0010)."""
     gh = gh or GitHub()
     marker = capped_marker(args.head_sha)
-    if any(marker in body for body in _bodies(gh.pr_comments(args.repo, args.pr))):
+    ours = [
+        c
+        for c in gh.pr_comments(args.repo, args.pr)
+        if is_factory_app(((c.get("user") or {}).get("login")) or "", args.app_slug)
+    ]
+    if any(marker in body for body in _bodies(ours)):
         print(
             f"PR {args.repo}#{args.pr}: already said the cap stopped {args.head_sha[:12]}"
         )
@@ -1038,6 +1044,7 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--head-sha", required=True)
     k.add_argument("--cap", required=True)
     k.add_argument("--variable", required=True)
+    k.add_argument("--app-slug", required=True)
 
     args = parser.parse_args(argv)
     try:

@@ -37,6 +37,7 @@ jobs:
       - name: Check out the factory (default branch)
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@v10.3.3
@@ -47,7 +48,6 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
         run: >-
           uv run --no-dev python -m factory.collect_findings
-          --repo "$REPO" --pr "$PR" --head "$HEAD_SHA" --app-slug "$APP_SLUG"
+          --repo "$REPO" --pr "$PR" --head "$HEAD_SHA"

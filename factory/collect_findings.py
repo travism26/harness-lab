@@ -23,6 +23,8 @@ from factory.review_pr import STANDARDS_KINDS, parse_gate
 from factory.switch_rule import default_app_slug, is_factory_app
 
 LABEL = "standards-findings"
+# The workflow posts with its own GITHUB_TOKEN, so this is who wrote the marker comments.
+WORKFLOW_BOT = "github-actions[bot]"
 ISSUE_TITLE = "Standards findings from merged pull requests"
 ISSUE_BODY = (
     "The Review's non-blocking Standards Findings (`repo_standard`, `baseline_smell`) "
@@ -119,6 +121,7 @@ def collect(gh: Any, repo: str, pr: int, head: str, app_slug: str) -> str:
             seen = marker(pr)
             if any(
                 (c.get("body") or "").startswith(seen)
+                and ((c.get("user") or {}).get("login") or "") == WORKFLOW_BOT
                 for c in gh.pr_comments(repo, issue)
             ):
                 return f"already collected on #{issue}"
