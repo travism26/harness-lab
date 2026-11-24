@@ -30,7 +30,7 @@ def events(runs):
 
 
 def stop(runs):
-    return [e for e in events(runs) if e["event"] == "stop"][0]["stop_reason"]
+    return next(e for e in events(runs) if e["event"] == "stop")["stop_reason"]
 
 
 def test_one_turn_answer(env, capsys):
@@ -55,9 +55,9 @@ def test_tool_call_run(env, capsys):
     assert result["content"]
     kinds = [e["event"] for e in events(env)]
     assert kinds.count("request") == 2
-    call = [e for e in events(env) if e["event"] == "tool_call"][0]
+    call = next(e for e in events(env) if e["event"] == "tool_call")
     assert call["name"] == "read_file" and call["input"] == {"path": "hello.txt"}
-    res = [e for e in events(env) if e["event"] == "tool_result"][0]
+    res = next(e for e in events(env) if e["event"] == "tool_result")
     assert res["output"] == result["content"] and res["refused"] is False
 
 
@@ -69,9 +69,9 @@ def test_refused_path(env, capsys):
     assert "refused" in capsys.readouterr().err
     assert stop(env) == "refused_tool_call"
     assert len(m.requests) == 1
-    refused = [e for e in events(env) if e["event"] == "tool_result"][0]
+    refused = next(e for e in events(env) if e["event"] == "tool_result")
     assert refused["refused"] is True and "outside the workspace" in refused["output"]
-    call = [e for e in events(env) if e["event"] == "tool_call"][0]
+    call = next(e for e in events(env) if e["event"] == "tool_call")
     assert call["input"] == {"path": "../pyproject.toml"}
 
 
@@ -115,7 +115,7 @@ def test_unresolvable_path_is_an_error_not_a_refusal(env, capsys):
     assert stop(env) == "final_answer"
     result = m.requests[1]["body"]["messages"][-1]["content"][0]
     assert result["is_error"] is True and "cannot resolve path" in result["content"]
-    res = [e for e in events(env) if e["event"] == "tool_result"][0]
+    res = next(e for e in events(env) if e["event"] == "tool_result")
     assert res["refused"] is False
 
 
@@ -146,7 +146,7 @@ def test_provider_error(env, capsys):
     evs = events(env)
     assert (
         "Key limit exceeded"
-        in [e for e in evs if e["event"] == "provider_error"][0]["error"]
+        in next(e for e in evs if e["event"] == "provider_error")["error"]
     )
     assert "Key limit exceeded" in evs[-1]["error"]
 
@@ -162,14 +162,14 @@ def test_cost_logged_only_when_reported(env):
     reply["usage"] = {"input_tokens": 5, "output_tokens": 7, "cost": 0.0012}
     with StandInModel([reply]) as m:
         go(m)
-    usage = [e for e in events(env) if e["event"] == "usage"][0]
+    usage = next(e for e in events(env) if e["event"] == "usage")
     assert usage["cost"] == 0.0012 and usage["input_tokens"] == 5
 
 
 def test_no_cost_when_not_reported(env):
     with StandInModel([text_reply("x")]) as m:
         go(m)
-    assert "cost" not in [e for e in events(env) if e["event"] == "usage"][0]
+    assert "cost" not in next(e for e in events(env) if e["event"] == "usage")
 
 
 def test_module_runs_with_help():
@@ -177,5 +177,6 @@ def test_module_runs_with_help():
         [sys.executable, "-m", "harness_lab.cli", "--help"],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert out.returncode == 0 and "question" in out.stdout

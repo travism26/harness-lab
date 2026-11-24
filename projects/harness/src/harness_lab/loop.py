@@ -58,7 +58,7 @@ class RunLog:
         while True:
             path = runs_dir / f"run-{stamp}{f'-{n}' if n else ''}.jsonl"
             try:
-                self._file = open(path, "x", encoding="utf-8")
+                self._file = path.open("x", encoding="utf-8")
                 break
             except FileExistsError:
                 n += 1

@@ -37,9 +37,11 @@ def test_tool_use_reply():
     ],
 )
 def test_provider_error_is_readable(status, message):
-    with StandInModel([error_reply(status, message)]) as m:
-        with pytest.raises(ModelError) as e:
-            ModelClient(m.endpoint, api_key="k").send(MSG)
+    with (
+        StandInModel([error_reply(status, message)]) as m,
+        pytest.raises(ModelError) as e,
+    ):
+        ModelClient(m.endpoint, api_key="k").send(MSG)
     assert str(status) in str(e.value) and message in str(e.value)
 
 
