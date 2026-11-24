@@ -1,4 +1,5 @@
 """Review's own daily cap, and the comment a capped Review leaves on the PR."""
+
 import argparse
 import json
 import os
@@ -21,12 +22,24 @@ OTHERS = ["implement", "rework", "research", "ci-gate", "factory-check"]
 
 
 def _args(head: str = SHA) -> List[str]:
-    return ["capped", "--repo", REPO, "--pr", "5", "--head-sha", head,
-            "--cap", "40", "--variable", "FACTORY_REVIEW_DAILY_RUN_CAP"]
+    return [
+        "capped",
+        "--repo",
+        REPO,
+        "--pr",
+        "5",
+        "--head-sha",
+        head,
+        "--cap",
+        "40",
+        "--variable",
+        "FACTORY_REVIEW_DAILY_RUN_CAP",
+    ]
 
 
 def test_capped_review_posts_one_comment_per_head_and_no_review_marker(
-        monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     gh = FakeGitHub()
     monkeypatch.setattr(review_pr, "GitHub", lambda: gh)
     assert review_pr.main(_args()) == 0
@@ -68,16 +81,26 @@ def test_review_yml_has_its_own_cap_and_the_others_keep_theirs() -> None:
         assert "continue-on-cap" not in text, name
 
 
-def test_review_yml_posts_with_the_app_token_then_fails_and_gates_the_agent_steps() -> None:
+def test_review_yml_posts_with_the_app_token_then_fails_and_gates_the_agent_steps() -> (
+    None
+):
     text = (WORKFLOWS / "review.yml").read_text()
     assert 'continue-on-cap: "true"' in text
-    post = text.split("- name: Say on the PR that the daily cap stopped this review", 1)[1]
+    post = text.split(
+        "- name: Say on the PR that the daily cap stopped this review", 1
+    )[1]
     post = post.split("\n      - name:", 1)[0]
     assert "steps.preflight.outputs.token" in post and "github.token" not in post
     stop = text.split("- name: Stop, red, because the daily cap was reached", 1)[1]
     assert "exit 1" in stop.split("\n      - name:", 1)[0]
-    for step in ("Check out the pull request", "Install Claude Code", "Gather the diff",
-                 "Review (fresh context", "Read CI for this head", "Post the report"):
+    for step in (
+        "Check out the pull request",
+        "Install Claude Code",
+        "Gather the diff",
+        "Review (fresh context",
+        "Read CI for this head",
+        "Post the report",
+    ):
         block = text.split(f"- name: {step}", 1)[1].split("\n      - ", 1)[0]
         assert "steps.preflight.outputs.capped != 'true'" in block, step
     job_permissions = text.split("    permissions:\n", 1)[1].split("steps:", 1)[0]
@@ -105,7 +128,8 @@ def _fake_gh(tmp_path: Path, runs: List[Dict[str, Any]]) -> Path:
         f"runs = [r for r in json.load(open({str(runs_file)!r}))\n"
         "        if r['createdAt'][:10] >= since]\n"
         "print(subprocess.run(['jq', '-r', a[a.index('--jq') + 1]], input=json.dumps(runs),\n"
-        "                     capture_output=True, text=True, check=True).stdout, end='')\n")
+        "                     capture_output=True, text=True, check=True).stdout, end='')\n"
+    )
     gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
     return bindir
 
@@ -116,30 +140,59 @@ def _today() -> str:
 
 def _runs(states: List[str]) -> List[Dict[str, Any]]:
     stamp = f"{_today()}T00:00:01Z"
-    return [{"databaseId": i + 1, "createdAt": stamp, "status": s,
-             "conclusion": "success" if s == "completed" else ""} for i, s in enumerate(states)]
+    return [
+        {
+            "databaseId": i + 1,
+            "createdAt": stamp,
+            "status": s,
+            "conclusion": "success" if s == "completed" else "",
+        }
+        for i, s in enumerate(states)
+    ]
 
 
-def _run_cap(tmp_path: Path, runs: List[Dict[str, Any]], cap: str,
-             continue_on_cap: str = "false") -> Tuple["subprocess.CompletedProcess[str]", str]:
+def _run_cap(
+    tmp_path: Path, runs: List[Dict[str, Any]], cap: str, continue_on_cap: str = "false"
+) -> Tuple["subprocess.CompletedProcess[str]", str]:
     bindir = _fake_gh(tmp_path, runs)
     output = tmp_path / "github_output"
     output.write_text("")
-    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "GITHUB_REPOSITORY": REPO,
-           "GITHUB_OUTPUT": str(output), "CAP": cap, "RUN_ID": "900",
-           "WORKFLOW_REF": f"{REPO}/.github/workflows/review.yml@refs/heads/main",
-           "CAP_VARIABLE": "FACTORY_REVIEW_DAILY_RUN_CAP", "CONTINUE_ON_CAP": continue_on_cap}
-    done = subprocess.run(["bash", "-c", _cap_script()], env=env, capture_output=True, text=True)
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "GITHUB_REPOSITORY": REPO,
+        "GITHUB_OUTPUT": str(output),
+        "CAP": cap,
+        "RUN_ID": "900",
+        "WORKFLOW_REF": f"{REPO}/.github/workflows/review.yml@refs/heads/main",
+        "CAP_VARIABLE": "FACTORY_REVIEW_DAILY_RUN_CAP",
+        "CONTINUE_ON_CAP": continue_on_cap,
+    }
+    done = subprocess.run(
+        ["bash", "-c", _cap_script()], env=env, capture_output=True, text=True
+    )
     return done, output.read_text()
 
 
 def test_queued_and_running_runs_count_toward_the_cap(tmp_path: Path) -> None:
     runs = _runs(["queued", "in_progress", "completed"])
     # This run itself is never counted, and a run from before 00:00 UTC today is not today's.
-    runs.append({"databaseId": 900, "createdAt": f"{_today()}T01:00:00Z",
-                 "status": "in_progress", "conclusion": ""})
-    runs.append({"databaseId": 50, "createdAt": "2000-01-01T00:00:00Z",
-                 "status": "queued", "conclusion": ""})
+    runs.append(
+        {
+            "databaseId": 900,
+            "createdAt": f"{_today()}T01:00:00Z",
+            "status": "in_progress",
+            "conclusion": "",
+        }
+    )
+    runs.append(
+        {
+            "databaseId": 50,
+            "createdAt": "2000-01-01T00:00:00Z",
+            "status": "queued",
+            "conclusion": "",
+        }
+    )
     done, _ = _run_cap(tmp_path, runs, "3")
     assert done.returncode == 1
     text = done.stdout + done.stderr
@@ -147,7 +200,9 @@ def test_queued_and_running_runs_count_toward_the_cap(tmp_path: Path) -> None:
     assert "FACTORY_REVIEW_DAILY_RUN_CAP" in text
 
 
-def test_one_run_under_the_cap_the_step_passes_and_says_not_capped(tmp_path: Path) -> None:
+def test_one_run_under_the_cap_the_step_passes_and_says_not_capped(
+    tmp_path: Path,
+) -> None:
     done, out = _run_cap(tmp_path, _runs(["queued", "in_progress"]), "3")
     assert done.returncode == 0, done.stderr
     assert "capped=false" in out
