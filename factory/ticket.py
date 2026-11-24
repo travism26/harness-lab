@@ -209,7 +209,7 @@ glossaries and decision records it points to, and follow them. Use the glossary'
 The Ticket is in `{ticket}`. It was written by the repository owner. Implement \
 what it asks, and no more. This Ticket has no `project:` label, so it is \
 factory-root work on the factory itself. Add or update tests for what you change \
-and run `uv run pytest tests/factory` until it passes.
+and run `./check` until it passes.
 
 Limit edits to the factory package (`factory/`), its tests (`tests/factory/`), \
 the factory doc (`docs/factory/README.md`), the lab glossary (`GLOSSARY.md`), \

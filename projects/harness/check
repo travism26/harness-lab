@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# The harness's check: its tests, in the workspace's locked environment (the
-# same uv.lock CI uses). Exits non-zero on failure.
+# The harness's check: its tests, ruff and mypy, in the workspace's locked
+# environment (the same uv.lock CI uses). Exits non-zero on failure.
 set -euo pipefail
 cd "$(dirname "$0")"
-exec uv run --locked --package harness-lab pytest "$@"
+uv run --locked --package harness-lab pytest "$@"
+uv run --locked --package harness-lab ruff check src tests
+uv run --locked --package harness-lab ruff format --check src tests
+uv run --locked --package harness-lab mypy src tests

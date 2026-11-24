@@ -90,7 +90,7 @@ def test_claim_labels_the_ticket_and_writes_it(tmp_path):
         "projects/harness/check" in prompt and "projects/harness/GLOSSARY.md" in prompt
     )
     assert "not on the base branch yet" not in prompt
-    assert "uv run pytest tests/factory" not in prompt and "factory-root" not in prompt
+    assert "./check" not in prompt and "factory-root" not in prompt
     assert "it loops" in (tmp_path / "out" / "ticket.md").read_text()
 
 
@@ -130,7 +130,7 @@ def test_claim_refuses_a_ticket_without_a_buildable_project(
 
 
 def _assert_factory_root_prompt(prompt):
-    assert "run `uv run pytest tests/factory` until it passes" in prompt
+    assert "run `./check` until it passes" in prompt
     for path in (
         "`factory/`",
         "`tests/factory/`",
@@ -145,7 +145,7 @@ def _assert_factory_root_prompt(prompt):
     assert "only checkout that will be published" in prompt
     assert "Leave that checkout untouched" in prompt
     assert "Do not edit a Project" in prompt and "`.github/`" in prompt
-    assert "Build inside" not in prompt and "/check" not in prompt
+    assert "Build inside" not in prompt and "projects/harness/check" not in prompt
     assert "The Ticket is for the Project" not in prompt
     assert "not on the base branch yet" not in prompt
 
