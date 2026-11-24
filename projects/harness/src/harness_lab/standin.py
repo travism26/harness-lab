@@ -8,17 +8,27 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 def text_reply(text: str) -> dict:
     return {
-        "id": "msg_standin", "type": "message", "role": "assistant", "model": "standin",
+        "id": "msg_standin",
+        "type": "message",
+        "role": "assistant",
+        "model": "standin",
         "content": [{"type": "text", "text": text}],
-        "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1},
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
     }
 
 
 def tool_use_reply(name: str, tool_input: dict, tool_id: str = "toolu_standin") -> dict:
     return {
-        "id": "msg_standin", "type": "message", "role": "assistant", "model": "standin",
-        "content": [{"type": "tool_use", "id": tool_id, "name": name, "input": tool_input}],
-        "stop_reason": "tool_use", "usage": {"input_tokens": 1, "output_tokens": 1},
+        "id": "msg_standin",
+        "type": "message",
+        "role": "assistant",
+        "model": "standin",
+        "content": [
+            {"type": "tool_use", "id": tool_id, "name": name, "input": tool_input}
+        ],
+        "stop_reason": "tool_use",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
     }
 
 
@@ -40,12 +50,21 @@ class StandInModel:
                 length = int(self.headers.get("content-length", 0))
                 body = json.loads(self.rfile.read(length) or b"null")
                 standin.requests.append(
-                    {"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}, "body": body})
+                    {
+                        "path": self.path,
+                        "headers": {k.lower(): v for k, v in self.headers.items()},
+                        "body": body,
+                    }
+                )
                 if standin.replies:
                     reply = standin.replies.pop(0)
-                    status, payload = reply if isinstance(reply, tuple) else (200, reply)
+                    status, payload = (
+                        reply if isinstance(reply, tuple) else (200, reply)
+                    )
                 else:
-                    status, payload = error_reply(500, "stand-in model has no scripted reply left")
+                    status, payload = error_reply(
+                        500, "stand-in model has no scripted reply left"
+                    )
                 data = json.dumps(payload).encode()
                 self.send_response(status)
                 self.send_header("content-type", "application/json")

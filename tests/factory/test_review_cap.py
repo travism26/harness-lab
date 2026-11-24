@@ -5,9 +5,9 @@ import json
 import os
 import stat
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import pytest
 
@@ -21,7 +21,7 @@ ACTION = ROOT / ".github" / "actions" / "factory-preflight" / "action.yml"
 OTHERS = ["implement", "rework", "research", "ci-gate", "factory-check"]
 
 
-def _args(head: str = SHA) -> List[str]:
+def _args(head: str = SHA) -> list[str]:
     return [
         "capped",
         "--repo",
@@ -113,7 +113,7 @@ def _cap_script() -> str:
     return "\n".join(line[8:] for line in run.splitlines())
 
 
-def _fake_gh(tmp_path: Path, runs: List[Dict[str, Any]]) -> Path:
+def _fake_gh(tmp_path: Path, runs: list[dict[str, Any]]) -> Path:
     """A `gh` that answers `run list` from `runs`: it applies --created and --jq as gh does."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -135,10 +135,10 @@ def _fake_gh(tmp_path: Path, runs: List[Dict[str, Any]]) -> Path:
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
-def _runs(states: List[str]) -> List[Dict[str, Any]]:
+def _runs(states: list[str]) -> list[dict[str, Any]]:
     stamp = f"{_today()}T00:00:01Z"
     return [
         {
@@ -152,8 +152,8 @@ def _runs(states: List[str]) -> List[Dict[str, Any]]:
 
 
 def _run_cap(
-    tmp_path: Path, runs: List[Dict[str, Any]], cap: str, continue_on_cap: str = "false"
-) -> Tuple["subprocess.CompletedProcess[str]", str]:
+    tmp_path: Path, runs: list[dict[str, Any]], cap: str, continue_on_cap: str = "false"
+) -> tuple["subprocess.CompletedProcess[str]", str]:
     bindir = _fake_gh(tmp_path, runs)
     output = tmp_path / "github_output"
     output.write_text("")
@@ -169,7 +169,11 @@ def _run_cap(
         "CONTINUE_ON_CAP": continue_on_cap,
     }
     done = subprocess.run(
-        ["bash", "-c", _cap_script()], env=env, capture_output=True, text=True
+        ["bash", "-c", _cap_script()],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     return done, output.read_text()
 

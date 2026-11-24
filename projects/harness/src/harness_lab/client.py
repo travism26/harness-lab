@@ -37,7 +37,9 @@ def read_key(env=None) -> str:
     env = os.environ if env is None else env
     key = env.get(KEY_VAR)
     if not key:
-        raise ModelError(f"{KEY_VAR} is not set. Export your OpenRouter key before running the harness.")
+        raise ModelError(
+            f"{KEY_VAR} is not set. Export your OpenRouter key before running the harness."
+        )
     return key
 
 
@@ -55,15 +57,26 @@ def _provider_message(body: bytes) -> str:
 
 
 class ModelClient:
-    def __init__(self, endpoint: str = DEFAULT_ENDPOINT, model: str | None = None,
-                 api_key: str | None = None, env=None, timeout: float = 60):
+    def __init__(
+        self,
+        endpoint: str = DEFAULT_ENDPOINT,
+        model: str | None = None,
+        api_key: str | None = None,
+        env=None,
+        timeout: float = 60,
+    ):
         self.endpoint = endpoint
         self.model = resolve_model(model, env)
         self.api_key = api_key if api_key is not None else read_key(env)
         self.timeout = timeout
 
-    def send(self, messages: list, max_tokens: int = 1024, system: str | None = None,
-             tools: list | None = None) -> dict:
+    def send(
+        self,
+        messages: list,
+        max_tokens: int = 1024,
+        system: str | None = None,
+        tools: list | None = None,
+    ) -> dict:
         """Post one Messages request and return the parsed reply."""
         payload = {"model": self.model, "max_tokens": max_tokens, "messages": messages}
         if system:
@@ -85,8 +98,14 @@ class ModelClient:
                 return json.loads(response.read())
         except urllib.error.HTTPError as e:
             detail = _provider_message(e.read())
-            raise ModelError(f"Model provider returned HTTP {e.code}: {detail}") from None
+            raise ModelError(
+                f"Model provider returned HTTP {e.code}: {detail}"
+            ) from None
         except urllib.error.URLError as e:
-            raise ModelError(f"Could not reach the model endpoint {self.endpoint}: {e.reason}") from None
+            raise ModelError(
+                f"Could not reach the model endpoint {self.endpoint}: {e.reason}"
+            ) from None
         except ValueError:
-            raise ModelError("Model provider returned a reply that is not JSON") from None
+            raise ModelError(
+                "Model provider returned a reply that is not JSON"
+            ) from None

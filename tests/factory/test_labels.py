@@ -1,36 +1,66 @@
 import os
 from pathlib import Path
 
+from factory.check import LABEL as CHECK_LABEL
 from factory.review_pr import HUMAN_LABEL, MAX_REWORK, REWORK_LABEL
 from factory.sync_labels import Label, load_labels, plan_changes
 from factory.ticket import FAILED_LABEL, PROGRESS_LABEL, START_LABEL
-from factory.check import LABEL as CHECK_LABEL
 
 
 def test_the_set_holds_every_label_the_factory_uses():
     names = {label.name for label in load_labels()}
-    used = {START_LABEL, PROGRESS_LABEL, FAILED_LABEL, REWORK_LABEL, HUMAN_LABEL, CHECK_LABEL,
-            "project:harness", "project:agent-identity", "standards-findings",
-            *(f"rework:{n}" for n in range(1, MAX_REWORK + 1))}
+    used = {
+        START_LABEL,
+        PROGRESS_LABEL,
+        FAILED_LABEL,
+        REWORK_LABEL,
+        HUMAN_LABEL,
+        CHECK_LABEL,
+        "project:harness",
+        "project:agent-identity",
+        "standards-findings",
+        *(f"rework:{n}" for n in range(1, MAX_REWORK + 1)),
+    }
     assert used <= names
 
 
 def test_the_set_holds_the_triage_labels():
     names = {label.name for label in load_labels()}
-    assert {"needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"} <= names
+    assert {
+        "needs-triage",
+        "needs-info",
+        "ready-for-agent",
+        "ready-for-human",
+        "wontfix",
+    } <= names
 
 
 def test_plan_creates_missing_and_updates_changed_labels_only():
-    desired = [Label("a", "ffffff", "A"), Label("b", "000000", "B"), Label("c", "111111", "C")]
-    existing = [Label("A", "FFFFFF", "A"), Label("b", "000000", "old"), Label("zzz", "1", "")]
+    desired = [
+        Label("a", "ffffff", "A"),
+        Label("b", "000000", "B"),
+        Label("c", "111111", "C"),
+    ]
+    existing = [
+        Label("A", "FFFFFF", "A"),
+        Label("b", "000000", "old"),
+        Label("zzz", "1", ""),
+    ]
     changes = plan_changes(desired, existing)
-    assert [(c.action, c.label.name) for c in changes] == [("update", "b"), ("create", "c")]
+    assert [(c.action, c.label.name) for c in changes] == [
+        ("update", "b"),
+        ("create", "c"),
+    ]
 
 
 def test_every_project_with_a_check_has_a_project_row():
     names = {label.name for label in load_labels()}
     projects = Path(__file__).resolve().parents[2] / "projects"
-    folders = [d for d in projects.iterdir() if (d / "check").is_file() and os.access(d / "check", os.X_OK)]
+    folders = [
+        d
+        for d in projects.iterdir()
+        if (d / "check").is_file() and os.access(d / "check", os.X_OK)
+    ]
     assert folders
     missing = sorted(d.name for d in folders if f"project:{d.name}" not in names)
     assert not missing
@@ -38,12 +68,25 @@ def test_every_project_with_a_check_has_a_project_row():
 
 def test_the_set_holds_the_builder_and_wayfinder_labels():
     names = {label.name for label in load_labels()}
-    assert {"ready-for-builder", "builder:claimed", "spec:ready-for-review", "ready-for-implementation",
-            *(f"wayfinder:{k}" for k in ("map", "research", "grilling", "prototype", "task"))} <= names
+    assert {
+        "ready-for-builder",
+        "builder:claimed",
+        "spec:ready-for-review",
+        "ready-for-implementation",
+        *(
+            f"wayfinder:{k}"
+            for k in ("map", "research", "grilling", "prototype", "task")
+        ),
+    } <= names
 
 
 def test_clear_labels_workflow_has_no_secret_checkout_or_fork_path():
-    text = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "clear-labels.yml").read_text()
+    text = (
+        Path(__file__).resolve().parents[2]
+        / ".github"
+        / "workflows"
+        / "clear-labels.yml"
+    ).read_text()
     assert "secrets." not in text and "checkout" not in text
     assert "pull_request_target" not in text
     assert "github.event.pull_request.head.repo.full_name == github.repository" in text

@@ -13,9 +13,10 @@ Usage:
 import argparse
 import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any
 
 from factory.github import GitHub, GitHubError, neutralize_comments, write_comment
 from factory.review_pr import STANDARDS_KINDS, parse_gate
@@ -29,8 +30,8 @@ ISSUE_BODY = (
     "automatically.\n"
 )
 
-_ZWSP = "​"
-Finding = Tuple[str, str, str, str]  # kind, description, path, fix
+_ZWSP = "\u200b"
+Finding = tuple[str, str, str, str]  # kind, description, path, fix
 
 _LINE_RE = re.compile(
     r"^- \*\*(?P<kind>[a-z_]+)\*\* (?P<desc>.*?)"
@@ -55,12 +56,10 @@ def marker(pr: int) -> str:
     return f"<!-- factory:findings pr={int(pr)} -->"
 
 
-def review_for_head(
-    comments: Sequence[dict], head: str, bot_login: str
-) -> Optional[str]:
+def review_for_head(comments: Sequence[dict], head: str, bot_login: str) -> str | None:
     """The body of the newest Review comment by the App whose gate line names this head."""
     slug = bot_login[:-5] if bot_login.lower().endswith("[bot]") else bot_login
-    found: Optional[str] = None
+    found: str | None = None
     for comment in comments or ():
         login = (comment.get("user") or {}).get("login") or ""
         if not is_factory_app(login, slug):
@@ -72,10 +71,10 @@ def review_for_head(
     return found
 
 
-def standards_findings(body: str) -> List[Finding]:
+def standards_findings(body: str) -> list[Finding]:
     """The `repo_standard` and `baseline_smell` lines of the Review's Standards section, as
     (kind, description, path, fix). A line that does not parse is dropped."""
-    out: List[Finding] = []
+    out: list[Finding] = []
     in_standards = False
     for line in (body or "").splitlines():
         heading = _HEADING_RE.match(line)
@@ -140,7 +139,7 @@ def collect(gh: Any, repo: str, pr: int, head: str, app_slug: str) -> str:
     return f"added {len(findings)} Finding(s) to #{issue}"
 
 
-def main(argv: Optional[List[str]] = None, gh: Optional[Any] = None) -> int:
+def main(argv: list[str] | None = None, gh: Any | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--repo", required=True)
     parser.add_argument("--pr", type=int, required=True)

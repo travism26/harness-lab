@@ -50,8 +50,10 @@ def run_read_file(path: str, workspace: Path = WORKSPACE) -> ToolResult:
     except (OSError, ValueError, RuntimeError) as err:
         return ToolResult(f"Error: cannot resolve path {path!r}: {err}", status="error")
     if not target.is_relative_to(root):
-        return ToolResult(f"Error: {path!r} is outside the workspace and was refused.",
-                          status="refused")
+        return ToolResult(
+            f"Error: {path!r} is outside the workspace and was refused.",
+            status="refused",
+        )
     if not target.is_file():
         return ToolResult(f"Error: file not found: {path!r}", status="error")
     try:
@@ -63,5 +65,7 @@ def run_read_file(path: str, workspace: Path = WORKSPACE) -> ToolResult:
 def run_tool(name, args: dict, workspace: Path = WORKSPACE) -> ToolResult:
     """Run a tool call by name; an unknown tool or bad input is an error result."""
     if name != "read_file" or not isinstance(args.get("path"), str):
-        return ToolResult(f"Error: unknown tool or bad input for {name!r}", status="error")
+        return ToolResult(
+            f"Error: unknown tool or bad input for {name!r}", status="error"
+        )
     return run_read_file(args["path"], workspace)

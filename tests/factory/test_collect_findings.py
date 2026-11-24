@@ -1,7 +1,7 @@
 """The Standards Findings of a merged PR's Review go into one rolling issue, once."""
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from factory import collect_findings as cf
 from factory.review_pr import Finding, Findings, Moves, render_report
@@ -21,14 +21,14 @@ WORKFLOW = (
 
 def review(
     head: str = HEAD,
-    standards: Optional[List[Finding]] = None,
-    spec: Optional[List[Finding]] = None,
+    standards: list[Finding] | None = None,
+    spec: list[Finding] | None = None,
 ) -> str:
     findings = Findings("spec ok", "standards ok", spec or [], standards or [])
     return render_report(findings, {"head_sha": head, "ticket": 7}, Moves("pass"), [])
 
 
-def comment(id: int, body: str, login: str = BOT) -> Dict[str, Any]:
+def comment(id: int, body: str, login: str = BOT) -> dict[str, Any]:
     return {"id": id, "body": body, "user": {"login": login}}
 
 
@@ -44,23 +44,23 @@ SMELL = Finding("baseline_smell", "Long function", "Split it", None)
 class FakeGitHub:
     def __init__(
         self,
-        thread: List[Dict[str, Any]],
-        issues: Optional[Dict[int, List[dict]]] = None,
+        thread: list[dict[str, Any]],
+        issues: dict[int, list[dict]] | None = None,
         title: str = "Add x",
     ) -> None:
         self.thread = thread
-        self.issues: Dict[int, List[dict]] = issues if issues is not None else {}
+        self.issues: dict[int, list[dict]] = issues if issues is not None else {}
         self.title = title
-        self.created: List[Tuple[str, tuple]] = []
-        self.label_calls: List[tuple] = []
+        self.created: list[tuple[str, tuple]] = []
+        self.label_calls: list[tuple] = []
 
-    def pr_comments(self, repo: str, number: int) -> List[dict]:
+    def pr_comments(self, repo: str, number: int) -> list[dict]:
         return self.thread if number == 42 else self.issues.get(number, [])
 
     def pr(self, repo: str, number: int) -> dict:
         return {"number": number, "title": self.title}
 
-    def open_issues_labelled(self, repo: str, label: str) -> List[int]:
+    def open_issues_labelled(self, repo: str, label: str) -> list[int]:
         assert label == cf.LABEL
         return sorted(self.issues)
 
@@ -195,7 +195,7 @@ def test_a_later_pr_appends_to_the_existing_open_issue():
 
 def test_main_reports_a_github_error_and_exits_nonzero(capsys):
     class Broken(FakeGitHub):
-        def pr_comments(self, repo: str, number: int) -> List[dict]:
+        def pr_comments(self, repo: str, number: int) -> list[dict]:
             raise cf.GitHubError("boom")
 
     code = cf.main(["--repo", REPO, "--pr", "42", "--head", HEAD], gh=Broken([]))

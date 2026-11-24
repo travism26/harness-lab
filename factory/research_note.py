@@ -8,12 +8,13 @@ posted in a public GitHub comment and the note is model-written.
 
     uv run python -m factory.research_note docs/research/notes/issue-<N>.md
 """
+
 import argparse
 import re
 import sys
 from decimal import Decimal
 from pathlib import Path
-from typing import List, NamedTuple, Optional
+from typing import NamedTuple
 
 REQUIRED = ("Question", "Findings", "Sources", "Unknowns", "Cost")
 TAGS = ("vendor", "independent")
@@ -24,7 +25,8 @@ COST_NOTE = "client-estimate"
 CREDENTIAL_RE = re.compile(
     r"sk-(?:ant|or)-|\bsk-[A-Za-z0-9_-]{6,}|gh[pousr]_[A-Za-z0-9]{10,}"
     r"|github_pat_|xox[abposr]-|eyJ[A-Za-z0-9_-]{10,}"
-    r"|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----")
+    r"|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+)
 
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _HEADING_RE = re.compile(r"^## +(.+?)\s*$")
@@ -38,9 +40,9 @@ _PLACEHOLDERS = ("", "none", "n/a", "na", "nothing", "tbd", "todo")
 
 
 class Section(NamedTuple):
-    heading: str   # text after "## ", stripped
-    body: str      # the lines up to the next "## " heading (H3 and deeper stay in the body)
-    line: int      # 1-based line number of the heading in the text
+    heading: str  # text after "## ", stripped
+    body: str  # the lines up to the next "## " heading (H3 and deeper stay in the body)
+    line: int  # 1-based line number of the heading in the text
 
 
 def strip_comments(text: str) -> str:
@@ -48,9 +50,9 @@ def strip_comments(text: str) -> str:
     return _COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
 
 
-def sections(text: str) -> List[Section]:
+def sections(text: str) -> list[Section]:
     """Every level-2 heading in order, with its body. A line in a fenced code block is no heading."""
-    found = []  # type: List[list]
+    found: list[list] = []
     in_fence = False
     for number, line in enumerate(text.split("\n"), start=1):
         if line.startswith("```"):
@@ -60,7 +62,9 @@ def sections(text: str) -> List[Section]:
             found.append([match.group(1), [], number])
         elif found:
             found[-1][1].append(line)
-    return [Section(heading, "\n".join(body), number) for heading, body, number in found]
+    return [
+        Section(heading, "\n".join(body), number) for heading, body, number in found
+    ]
 
 
 def is_blank(body: str) -> bool:
@@ -72,12 +76,12 @@ def _amount(value: float) -> str:
     """Four decimals, trailing zeros dropped, never fewer than two."""
     text = format(value, ".4f").rstrip("0")
     whole, _, frac = text.partition(".")
-    return "%s.%s" % (whole, frac.ljust(2, "0"))
+    return "{}.{}".format(whole, frac.ljust(2, "0"))
 
 
 def cost_section(spend_usd: float, cap_usd: float) -> str:
     """The body of a note's `## Cost` section, in the shape `check_text` accepts."""
-    return "- Spend: $%s (%s)\n- Cap: $%s" % (_amount(spend_usd), COST_NOTE, _amount(cap_usd))
+    return f"- Spend: ${_amount(spend_usd)} ({COST_NOTE})\n- Cap: ${_amount(cap_usd)}"
 
 
 def _is_placeholder(body: str) -> bool:
@@ -86,8 +90,8 @@ def _is_placeholder(body: str) -> bool:
     return flat in _PLACEHOLDERS
 
 
-def _source_problems(section: Section) -> List[str]:
-    problems = []  # type: List[str]
+def _source_problems(section: Section) -> list[str]:
+    problems: list[str] = []
     valid = 0
     for index, line in enumerate(section.body.split("\n")):
         if not line.strip():
@@ -96,14 +100,19 @@ def _source_problems(section: Section) -> List[str]:
         has_url = bool(_URL_RE.search(line))
         tags = set(_TAG_RE.findall(line))
         if "http://" in line:
-            problems.append("Sources line %d: an `http://` URL; a source must be `https://`" % number)
+            problems.append(
+                f"Sources line {number}: an `http://` URL; a source must be `https://`"
+            )
         elif _LIST_ITEM_RE.match(line) and not has_url:
-            problems.append("Sources line %d: no `https://` URL" % number)
+            problems.append(f"Sources line {number}: no `https://` URL")
         elif has_url and not tags:
-            problems.append("Sources line %d: the source is not tagged `[vendor]` or `[independent]`"
-                            % number)
+            problems.append(
+                f"Sources line {number}: the source is not tagged `[vendor]` or `[independent]`"
+            )
         elif has_url and len(tags) > 1:
-            problems.append("Sources line %d: the source carries both tags; pick one" % number)
+            problems.append(
+                f"Sources line {number}: the source carries both tags; pick one"
+            )
         elif has_url:
             valid += 1
     if not valid:
@@ -111,12 +120,14 @@ def _source_problems(section: Section) -> List[str]:
     return problems
 
 
-def _cost_problems(body: str) -> List[str]:
-    problems = []  # type: List[str]
+def _cost_problems(body: str) -> list[str]:
+    problems: list[str] = []
     spends = _SPEND_RE.findall(body)
     caps = _CAP_RE.findall(body)
     if not spends:
-        problems.append("section `## Cost` has no `Spend: $<number> (client-estimate)` line")
+        problems.append(
+            "section `## Cost` has no `Spend: $<number> (client-estimate)` line"
+        )
     elif len(spends) > 1:
         problems.append("section `## Cost` has more than one Spend line")
     if not caps:
@@ -127,40 +138,48 @@ def _cost_problems(body: str) -> List[str]:
         if Decimal(caps[0]) <= 0:
             problems.append("the cap must be above zero")
         elif Decimal(spends[0]) > Decimal(caps[0]):
-            problems.append("spend $%s is over the cap $%s" % (spends[0], caps[0]))
+            problems.append(f"spend ${spends[0]} is over the cap ${caps[0]}")
     return problems
 
 
-def check_text(text: str) -> List[str]:
+def check_text(text: str) -> list[str]:
     """The problems with a note; an empty list means it passes."""
-    problems = []  # type: List[str]
+    problems: list[str] = []
     found = sections(strip_comments(text))
     for name in REQUIRED:
         matches = [s for s in found if s.heading == name]
         if not matches:
-            problems.append("missing section `## %s`" % name)
+            problems.append(f"missing section `## {name}`")
             continue
         if len(matches) > 1:
-            problems.append("section `## %s` appears more than once" % name)
+            problems.append(f"section `## {name}` appears more than once")
             continue
         section = matches[0]
         if name in ("Question", "Findings") and is_blank(section.body):
-            problems.append("section `## %s` is empty" % name)
-        elif name == "Unknowns" and (is_blank(section.body) or _is_placeholder(section.body)):
-            problems.append("section `## Unknowns` is empty: say what could not be established")
+            problems.append(f"section `## {name}` is empty")
+        elif name == "Unknowns" and (
+            is_blank(section.body) or _is_placeholder(section.body)
+        ):
+            problems.append(
+                "section `## Unknowns` is empty: say what could not be established"
+            )
         elif name == "Sources":
             problems.extend(_source_problems(section))
         elif name == "Cost":
             problems.extend(_cost_problems(section.body))
     for number, line in enumerate(text.split("\n"), start=1):
         if CREDENTIAL_RE.search(line):
-            problems.append("line %d: a credential-shaped string; a note holds no secrets" % number)
+            problems.append(
+                f"line {number}: a credential-shaped string; a note holds no secrets"
+            )
     return problems
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Check each file named; print one line per problem, or `ok`. 1 if any file failed."""
-    parser = argparse.ArgumentParser(prog="factory.research_note", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="factory.research_note", description=__doc__.split("\n")[0]
+    )
     parser.add_argument("files", nargs="+", metavar="FILE")
     args = parser.parse_args(argv)
     failed = False
@@ -168,14 +187,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         try:
             text = Path(name).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
-            print("%s: cannot be read" % name)
+            print(f"{name}: cannot be read")
             failed = True
             continue
         problems = check_text(text)
         for problem in problems:
-            print("%s: %s" % (name, problem))
+            print(f"{name}: {problem}")
         if not problems:
-            print("%s: ok" % name)
+            print(f"{name}: ok")
         failed = failed or bool(problems)
     return 1 if failed else 0
 
