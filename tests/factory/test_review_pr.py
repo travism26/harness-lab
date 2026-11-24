@@ -31,11 +31,11 @@ from factory.review_pr import (
         (
             ["rework", "rework:2"],
             True,
-            Moves("human", add=("ready-for-human",), remove=("rework",)),
+            Moves("human", add=("factory-stopped",), remove=("rework",)),
         ),
         (["rework", "rework:2"], False, Moves("pass", remove=("rework",))),
         (["rework:1"], False, Moves("pass")),
-        (["ready-for-human", "rework:2"], True, Moves("human-owned")),
+        (["factory-stopped", "rework:2"], True, Moves("human-owned")),
     ],
 )
 def test_two_rework_rounds_then_a_human(labels, blocker, expected):
@@ -647,7 +647,7 @@ def test_build_prompt_offers_the_open_question_kind(tmp_path):
 @pytest.mark.parametrize("spec_blocker", [True, False])
 def test_review_gate_moves_no_labels_on_a_human_owned_pr(spec_blocker):
     assert review_gate(
-        ["ready-for-human", "rework:2"], [], "abc", spec_blocker, "success"
+        ["factory-stopped", "rework:2"], [], "abc", spec_blocker, "success"
     ) == Moves("human-owned")
 
 
@@ -659,5 +659,12 @@ def test_review_yml_still_runs_on_ready_for_human_prs_but_never_on_forks():
     group = text.split("group: >-", 1)[1].split("cancel-in-progress", 1)[0]
     job_if = text.split("    if: >-", 1)[1].split("runs-on:", 1)[0]
     for part in (group, job_if):
-        assert "ready-for-human" not in part
+        assert "factory-stopped" not in part
         assert fork in part
+
+
+def test_a_pr_with_the_legacy_stopped_label_is_still_stopped():
+    assert label_moves(["factory-stopped", "rework:2"], True) == Moves("human-owned")
+    assert review_gate(["factory-stopped"], [], "abc", True, "success") == Moves(
+        "human-owned"
+    )

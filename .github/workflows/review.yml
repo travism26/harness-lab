@@ -3,12 +3,12 @@
 # A fresh-context, two-axis review (Spec, Standards) of every pull request from
 # a branch of this repository, draft or not. It posts its report on the PR. On
 # a Spec blocker it labels the PR `rework` and counts the round with
-# `rework:1`..`rework:2`; the blocker after rework:2 labels it ready-for-human
+# `rework:1`..`rework:2`; the blocker after rework:2 labels it factory-stopped
 # and the factory stops. A CI failure on the same head shares that counter
 # (.github/workflows/ci-gate.yml): this step does not open a second round for it. It never
 # approves and never merges.
 #
-# A PR labelled `ready-for-human` is still reviewed on each push, but Review
+# A PR labelled `factory-stopped` is still reviewed on each push, but Review
 # changes no labels on it (factory/review_pr.py). Rework and the CI gate skip it.
 #
 # PRs from forks are never reviewed here: this workflow holds secrets, and fork
@@ -52,7 +52,7 @@ env:
 jobs:
   review:
     # PRs from a branch of this repository (never a fork), including one
-    # labelled `ready-for-human`: Review still reads its pushes and posts a
+    # labelled `factory-stopped`: Review still reads its pushes and posts a
     # report, and moves no labels there. Pushing a branch here needs write access.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository

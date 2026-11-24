@@ -71,7 +71,7 @@ def find_report(
 def gate_of(body: str) -> str | None:
     meta = review_pr.parse_gate(body)
     if meta and meta.charged:
-        if review_pr.HUMAN_LABEL in meta.add:
+        if review_pr.is_stopped(meta.add):
             return "human"
         return "rework" if review_pr.REWORK_LABEL in meta.add else None
     lines = body.split("\n")

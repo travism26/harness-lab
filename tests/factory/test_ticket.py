@@ -345,7 +345,7 @@ def test_only_the_rework_prompt_tells_the_agent_to_leave_open_questions(tmp_path
 @pytest.mark.parametrize(
     "pr",
     [
-        _pr(labels=("rework", "ready-for-human")),
+        _pr(labels=("rework", "factory-stopped")),
         _pr(labels=()),
         _pr(branch="fm/hand-made"),
     ],

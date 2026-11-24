@@ -64,7 +64,7 @@ from factory.github import (
     neutralize_comments,
     write_comment,
 )
-from factory.review_pr import HUMAN_LABEL, REWORK_LABEL, linked_ticket, review_input
+from factory.review_pr import REWORK_LABEL, is_stopped, linked_ticket, review_input
 from factory.switch_rule import LOGINS, refusal
 from factory.sync_labels import load_labels
 
@@ -413,7 +413,7 @@ def revise(args, gh: GitHub | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     pr = gh.pr(args.repo, args.pr)
     labels = label_names(pr)
-    if pr.get("state") != "OPEN" or HUMAN_LABEL in labels or REWORK_LABEL not in labels:
+    if pr.get("state") != "OPEN" or is_stopped(labels) or REWORK_LABEL not in labels:
         raise RuntimeError(
             f"PR {args.repo}#{args.pr} is not waiting for rework "
             f"(state {pr.get('state')}, labels {labels})"

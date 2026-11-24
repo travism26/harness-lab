@@ -31,7 +31,7 @@ from pathlib import Path
 
 from factory.github import GitHub, GitHubError
 from factory.record import BACKFILL_FILE, SCHEMA, TOKEN_RE, record_text
-from factory.review_pr import HUMAN_LABEL, rework_round
+from factory.review_pr import STOPPED_LABELS, rework_round
 from factory.switch_rule import default_app_slug, is_factory_app
 from factory.ticket import START_LABEL, STARTED_PREFIX
 
@@ -249,14 +249,14 @@ class Facts:
     def escalated(self) -> bool:
         """The factory bot sent the pull request to a human (a label anyone else added is not
         the factory's escalation)."""
-        return HUMAN_LABEL in self.bot_added()
+        return any(label in self.bot_added() for label in STOPPED_LABELS)
 
     @property
     def human_labelled(self) -> bool:
         """Anyone, the bot or a person, put the human label on the pull request or its Ticket."""
         return any(
             e.get("event") == "labeled"
-            and (e.get("label") or {}).get("name") == HUMAN_LABEL
+            and (e.get("label") or {}).get("name") in STOPPED_LABELS
             for e in self.events
         )
 

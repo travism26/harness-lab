@@ -59,7 +59,7 @@ fails with a message naming what is missing. It never goes green without doing a
    - A **failure** posts one comment with the review marker. The comment names each failed job and
      a short tail of its log, with secret values removed, and says the rework round must make the
      check pass. It then applies the same labels Review uses (`rework` and `rework:1`, then
-     `rework:2`, then `ready-for-human`), with the App token, so **Rework** starts. `revise` reads
+     `rework:2`, then `factory-stopped`), with the App token, so **Rework** starts. `revise` reads
      that comment. Its `--run-url` is the rework run; the CI run's URL is in the comment.
    - If Review has already charged this head, the failure joins that round and the counter stays.
      If CI charged first, Review's Spec blocker joins the same way. One head, one round.
@@ -69,7 +69,7 @@ fails with a message naming what is missing. It never goes green without doing a
      (two minutes for a failure with no comment or no CI run; twenty minutes at the outside)
      and Rework continues. If no CI run exists for the head and Review
      is already ready, or CI has failed and the comment never arrives (the gate ignores a non-draft,
-     a fork, or `ready-for-human`), Rework gives it two minutes and then continues. A repeated
+     a fork, or `factory-stopped`), Rework gives it two minutes and then continues. A repeated
      delivery of the same CI run does not open another round. If two charges land together, the
      later comment is rewritten so it does not claim the round.
    - A **green** CI run does nothing by itself. The gate runs again when Review finishes. If CI
@@ -86,7 +86,7 @@ fails with a message naming what is missing. It never goes green without doing a
    Claude Code fixes what the review named, including a CI failure in the comment, and pushes.
    The push starts Review and CI again.
 6. A second blocker, from Review or from CI, labels the PR `rework:2` and starts a second rework
-   round. The blocker after that labels the PR `ready-for-human`, and the factory stops: Rework
+   round. The blocker after that labels the PR `factory-stopped`, and the factory stops: Rework
    and the CI gate skip the PR from then on. Review still reads each push and posts its report,
    and changes no labels.
 7. When Review has passed the current head and CI is green, the draft waits. The owner reads it,
@@ -225,7 +225,7 @@ Each brake, from the lab-wide [decision records](../adr/) (0003, 0004, 0005, 000
 |---|---|
 | Draft PRs only | `factory/ticket.py` `publish` opens every PR with `--draft`. Nothing in the factory marks a PR ready or merges it. |
 | A review step on every PR | `review.yml` runs on `opened`, `synchronize`, `reopened` and `ready_for_review` for every PR from a branch of this repo, draft or not, the owner's own PRs included. Fork PRs are the exception: see public-repo safety below. |
-| Stop after two rework rounds per Ticket | `factory/review_pr.py`: `MAX_REWORK = 2`. The counter lives in the `rework:N` label. Review and the CI gate share it, one charge per head. The blocker after `rework:2` adds `ready-for-human`. |
+| Stop after two rework rounds per Ticket | `factory/review_pr.py`: `MAX_REWORK = 2`. The counter lives in the `rework:N` label. Review and the CI gate share it, one charge per head. The blocker after `rework:2` adds `factory-stopped`. |
 | One Ticket at a time | `implement.yml` runs in one concurrency group, `factory-ticket`, which is never cancelled. `factory/ticket.py` `claim` refuses a Ticket while another open Ticket is labelled `in-progress`. The refusal is posted on the Ticket and `ready-for-factory` is removed. |
 | A human merges | The App has no permission to merge or approve, and no step asks it to. |
 
@@ -355,11 +355,11 @@ A failed run's `reason` comes from the jobs the command already fetches: a faile
 | Agent time | The sum of `duration_ms` across the Ticket's records. |
 | Rework rounds | The highest `rework:N` label the bot added, read from the Ticket's and the pull request's timelines. A label added by anyone else, such as a hand re-add of `rework`, does not count. The total is the sum. |
 | Owner commits | Commits on the pull request not authored by the bot. The total is the sum. |
-| Human escalation | The bot added `ready-for-human`. |
+| Human escalation | The bot added `factory-stopped`. |
 | CI on first push | The first run of the CI workflow on `factory/issue-<N>` concluded `success`. Review runs and the CI gate are not CI. A branch with no CI run shows `none`, an unfinished first run `pending`; neither is a success. |
 | Start label to draft | From the bot removing the start label (`ready-for-factory`, or `ready-for-agent` before 2026-11-08), taking the last removal at or before the pull request's creation, to that creation. The total is the median. |
 | Merge | `merged`, `closed` (unmerged) or `open`. The total is merged over merged plus closed; an open pull request counts toward neither. |
-| Untouched merge | Merged with no owner commit and never labelled `ready-for-human` by anyone, the bot or a person. Human escalation stays the bot's alone. |
+| Untouched merge | Merged with no owner commit and never labelled `factory-stopped` by anyone, the bot or a person. Human escalation stays the bot's alone. |
 | Post-merge reverts | Subjects of commits on `main` that start with `Revert` and name the merged pull request as `#<N>`. The total is the sum. |
 
 Every rate in the columns from Rework rounds on is over factory Tickets that opened a draft, except Merge. A Ticket with no draft shows `-`. Labels, pull requests, commits and CI runs are read per draft through `gh`, because the CI gate can charge a rework round or hand a pull request to a human and it is not a Factory run. Commit subjects on `main` are read through the commits API for the `--repo` repository, not a local clone, which may be stale.
@@ -395,7 +395,7 @@ Ticket moves](#how-a-ticket-moves).
 | `in-progress` | Factory | The factory is building or reworking this Ticket. Removed when Review has passed the current head and CI is green, so a finished draft does not hold the one-at-a-time lock. Also removed when the Ticket closes (`.github/workflows/clear-labels.yml`). A Ticket closed mid-run frees the one-at-a-time lock while the run goes on. |
 | `factory-failed` | Factory | The last Implement run on this Ticket, or Rework run on this PR, failed. The next start of that Ticket or PR removes it. |
 | `rework`, `rework:1`, `rework:2` | Factory (Review or CI gate) | A Spec blocker or a failed required CI run; the counter is the rework round, one charge per head |
-| `ready-for-human` | Factory (Review or CI gate) | Two rework rounds were not enough; the factory has stopped |
+| `factory-stopped` | Factory (Review or CI gate) | Two rework rounds were not enough; the factory has stopped. A PR label only; before 2026-11-24 the factory used `ready-for-human` here, and metrics still read it |
 | `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds. Every folder under `projects/` has a row in `factory/labels.json` (`harness`, `agent-identity`, `ai-gateway`, `agents`, `go-sandbox`, `spring-sandbox`, `ts-sandbox`); a test fails when one lacks it. A Project with an executable `check` is accepted whatever the file says; add a row only for a folder that has a `check`. See [Starting a Project](#starting-a-project) |
 | `ready-for-builder` | Scout | A Goal issue ready for the Builder to plan. It does not start the factory |
 | `builder:claimed` | Builder | The Builder has claimed this Goal issue and is planning it |
@@ -439,7 +439,7 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 | A factory draft's CI is red and no rework starts | Open the CI gate run. It ignores a PR that is not a draft, not opened by the factory App, or not on `factory/issue-<N>`, and it stops at the daily cap. A `timed_out` or `cancelled` CI run is not a failure. |
 | A comment says the factory did not start the research request | Read the reason, fix the request or wait for the other Ticket, then re-apply `ready-for-research`. |
 | A comment says the note failed its check | No PR was opened and `in-progress` is gone. The comment lists what the check found. Change the request if that helps, then re-apply `ready-for-research`. |
-| A PR is labelled `ready-for-human` | Finish it by hand, or close it. Review still reads your pushes and posts a report with no label changes; Rework and the CI gate stay off. |
+| A PR is labelled `factory-stopped` | Finish it by hand, or close it. Review still reads your pushes and posts a report with no label changes; Rework and the CI gate stay off. |
 | A Rework run failed | The PR keeps `rework`. Fix it by hand and push, or re-add `rework` to retry. |
 
 ## Not built yet

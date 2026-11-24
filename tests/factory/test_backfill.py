@@ -635,7 +635,7 @@ def test_older_reports_give_the_gate_their_sentence_names(tmp_path):
                 HEAD,
                 "BLOCKED",
                 "Review blocked this PR again after 2 rework rounds, "
-                "so it is labelled `ready-for-human` and the factory "
+                "so it is labelled `factory-stopped` and the factory "
                 "stops here.",
             )
         ],
