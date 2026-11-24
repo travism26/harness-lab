@@ -384,6 +384,13 @@ class GitHub:
         return int(self._gh(["api", f"users/{app_slug}[bot]", "--jq", ".id"]).strip())
 
 
+# The factory's block in a PR body (written by `factory/ticket.py`, which Review never reads).
+PR_BLOCK_START = "<!-- factory:pr-block -->"
+PR_BLOCK_END = "<!-- factory:pr-block-end -->"
+# What a change that states no Door counts as.
+DOOR_NOT_STATED = "one-way (not stated)"
+
+
 def label_names(item: dict) -> list[str]:
     return [label["name"] for label in item.get("labels") or []]
 

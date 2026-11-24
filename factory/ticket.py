@@ -59,6 +59,9 @@ from pathlib import Path
 from factory import claude
 from factory.ci_projects import changed_projects
 from factory.github import (
+    DOOR_NOT_STATED,
+    PR_BLOCK_END,
+    PR_BLOCK_START,
     GitHub,
     GitHubError,
     author,
@@ -309,7 +312,6 @@ _DOOR = (
 DOOR_LINE = re.compile(r"^Door: (two-way|one-way) - (.+)$")
 DOOR_REASON_MAX = 200
 DOOR_FILE = "door.json"
-DOOR_NOT_STATED = "one-way (not stated)"
 
 
 def split_door(text: str) -> tuple[str, dict]:
@@ -634,8 +636,6 @@ def _git(work: str, *args: str) -> str:
     return r.stdout
 
 
-PR_BLOCK_START = "<!-- factory:pr-block -->"
-PR_BLOCK_END = "<!-- factory:pr-block-end -->"
 EVIDENCE_MAX_LINES = 40
 EVIDENCE_MAX_CHARS = 4000
 

@@ -40,6 +40,9 @@ from pathlib import Path
 
 from factory import claude
 from factory.github import (
+    DOOR_NOT_STATED,
+    PR_BLOCK_END,
+    PR_BLOCK_START,
     GitHub,
     GitHubError,
     author,
@@ -162,6 +165,61 @@ def parse_findings(text: str) -> Findings:
         _list("spec_findings", SPEC_KINDS),
         _list("standards_findings", STANDARDS_KINDS),
     )
+
+
+DOOR_REASON_MAX = 200
+DOOR_FILE = "door.json"
+_DOORS = ("two-way", "one-way")
+_DOOR_LINE_RE = re.compile(r"^\s*\*\*Door:\*\*\s*(two-way|one-way)\b", re.MULTILINE)
+
+
+def parse_door(text: str) -> tuple[str, str]:
+    """Review's own Door call and its reason, from the same JSON object as the findings.
+    Never raises: a missing, misspelled or other value is `one-way (not stated)`."""
+    try:
+        raw = json.loads(text[text.find("{") : text.rfind("}") + 1])
+        door, reason = raw.get("door"), raw.get("door_reason")
+    except (ValueError, AttributeError):
+        return DOOR_NOT_STATED, ""
+    if door not in _DOORS:
+        return DOOR_NOT_STATED, ""
+    return door, reason.strip() if isinstance(reason, str) else ""
+
+
+def read_door(out: Path) -> tuple[str, str]:
+    """The `door.json` Review wrote. A missing or malformed file means not stated."""
+    try:
+        raw = json.loads((out / DOOR_FILE).read_text())
+        door, reason = raw["door"], raw["reason"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return DOOR_NOT_STATED, ""
+    if door not in _DOORS or not isinstance(reason, str):
+        return DOOR_NOT_STATED, ""
+    return door, reason
+
+
+def strip_pr_block(body: str) -> str:
+    """`body` without the factory block. A start marker with no end marker strips to the end."""
+    start = body.find(PR_BLOCK_START)
+    if start < 0:
+        return body
+    end = body.find(PR_BLOCK_END, start + len(PR_BLOCK_START))
+    if end < 0:
+        return body[:start]
+    return body[:start] + body[end + len(PR_BLOCK_END) :]
+
+
+def door_in_body(body: str) -> str | None:
+    """The Door the PR body states: the factory block's `**Door:**` line, else a hand-written
+    one, else None. `one-way (not stated)` reads as one-way."""
+    start = body.find(PR_BLOCK_START)
+    if start >= 0:
+        end = body.find(PR_BLOCK_END, start + len(PR_BLOCK_START))
+        match = _DOOR_LINE_RE.search(body[start : end if end >= 0 else len(body)])
+        if match:
+            return match.group(1)
+    match = _DOOR_LINE_RE.search(strip_pr_block(body))
+    return match.group(1) if match else None
 
 
 def findings_from_json(text: str) -> Findings:
@@ -380,6 +438,10 @@ def review_gate(
     return label_moves(labels, False)
 
 
+def _door_word(door: str) -> str:
+    return "two-way" if door == "two-way" else "one-way"
+
+
 def _axis_verdict(findings: list[Finding]) -> str:
     if any(f.blocks for f in findings):
         return "BLOCKER"
@@ -393,6 +455,8 @@ def render_report(
     labels_after: list[str],
     stale_head: str | None = None,
     nonce: str | None = None,
+    door: tuple[str, str] = (DOOR_NOT_STATED, ""),
+    body_door: str | None = None,
 ) -> str:
     """The PR comment: a headline, what was reviewed against, then each axis."""
     verdict = "BLOCKED" if findings.blocker else "PASS"
@@ -439,6 +503,14 @@ def render_report(
         lines.append(
             "Spec passed. Required CI failed on this head, so the rework "
             "counter is left to the CI gate and no labels were changed."
+        )
+    review_door, door_reason = door
+    reason = " ".join(neutralize_comments(door_reason).split())[:DOOR_REASON_MAX]
+    lines += ["", f"Door: {review_door}." + (f" {reason}" if reason else "")]
+    if body_door is not None and body_door != _door_word(review_door):
+        lines.append(
+            f"Review's Door and the PR body's Door differ (Review: {review_door}; "
+            f"PR body: {body_door}). The more cautious Door is one-way."
         )
     # The summaries and findings are the model's text. Neutralised, they cannot form a
     # hidden marker of the factory's (the review marker, the gate line, a Run record).
@@ -512,12 +584,19 @@ names, duplicated logic, abstraction the requirement doesn't need) as "baseline_
 
 Keep the axes separate.
 
+## Door
+Also make your own Door call on the change, from the diff alone. "two-way" means \
+reverting the merge restores the old state. "one-way" means it does not (data dropped or \
+migrated, something published or sent, a shared contract changed). If in doubt, answer \
+"one-way". Give one sentence of reason.
+
 Respond with ONLY this JSON object:
 {{"spec_summary": "<1-3 sentences>", "standards_summary": "<1-3 sentences>",
   "spec_findings": [{{"kind": "missing_requirement"|"implemented_wrongly"|"scope_creep"|"open_question", \
 "description": "...", "resolution": "...", "file_path": "path:line or null"}}],
   "standards_findings": [{{"kind": "repo_standard"|"baseline_smell", \
-"description": "...", "resolution": "...", "file_path": "path:line or null"}}]}}"""
+"description": "...", "resolution": "...", "file_path": "path:line or null"}}],
+  "door": "two-way"|"one-way", "door_reason": "<one sentence>"}}"""
 
 
 _CI_NOTE = """
@@ -564,11 +643,12 @@ def prepare(args, gh: GitHub | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     pr = gh.pr(args.repo, args.pr)
 
-    ticket_number = linked_ticket(pr.get("body") or "", args.repo)
+    body = pr.get("body") or ""
+    ticket_number = linked_ticket(body, args.repo)
     authors = [author(pr)]
     if ticket_number is None:
         (out / "ticket.md").write_text(
-            f"# {pr.get('title', '')}\n\n{pr.get('body') or ''}\n"
+            f"# {pr.get('title', '')}\n\n{strip_pr_block(body)}\n"
         )
     else:
         issue = gh.issue(args.repo, ticket_number)
@@ -726,6 +806,10 @@ def review(args, run_agent=claude.run) -> int:
         (out / "findings.json").write_text(
             json.dumps(asdict(findings), indent=2) + "\n"
         )
+        door, door_reason = parse_door(last.text)
+        (out / DOOR_FILE).write_text(
+            json.dumps({"door": door, "reason": door_reason}) + "\n"
+        )
         print(
             f"Review {'found a blocker' if findings.blocker else 'passed'}: "
             f"{len(findings.spec_findings) + len(findings.standards_findings)} finding(s), "
@@ -789,6 +873,8 @@ def apply(args, gh: GitHub | None = None) -> int:
     ctx = json.loads((out / "context.json").read_text())
     findings = findings_from_json((out / "findings.json").read_text())
     pr = gh.pr(args.repo, args.pr)
+    door = read_door(out)
+    body_door = door_in_body(pr.get("body") or "")
     if pr.get("state") != "OPEN":
         print(f"PR {args.repo}#{args.pr} is {pr.get('state')}; nothing posted")
         return 0
@@ -812,7 +898,9 @@ def apply(args, gh: GitHub | None = None) -> int:
     )
     nonce = secrets.token_hex(8) if moves.outcome in ("rework", "human") else None
 
-    report = render_report(findings, ctx, moves, labels_after, stale_head, nonce)
+    report = render_report(
+        findings, ctx, moves, labels_after, stale_head, nonce, door, body_door
+    )
     path = write_comment(out, "report.md", report)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
@@ -829,7 +917,13 @@ def apply(args, gh: GitHub | None = None) -> int:
         # The comment was posted as the charge. Another comment won, so this
         # one must not keep claiming the round.
         corrected = render_report(
-            findings, ctx, Moves("same-round"), labels, stale_head
+            findings,
+            ctx,
+            Moves("same-round"),
+            labels,
+            stale_head,
+            door=door,
+            body_door=body_door,
         )
         corrected_path = write_comment(out, "report.md", corrected)
         gh.update_comment(args.repo, comment_id, corrected_path)
