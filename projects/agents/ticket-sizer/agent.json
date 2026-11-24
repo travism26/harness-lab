@@ -1,0 +1,14 @@
+{
+  "name": "ticket-sizer",
+  "job": "Read one Lab issue from a local fixture and propose which workflow scenario it is.",
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "maxTurns": 12,
+  "maxBudgetUsd": 0.10,
+  "settingSources": [],
+  "permissionMode": "dontAsk",
+  "tools": [],
+  "allowedTools": ["mcp__issues__read_issue"],
+  "disallowedTools": ["Bash", "Write", "Edit", "NotebookEdit", "Read", "Glob", "Grep", "WebFetch", "WebSearch", "Agent"],
+  "runLog": "runs/log.jsonl"
+}
