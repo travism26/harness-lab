@@ -86,8 +86,9 @@ fails with a message naming what is missing. It never goes green without doing a
    Claude Code fixes what the review named, including a CI failure in the comment, and pushes.
    The push starts Review and CI again.
 6. A second blocker, from Review or from CI, labels the PR `rework:2` and starts a second rework
-   round. The blocker after that labels the PR `ready-for-human`, and the factory stops: Review,
-   Rework and the CI gate skip the PR from then on.
+   round. The blocker after that labels the PR `ready-for-human`, and the factory stops: Rework
+   and the CI gate skip the PR from then on. Review still reads each push and posts its report,
+   and changes no labels.
 7. When Review has passed the current head and CI is green, the draft waits. The owner reads it,
    marks it ready and merges it. The merge closes the Ticket. `in-progress` is already gone, so
    the next Ticket can start without waiting for that merge.
@@ -231,7 +232,11 @@ Each brake, from the lab-wide [decision records](../adr/) (0003, 0004, 0005, 000
 Further limits:
 
 - **Daily run cap.** The preflight stops a workflow once it has started `FACTORY_DAILY_RUN_CAP`
-  runs that UTC day (default 20). `0` is a kill switch.
+  runs that UTC day (default 20). `0` is a kill switch. Review has its own cap,
+  `FACTORY_REVIEW_DAILY_RUN_CAP` (default 40), because it runs on every push to every pull
+  request. A Review stopped by it posts one comment on the pull request (once per head, no review
+  marker, so no verdict) saying the cap was reached and which variable to raise, then fails red.
+  Queued and running runs count toward every cap.
 - **Dollar cap per agent run.** Claude Code's `--max-budget-usd` caps every agent run. A run that
   hits the cap fails red. The check happens between turns, so a run can go a few cents over.
 - **The spend stop** is the credit limit on the OpenRouter key, enforced by OpenRouter
@@ -390,14 +395,19 @@ Ticket moves](#how-a-ticket-moves).
 | `in-progress` | Factory | The factory is building or reworking this Ticket. Removed when Review has passed the current head and CI is green, so a finished draft does not hold the one-at-a-time lock. |
 | `rework`, `rework:1`, `rework:2` | Factory (Review or CI gate) | A Spec blocker or a failed required CI run; the counter is the rework round, one charge per head |
 | `ready-for-human` | Factory (Review or CI gate) | Two rework rounds were not enough; the factory has stopped |
-| `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds. The row is in `factory/labels.json`. See [Starting a Project](#starting-a-project) |
+| `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds. Every folder under `projects/` has a row in `factory/labels.json` (`harness`, `agent-identity`, `ai-gateway`, `agents`, `go-sandbox`, `spring-sandbox`, `ts-sandbox`); a test fails when one lacks it. A Project with an executable `check` is accepted whatever the file says; add a row only for a folder that has a `check`. See [Starting a Project](#starting-a-project) |
+| `ready-for-builder` | Scout | A Goal issue ready for the Builder to plan. It does not start the factory |
+| `builder:claimed` | Builder | The Builder has claimed this Goal issue and is planning it |
+| `spec:ready-for-review` | Builder | The spec is validated and waits for owner review. It does not start the factory |
+| `ready-for-implementation` | Owner | On a spec issue: the Builder writes the Tickets and labels them `ready-for-agent` |
+| `wayfinder:map`, `wayfinder:research`, `wayfinder:grilling`, `wayfinder:prototype`, `wayfinder:task` | Owner or a skill | Wayfinder issue kinds. They do not start the factory |
 | `factory-check` | Owner | Run the live check |
 | `ready-for-agent` | Owner or a skill | Triage only: fully specified. It does not start the factory, so a Ticket can carry it and still be built on the laptop |
 | `needs-triage`, `needs-info`, `wontfix` | Owner | Triage, see [triage-labels.md](../agents/triage-labels.md) |
 
 To change a label, edit `factory/labels.json` and run
 `uv run python -m factory.sync_labels --apply`. Run it without `--apply` first to see the dry run.
-It never deletes a label.
+It never deletes a label. The owner runs it after merge, dry run first; the factory never runs it.
 
 ## Knobs
 
@@ -406,7 +416,8 @@ All are repository variables. Defaults apply when a variable is unset.
 | Variable | Default | Meaning |
 |---|---|---|
 | `FACTORY_CLAUDE_LOGIN` | `subscription` | `subscription` or `openrouter`: see the switch rule |
-| `FACTORY_DAILY_RUN_CAP` | `20` | Runs per workflow per UTC day. `0` stops every run. |
+| `FACTORY_DAILY_RUN_CAP` | `20` | Runs per workflow per UTC day, for every workflow except Review. `0` stops every run. |
+| `FACTORY_REVIEW_DAILY_RUN_CAP` | `40` | Review's own runs per UTC day. Over it, Review comments on the PR that it did not run, and fails red. `0` stops every Review. |
 | `FACTORY_BUILD_MODEL` | `sonnet` | Model for Implement and Rework: `haiku`, `sonnet` or `opus` |
 | `FACTORY_BUILD_BUDGET_USD` | `5` | `--max-budget-usd` for one Implement or Rework run |
 | `FACTORY_REVIEW_MODEL` | `sonnet` | Model for Review |
@@ -426,7 +437,7 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 | A factory draft's CI is red and no rework starts | Open the CI gate run. It ignores a PR that is not a draft, not opened by the factory App, or not on `factory/issue-<N>`, and it stops at the daily cap. A `timed_out` or `cancelled` CI run is not a failure. |
 | A comment says the factory did not start the research request | Read the reason, fix the request or wait for the other Ticket, then re-apply `ready-for-research`. |
 | A comment says the note failed its check | No PR was opened and `in-progress` is gone. The comment lists what the check found. Change the request if that helps, then re-apply `ready-for-research`. |
-| A PR is labelled `ready-for-human` | Finish it by hand, or close it. The factory will not touch it again. |
+| A PR is labelled `ready-for-human` | Finish it by hand, or close it. Review still reads your pushes and posts a report with no label changes; Rework and the CI gate stay off. |
 | A Rework run failed | The PR keeps `rework`. Fix it by hand and push, or re-add `rework` to retry. |
 
 ## Not built yet

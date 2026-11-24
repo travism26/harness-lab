@@ -39,6 +39,20 @@ inputs:
       How many runs of the calling workflow may start per UTC day, this one
       included. 0 stops every run: a kill switch.
     required: true
+  cap-variable:
+    description: >
+      The name of the repository variable the caller's cap comes from. It only
+      goes into the message of the failed cap step.
+    required: false
+    default: FACTORY_DAILY_RUN_CAP
+  continue-on-cap:
+    description: >
+      When true, a run over its cap does not fail here: the step sets the
+      `capped` output to true and the action still mints the App token, so the
+      workflow can say on the pull request that it was stopped, then fail
+      itself. The default stops the run at the cap step.
+    required: false
+    default: "false"
 
 outputs:
   token:
@@ -46,6 +60,11 @@ outputs:
       An installation token for the factory App on this repository. Events it
       causes start other workflows, which GITHUB_TOKEN's never do.
     value: ${{ steps.app.outputs.token }}
+  capped:
+    description: >
+      `true` when the run is over its daily cap and continue-on-cap is true;
+      `false` otherwise. A run over its cap without continue-on-cap never gets here.
+    value: ${{ steps.cap.outputs.capped }}
   app-slug:
     description: The App's slug; its account is `<slug>[bot]`.
     value: ${{ steps.app.outputs.app-slug }}
@@ -89,10 +108,13 @@ runs:
         fi
 
     - name: Enforce the daily run cap
+      id: cap
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
         CAP: ${{ inputs.daily-run-cap }}
+        CAP_VARIABLE: ${{ inputs.cap-variable }}
+        CONTINUE_ON_CAP: ${{ inputs.continue-on-cap }}
         RUN_ID: ${{ github.run_id }}
         WORKFLOW_REF: ${{ github.workflow_ref }}
       run: |
@@ -113,9 +135,16 @@ runs:
           --created ">=$today" --limit 1000 --json databaseId,conclusion \
           --jq "[.[] | select(.conclusion != \"skipped\" and .databaseId != $RUN_ID)] | length")
         echo "Runs of $workflow_file started today (UTC) before this one: $used. Daily cap: $CAP."
+        echo "capped=false" >> "$GITHUB_OUTPUT"
         if [ "$used" -ge "$CAP" ]; then
-          echo "::error title=Daily run cap reached::$workflow_file has started $used runs today (UTC); the cap is $CAP. Raise the repository variable FACTORY_DAILY_RUN_CAP or wait for tomorrow, then re-run this job."
-          exit 1
+          message="$workflow_file has started $used runs today (UTC); the cap is $CAP. Raise the repository variable $CAP_VARIABLE or wait for tomorrow, then re-run this job."
+          if [ "$CONTINUE_ON_CAP" = "true" ]; then
+            echo "::warning title=Daily run cap reached::$message"
+            echo "capped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error title=Daily run cap reached::$message"
+            exit 1
+          fi
         fi
 
     - name: Mint the factory App token

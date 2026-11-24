@@ -13,8 +13,22 @@
     {"name": "project:harness", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/harness/)"},
     {"name": "project:agent-identity", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/agent-identity/)"},
     {"name": "project:ai-gateway", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/ai-gateway/)"},
+    {"name": "project:agents", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/agents/)"},
+    {"name": "project:go-sandbox", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/go-sandbox/)"},
+    {"name": "project:spring-sandbox", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/spring-sandbox/)"},
+    {"name": "project:ts-sandbox", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/ts-sandbox/)"},
+    {"name": "ready-for-builder", "color": "5319e7", "description": "Scout-applied: a Goal issue ready for the builder to plan (does not start the factory)"},
+    {"name": "builder:claimed", "color": "ededed", "description": "Builder-applied: the Builder has claimed this Goal issue and is planning it"},
+    {"name": "spec:ready-for-review", "color": "1d76db", "description": "Builder-applied: spec validated; waiting for owner review (does not start the factory)"},
+    {"name": "ready-for-implementation", "color": "0e8a16", "description": "Owner-applied on a spec issue: the Builder writes the Tickets and labels them ready-for-agent"},
+    {"name": "wayfinder:map", "color": "5319e7", "description": "Wayfinder map"},
+    {"name": "wayfinder:research", "color": "5319e7", "description": "Wayfinder research"},
+    {"name": "wayfinder:grilling", "color": "5319e7", "description": "Wayfinder grilling"},
+    {"name": "wayfinder:prototype", "color": "5319e7", "description": "Wayfinder prototype"},
+    {"name": "wayfinder:task", "color": "5319e7", "description": "Wayfinder task"},
     {"name": "ready-for-factory", "color": "0b6e2c", "description": "Owner-applied: the factory builds this ticket"},
     {"name": "ready-for-research", "color": "5319e7", "description": "Owner-applied: the factory answers this research-request ticket"},
-    {"name": "factory-check", "color": "bfdadc", "description": "Owner-applied: the factory answers with a short live check"}
+    {"name": "factory-check", "color": "bfdadc", "description": "Owner-applied: the factory answers with a short live check"},
+    {"name": "standards-findings", "color": "c5def5", "description": "The rolling issue that collects merged PRs' non-blocking Standards Findings"}
   ]
 }

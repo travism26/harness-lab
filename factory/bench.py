@@ -1,5 +1,5 @@
 """The Bench's tracer: one Bench run scores one Bench case and stops at the ledger
-(GLOSSARY.md, docs/adr/0009-bench-spends-on-a-metered-api-key.md).
+(GLOSSARY.md, docs/adr/0011-bench-spends-on-a-metered-api-key.md).
 
   uv run python -m factory.bench --replay
 
@@ -53,7 +53,7 @@ SCHEMA = 1
 LOGIN = "anthropic-api"
 COST_NOTE = "client-estimate"
 PASS = "PASS"
-# Never in the stand-in's environment (docs/adr/0009-bench-spends-on-a-metered-api-key.md).
+# Never in the stand-in's environment (docs/adr/0011-bench-spends-on-a-metered-api-key.md).
 _DROPPED = claude._DROPPED + ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY")
 
 

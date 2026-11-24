@@ -901,3 +901,17 @@ def test_porcelain_path_takes_the_destination_of_a_rename():
         ticket._porcelain_path(' M "projects/ai-gateway/my file.go"')
         == "projects/ai-gateway/my file.go"
     )
+
+
+def test_review_and_rework_check_out_the_factory_from_the_default_branch():
+    """base.sha is frozen when the PR opens, so an open PR would run stale scripts."""
+    root = Path(__file__).resolve().parents[2]
+    for name in ("review.yml", "rework.yml"):
+        text = (root / ".github" / "workflows" / name).read_text()
+        start = text.index("- name: Check out the factory")
+        step = text[start : text.index("\n\n", start)]
+        assert "ref: ${{ github.event.repository.default_branch }}" in step
+        assert "persist-credentials: false" in step
+        for line in text.splitlines():
+            if line.strip().startswith("ref:"):
+                assert "base.sha" not in line
