@@ -157,6 +157,22 @@ the App token mints, Claude Code answers on the configured login, and the App po
 
 The factory is ready. The first real Ticket gets `ready-for-factory`.
 
+## Turning on the gate
+
+Every Review sets a commit status named `factory/review` on the head it read: `success` for a
+PASS Verdict, `failure` for BLOCKED, and `error` with a short reason when the Review ends
+without a Verdict (capped, crashed, timed out, no Verdict, or the head moved on). The `status`
+job in `.github/workflows/review.yml` sets it with the workflow's own token, so the App needs no
+Statuses permission ([ADR 0012](../adr/0012-review-verdict-is-a-commit-status-with-a-recorded-override.md)).
+
+A pull request from a fork gets no status: Review does not run for forks, so the `status` job is
+skipped with it. Once the gate is on, such a PR can only merge with an Override.
+
+Until you turn the gate on, the status shows the Verdict and stops nothing. The later owner
+step is a ruleset on `main` that requires `factory/review` and the `factory tests` check
+(`.github/workflows/ci.yml`), with no bypass actors. It is not created by any workflow. Do it
+once Review runs on every head and you have checked its Verdicts against your own.
+
 ## If something goes wrong
 
 | What you see | What it means | What to do |

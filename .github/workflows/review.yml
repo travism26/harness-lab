@@ -61,6 +61,11 @@ jobs:
     permissions:
       contents: read
       actions: read # the daily run cap counts this workflow's runs
+    # What the `status` job reads. Empty when this job never got as far as the last step.
+    outputs:
+      verdict: ${{ steps.handoff.outputs.verdict }}
+      reason: ${{ steps.handoff.outputs.reason }}
+      comment-id: ${{ steps.handoff.outputs.comment-id }}
     steps:
       # The factory's scripts come from the default branch, so a PR cannot change
       # the code judging it. The PR's own code goes under pr/.
@@ -207,3 +212,62 @@ jobs:
           name: review-pr${{ github.event.pull_request.number }}-run${{ github.run_id }}-${{ github.run_attempt }}
           path: review-out/
           if-no-files-found: ignore
+
+      # Last step: hands the outcome to the `status` job as outputs. It runs only the factory's
+      # own script from the default-branch checkout, holds no token and makes no call. GitHub
+      # does not document whether a timed-out job still runs it; if not, `status` falls back
+      # to `crashed` (factory/review_status.py).
+      - name: Hand the outcome to the status job
+        id: handoff
+        if: always() && steps.preflight.conclusion != 'skipped'
+        env:
+          CAPPED: ${{ steps.preflight.outputs.capped }}
+        run: uv run --no-dev python -m factory.review_status handoff --out review-out --capped "$CAPPED"
+
+  # Sets the commit status `factory/review` on the head this Review read (docs/adr/0012-*.md).
+  # A job of its own because permissions are per job: the job that runs the agent never gets
+  # the status permission. This one runs no agent and needs no login, secret or App token. A
+  # fork PR never reaches `review`, so `status` is skipped with it and the PR gets no status.
+  status:
+    needs: review
+    if: always() && needs.review.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+      contents: read # the checkout
+    steps:
+      - name: Check out the factory (default branch)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Work out the status
+        id: status
+        env:
+          VERDICT: ${{ needs.review.outputs.verdict }}
+          REASON: ${{ needs.review.outputs.reason }}
+          COMMENT_ID: ${{ needs.review.outputs.comment-id }}
+          REVIEW_RESULT: ${{ needs.review.result }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          uv run --no-dev python -m factory.review_status resolve --verdict "$VERDICT"
+          --reason "$REASON" --comment-id "$COMMENT_ID" --review-result "$REVIEW_RESULT"
+          --repo "$REPO" --pr "$PR" --run-url "$RUN_URL"
+
+      - name: Set the commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          STATE: ${{ steps.status.outputs.state }}
+          DESCRIPTION: ${{ steps.status.outputs.description }}
+          TARGET_URL: ${{ steps.status.outputs.target-url }}
+        run: >-
+          gh api "repos/$REPO/statuses/$SHA" -f state="$STATE" -f context=factory/review
+          -f description="$DESCRIPTION" -f target_url="$TARGET_URL"
