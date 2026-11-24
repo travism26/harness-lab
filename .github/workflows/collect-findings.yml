@@ -1,0 +1,53 @@
+# Collect the non-blocking Standards Findings of a merged pull request's Review
+# into one rolling issue labelled `standards-findings` (factory/collect_findings.py).
+#
+# No agent runs and no Claude login is used. The step reads the Review comment of
+# the head that merged and appends a comment to one issue, so the workflow's own
+# GITHUB_TOKEN is enough: no App event is needed.
+#
+# pull_request_target, so this file and factory/ come from the default branch.
+# Only a merged pull request from a branch of this repository is read, never a
+# fork's (docs/adr/0005).
+
+name: Collect findings
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions: {}
+
+concurrency:
+  # One writer to the rolling issue at a time, so two merges cannot both open it.
+  group: collect-findings
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: >-
+      github.event.pull_request.merged == true
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Check out the factory (default branch)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Append the Standards Findings to the rolling issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+        run: >-
+          uv run --no-dev python -m factory.collect_findings
+          --repo "$REPO" --pr "$PR" --head "$HEAD_SHA" --app-slug "$APP_SLUG"

@@ -232,7 +232,11 @@ Each brake, from the lab-wide [decision records](../adr/) (0003, 0004, 0005, 000
 Further limits:
 
 - **Daily run cap.** The preflight stops a workflow once it has started `FACTORY_DAILY_RUN_CAP`
-  runs that UTC day (default 20). `0` is a kill switch.
+  runs that UTC day (default 20). `0` is a kill switch. Review has its own cap,
+  `FACTORY_REVIEW_DAILY_RUN_CAP` (default 40), because it runs on every push to every pull
+  request. A Review stopped by it posts one comment on the pull request (once per head, no review
+  marker, so no verdict) saying the cap was reached and which variable to raise, then fails red.
+  Queued and running runs count toward every cap.
 - **Dollar cap per agent run.** Claude Code's `--max-budget-usd` caps every agent run. A run that
   hits the cap fails red. The check happens between turns, so a run can go a few cents over.
 - **The spend stop** is the credit limit on the OpenRouter key, enforced by OpenRouter
@@ -413,7 +417,8 @@ All are repository variables. Defaults apply when a variable is unset.
 | Variable | Default | Meaning |
 |---|---|---|
 | `FACTORY_CLAUDE_LOGIN` | `subscription` | `subscription` or `openrouter`: see the switch rule |
-| `FACTORY_DAILY_RUN_CAP` | `20` | Runs per workflow per UTC day. `0` stops every run. |
+| `FACTORY_DAILY_RUN_CAP` | `20` | Runs per workflow per UTC day, for every workflow except Review. `0` stops every run. |
+| `FACTORY_REVIEW_DAILY_RUN_CAP` | `40` | Review's own runs per UTC day. Over it, Review comments on the PR that it did not run, and fails red. `0` stops every Review. |
 | `FACTORY_BUILD_MODEL` | `sonnet` | Model for Implement and Rework: `haiku`, `sonnet` or `opus` |
 | `FACTORY_BUILD_BUDGET_USD` | `5` | `--max-budget-usd` for one Implement or Rework run |
 | `FACTORY_REVIEW_MODEL` | `sonnet` | Model for Review |

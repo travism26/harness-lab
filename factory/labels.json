@@ -29,6 +29,7 @@
     {"name": "wayfinder:task", "color": "5319e7", "description": "Wayfinder task"},
     {"name": "ready-for-factory", "color": "0b6e2c", "description": "Owner-applied: the factory builds this ticket"},
     {"name": "ready-for-research", "color": "5319e7", "description": "Owner-applied: the factory answers this research-request ticket"},
-    {"name": "factory-check", "color": "bfdadc", "description": "Owner-applied: the factory answers with a short live check"}
+    {"name": "factory-check", "color": "bfdadc", "description": "Owner-applied: the factory answers with a short live check"},
+    {"name": "standards-findings", "color": "c5def5", "description": "The rolling issue that collects merged PRs' non-blocking Standards Findings"}
   ]
 }
