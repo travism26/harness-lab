@@ -33,6 +33,7 @@ import re
 import secrets
 import subprocess
 import sys
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple
@@ -644,6 +645,36 @@ def apply(args, gh: Optional[GitHub] = None) -> int:
     return 0
 
 
+CAPPED_MARKER_PREFIX = "<!-- factory:review-capped"
+
+
+def capped_marker(head_sha: str) -> str:
+    """One line that says a capped-Review comment exists for this head. It is not MARKER."""
+    return f"{CAPPED_MARKER_PREFIX} head={head_sha} -->"
+
+
+def capped_comment(head_sha: str, cap: str, variable: str) -> str:
+    return (f"Review did not run for `{head_sha[:12]}`: Review's daily run cap was reached "
+            f"({cap} runs started today, UTC). No verdict was posted and no label moved.\n\n"
+            f"Raise the repository variable `{variable}` or wait for tomorrow, then re-run "
+            f"the Review job.\n\n{capped_marker(head_sha)}\n")
+
+
+def capped(args: argparse.Namespace, gh: Optional[GitHub] = None) -> int:
+    """Say on the PR that the daily cap stopped Review for this head. Once per head. The
+    comment carries no review marker, so nothing reads it as a verdict."""
+    gh = gh or GitHub()
+    marker = capped_marker(args.head_sha)
+    if any(marker in body for body in _bodies(gh.pr_comments(args.repo, args.pr))):
+        print(f"PR {args.repo}#{args.pr}: already said the cap stopped {args.head_sha[:12]}")
+        return 0
+    path = write_comment(Path(tempfile.mkdtemp()), "capped.md",
+                         capped_comment(args.head_sha, args.cap, args.variable))
+    gh.comment(args.repo, args.pr, path)
+    print(f"Posted on PR {args.repo}#{args.pr}: the daily cap stopped Review for {args.head_sha[:12]}")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="step", required=True)
@@ -674,10 +705,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     a.add_argument("--pr", type=int, required=True)
     a.add_argument("--out", required=True)
 
+    k = sub.add_parser("capped")
+    k.add_argument("--repo", required=True)
+    k.add_argument("--pr", type=int, required=True)
+    k.add_argument("--head-sha", required=True)
+    k.add_argument("--cap", required=True)
+    k.add_argument("--variable", required=True)
+
     args = parser.parse_args(argv)
     try:
         return {"prepare": prepare, "review": review, "ci-conclusion": ci_conclusion,
-                "apply": apply}[args.step](args)
+                "apply": apply, "capped": capped}[args.step](args)
     except (RuntimeError, GitHubError, claude.ConfigError) as e:
         # A workflow command on stdout, so the run page shows it as an error.
         print(f"::error title=Factory review {args.step} failed::{e}")
