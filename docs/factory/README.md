@@ -315,6 +315,7 @@ factory's Claude Code.
 | CI failure and green settle | `.github/workflows/ci-gate.yml`, `factory/ci_gate.py` |
 | Research path | `.github/workflows/research.yml`, `factory/research.py` (`claim`, `answer`, `check`, `publish`, `release`), `factory/research_note.py` (the note check). See [Research path](#research-path) |
 | Live check | `.github/workflows/factory-check.yml`, `factory/check.py` |
+| Retro report | `factory/retro.py` (see [Running a retro](#running-a-retro)) |
 | Claude Code login | `factory/claude.py`, `factory/switch_rule.py` |
 | Run record | `factory/record.py` (the fields, the checks, the marker), `factory/run_record.py` (`write`) and `factory/run_record_review.py`, the last step of `.github/workflows/implement.yml`, `.github/workflows/rework.yml` and `.github/workflows/review.yml` |
 | CI check | `.github/workflows/ci.yml`, `factory/ci_projects.py` (see [CI](#ci)) |
@@ -403,6 +404,7 @@ Ticket moves](#how-a-ticket-moves).
 | `ready-for-implementation` | Owner | On a spec issue: the Builder writes the Tickets and labels them `ready-for-agent` |
 | `wayfinder:map`, `wayfinder:research`, `wayfinder:grilling`, `wayfinder:prototype`, `wayfinder:task` | Owner or a skill | Wayfinder issue kinds. They do not start the factory |
 | `factory-check` | Owner | Run the live check |
+| `retro` | Owner | The proposals issue a Retro produces. The newest one dates the next Retro. See [Running a retro](#running-a-retro) |
 | `ready-for-agent` | Owner or a skill | Triage only: fully specified. It does not start the factory, so a Ticket can carry it and still be built on the laptop |
 | `needs-triage`, `needs-info`, `wontfix` | Owner | Triage, see [triage-labels.md](../agents/triage-labels.md) |
 
@@ -441,6 +443,17 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 | A comment says the note failed its check | No PR was opened and `in-progress` is gone. The comment lists what the check found. Change the request if that helps, then re-apply `ready-for-research`. |
 | A PR is labelled `factory-stopped` | Finish it by hand, or close it. Review still reads your pushes and posts a report with no label changes; Rework and the CI gate stay off. |
 | A Rework run failed | The PR keeps `rework`. Fix it by hand and push, or re-add `rework` to retry. |
+
+## Running a retro
+
+A Retro reads the pull requests merged since the last Retro and proposes new checks and standards. The script reads and prints; the thinking is a local agent session, and nothing is applied until the owner accepts a proposal.
+
+1. `uv run python -m factory.retro --repo travism26/harness-lab` prints one Markdown report. `--since DATE` sets the start; by default it is the creation date of the newest issue labelled `retro`, else every merged pull request. `--fixtures DIR` reads `pr-<N>/` (`pr.json`, `pr-comments.json`, `pr-commits.json`), `retro-issues.json` and `standards-findings.json` instead of GitHub (`tests/factory/fixtures/retro/`). It makes no model call and writes nothing to GitHub.
+2. The report states the merged count since the last Retro and `Retro due: yes` at ten or more. Then it lists: merges whose last Review on the merged head was BLOCKED; merges carrying an Override from the repo owner, with the reason; the blocking Spec findings of that Review; owner commits before merge on factory pull requests; and the open `standards-findings` issue (body and comments). A source that does not exist yet prints `none`. It ends with an empty "Post-merge hand-fixes" section: the owner fills it in by hand, because the script does not detect them.
+3. The owner starts a local agent session, gives it the report and has it draft one issue labelled `retro`. The proposals issue lists each proposal as a check or a standard, with the pull requests behind it. The owner accepts a proposal by building it (a check as a test or a gate, a standard as a line in `CODING_STANDARDS.md`) or closes it.
+4. Each accepted proposal adds one line to [Rules from hand-fixes](#rules-from-hand-fixes), which stays human-read.
+
+Rules of the report: model text (findings, Override reasons, the standards issue) passes through `neutralize` in `factory/collect_findings.py`, so it cannot form a hidden factory marker, mention anyone or close an issue, and any token-shaped string in the output becomes `[redacted]`. A reason from anyone but the repo owner is not an Override.
 
 ## Not built yet
 

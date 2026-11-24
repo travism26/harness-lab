@@ -71,18 +71,18 @@ def review_for_head(comments: Sequence[dict], head: str, bot_login: str) -> str 
     return found
 
 
-def standards_findings(body: str) -> list[Finding]:
-    """The `repo_standard` and `baseline_smell` lines of the Review's Standards section, as
-    (kind, description, path, fix). A line that does not parse is dropped."""
+def findings_in(body: str, heading: str, kinds: Sequence[str]) -> list[Finding]:
+    """The lines of one section of a Review comment (`Spec` or `Standards`) whose kind is in
+    `kinds`, as (kind, description, path, fix). A line that does not parse is dropped."""
     out: list[Finding] = []
-    in_standards = False
+    in_section = False
     for line in (body or "").splitlines():
-        heading = _HEADING_RE.match(line)
-        if heading:
-            in_standards = heading.group("name") == "Standards"
+        found = _HEADING_RE.match(line)
+        if found:
+            in_section = found.group("name") == heading
             continue
-        match = _LINE_RE.match(line) if in_standards else None
-        if match and match.group("kind") in STANDARDS_KINDS:
+        match = _LINE_RE.match(line) if in_section else None
+        if match and match.group("kind") in kinds:
             out.append(
                 (
                     match.group("kind"),
@@ -92,6 +92,11 @@ def standards_findings(body: str) -> list[Finding]:
                 )
             )
     return out
+
+
+def standards_findings(body: str) -> list[Finding]:
+    """The `repo_standard` and `baseline_smell` lines of the Review's Standards section."""
+    return findings_in(body, "Standards", STANDARDS_KINDS)
 
 
 def section(pr: int, title: str, findings: Sequence[Finding]) -> str:
