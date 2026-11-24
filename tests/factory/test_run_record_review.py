@@ -168,7 +168,7 @@ GATES = {
         "round": 2,
     },
     "human-owned": {
-        "gh": {"labels": ["ready-for-human"]},
+        "gh": {"labels": ["factory-stopped"]},
         "answer": BLOCK,
         "verdict": "BLOCKED",
         "round": 0,

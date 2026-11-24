@@ -104,10 +104,10 @@ def test_ci_failure_after_a_pass_becomes_the_rework_finding():
 def test_the_third_blocker_hands_the_pr_to_a_human():
     decision = decide(event(labels=("rework", "rework:2")), nonce="abc")
     assert decision.action == "human"
-    assert decision.add == ("ready-for-human",)
+    assert decision.add == ("factory-stopped",)
     assert decision.remove == ("rework",)
     assert "check ai-gateway" in decision.comment
-    assert "ready-for-human" in decision.comment
+    assert "factory-stopped" in decision.comment
     assert "TestOnlyPostMessages" in decision.comment
 
 
@@ -139,7 +139,7 @@ def test_same_head_already_at_the_cap_does_not_escalate():
         event(labels=("rework", "rework:2"), comments=(charged,), run_id=RUN + 1)
     )
     assert decision.action == "join"
-    assert "ready-for-human" not in decision.add
+    assert "factory-stopped" not in decision.add
 
 
 @pytest.mark.parametrize(
@@ -202,10 +202,10 @@ def test_duplicate_event_finishes_labels_when_the_comment_landed_first():
 
 
 def test_duplicate_human_charge_finishes_without_a_second_comment():
-    comment = _charge(source="ci", ci_run=RUN, nonce="abc", add=("ready-for-human",))
+    comment = _charge(source="ci", ci_run=RUN, nonce="abc", add=("factory-stopped",))
     decision = decide(event(labels=("rework", "rework:2"), comments=(comment,)))
     assert decision.action == "finish"
-    assert decision.add == ("ready-for-human",)
+    assert decision.add == ("factory-stopped",)
     assert decision.remove == ("rework",)
     assert decision.comment == ""
 

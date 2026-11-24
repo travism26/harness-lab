@@ -11,7 +11,7 @@ GitHub token and the steps holding the App token run no agent:
            writes its findings into --out.
   apply    (App token, no agent) posts the report on the PR and moves the
            labels: on a blocker `rework` plus a `rework:N` counter; after
-           rework:2 the next blocker labels the PR ready-for-human instead.
+           rework:2 the next blocker labels the PR factory-stopped instead.
            A CI failure on the same head shares that counter (factory/ci_gate.py).
 
 Usage:
@@ -34,7 +34,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -50,7 +50,10 @@ from factory.github import (
 from factory.switch_rule import LOGINS, refusal
 
 REWORK_LABEL = "rework"
-HUMAN_LABEL = "ready-for-human"
+STOPPED_LABEL = "factory-stopped"
+# Before 2026-11-24 the factory put the issue label on a PR it had stopped; open PRs may still carry it.
+LEGACY_STOPPED_LABEL = "ready-for-human"
+STOPPED_LABELS = (STOPPED_LABEL, LEGACY_STOPPED_LABEL)
 IN_PROGRESS_LABEL = "in-progress"
 # The design's brake: stop after two rework rounds per ticket.
 MAX_REWORK = 2
@@ -328,9 +331,14 @@ class Moves:
     remove: tuple = ()
 
 
+def is_stopped(labels: Iterable[str]) -> bool:
+    """The PR carries the stopped label, or the legacy one an older stop left on it."""
+    return any(label in STOPPED_LABELS for label in labels)
+
+
 def label_moves(labels: list[str], blocker: bool) -> Moves:
     labels = list(labels)
-    if HUMAN_LABEL in labels:
+    if is_stopped(labels):
         return Moves("human-owned")
     if not blocker:
         return Moves("pass", remove=(REWORK_LABEL,) if REWORK_LABEL in labels else ())
@@ -338,7 +346,7 @@ def label_moves(labels: list[str], blocker: bool) -> Moves:
     if done >= MAX_REWORK:
         return Moves(
             "human",
-            add=(HUMAN_LABEL,),
+            add=(STOPPED_LABEL,),
             remove=(REWORK_LABEL,) if REWORK_LABEL in labels else (),
         )
     remove = tuple(label for label in labels if _COUNTER_RE.match(label))
@@ -361,7 +369,7 @@ def review_gate(
     `ci_conclusion` None means CI has not finished; a pass then only clears a
     stale `rework` label, and the gate settles in-progress once CI is green.
     """
-    if HUMAN_LABEL in labels:
+    if is_stopped(labels):
         return Moves("human-owned")
     if spec_blocker:
         if head_charged(comments, head_sha):
@@ -410,10 +418,12 @@ def render_report(
     elif moves.outcome == "human":
         lines.append(
             f"Review blocked this PR again after {MAX_REWORK} rework rounds, "
-            f"so it is labelled `{HUMAN_LABEL}` and the factory stops here."
+            f"so it is labelled `{STOPPED_LABEL}` and the factory stops here."
         )
     elif moves.outcome == "human-owned":
-        lines.append(f"The PR is labelled `{HUMAN_LABEL}`, so no labels were changed.")
+        lines.append(
+            f"The PR is labelled `{STOPPED_LABEL}`, so no labels were changed."
+        )
     elif moves.outcome == "stale":
         lines.append(
             f"The PR has moved on to `{(stale_head or '')[:12]}` since this "
