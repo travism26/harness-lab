@@ -451,8 +451,10 @@ def render_report(
             )
     lines += [
         "",
-        "A Spec blocker or a failing required CI run on a factory draft "
-        "sends a PR to rework. The merge is a human's.",
+        (
+            "A Spec blocker or a failing required CI run on a factory draft "
+            "sends a PR to rework. The merge is a human's."
+        ),
     ]
     return "\n".join(lines) + "\n"
 

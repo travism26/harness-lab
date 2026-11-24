@@ -59,28 +59,28 @@ def _charge(
 
 
 def event(**kw):
-    base = dict(
-        conclusion="failure",
-        event="pull_request",
-        head_branch="factory/issue-114",
-        head_sha=SHA,
-        head_repo=REPO,
-        repo=REPO,
-        run_id=RUN,
-        run_url=f"https://github.com/{REPO}/actions/runs/{RUN}",
-        pr=118,
-        pr_state="OPEN",
-        pr_draft=True,
-        pr_author="travism26-factory[bot]",
-        pr_head_repo=REPO,
-        pr_head_sha=SHA,
-        labels=(),
-        body="Closes #114\n",
-        comments=(_pass(),),
-        failed_jobs=(FailedJob("check ai-gateway", EXCERPT),),
-        app_slug="travism26-factory",
-        issue_labels=("in-progress", "project:ai-gateway"),
-    )
+    base = {
+        "conclusion": "failure",
+        "event": "pull_request",
+        "head_branch": "factory/issue-114",
+        "head_sha": SHA,
+        "head_repo": REPO,
+        "repo": REPO,
+        "run_id": RUN,
+        "run_url": f"https://github.com/{REPO}/actions/runs/{RUN}",
+        "pr": 118,
+        "pr_state": "OPEN",
+        "pr_draft": True,
+        "pr_author": "travism26-factory[bot]",
+        "pr_head_repo": REPO,
+        "pr_head_sha": SHA,
+        "labels": (),
+        "body": "Closes #114\n",
+        "comments": (_pass(),),
+        "failed_jobs": (FailedJob("check ai-gateway", EXCERPT),),
+        "app_slug": "travism26-factory",
+        "issue_labels": ("in-progress", "project:ai-gateway"),
+    }
     base.update(kw)
     return ci_gate.GateEvent(**base)
 

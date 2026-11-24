@@ -79,8 +79,10 @@ class GitHub:
                     "-R",
                     repo,
                     "--json",
-                    "number,title,body,state,isDraft,author,headRefName,"
-                    "headRefOid,labels,url",
+                    (
+                        "number,title,body,state,isDraft,author,headRefName,"
+                        "headRefOid,labels,url"
+                    ),
                 ]
             )
         )
@@ -202,8 +204,10 @@ class GitHub:
         out = self._gh(
             [
                 "api",
-                f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs"
-                "?per_page=100",
+                (
+                    f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs"
+                    "?per_page=100"
+                ),
                 "--jq",
                 ".jobs",
             ]

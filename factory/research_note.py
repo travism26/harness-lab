@@ -76,16 +76,12 @@ def _amount(value: float) -> str:
     """Four decimals, trailing zeros dropped, never fewer than two."""
     text = format(value, ".4f").rstrip("0")
     whole, _, frac = text.partition(".")
-    return "%s.%s" % (whole, frac.ljust(2, "0"))
+    return "{}.{}".format(whole, frac.ljust(2, "0"))
 
 
 def cost_section(spend_usd: float, cap_usd: float) -> str:
     """The body of a note's `## Cost` section, in the shape `check_text` accepts."""
-    return "- Spend: $%s (%s)\n- Cap: $%s" % (
-        _amount(spend_usd),
-        COST_NOTE,
-        _amount(cap_usd),
-    )
+    return f"- Spend: ${_amount(spend_usd)} ({COST_NOTE})\n- Cap: ${_amount(cap_usd)}"
 
 
 def _is_placeholder(body: str) -> bool:
@@ -144,7 +140,7 @@ def _cost_problems(body: str) -> list[str]:
         if Decimal(caps[0]) <= 0:
             problems.append("the cap must be above zero")
         elif Decimal(spends[0]) > Decimal(caps[0]):
-            problems.append("spend $%s is over the cap $%s" % (spends[0], caps[0]))
+            problems.append(f"spend ${spends[0]} is over the cap ${caps[0]}")
     return problems
 
 
@@ -155,14 +151,14 @@ def check_text(text: str) -> list[str]:
     for name in REQUIRED:
         matches = [s for s in found if s.heading == name]
         if not matches:
-            problems.append("missing section `## %s`" % name)
+            problems.append(f"missing section `## {name}`")
             continue
         if len(matches) > 1:
-            problems.append("section `## %s` appears more than once" % name)
+            problems.append(f"section `## {name}` appears more than once")
             continue
         section = matches[0]
         if name in ("Question", "Findings") and is_blank(section.body):
-            problems.append("section `## %s` is empty" % name)
+            problems.append(f"section `## {name}` is empty")
         elif name == "Unknowns" and (
             is_blank(section.body) or _is_placeholder(section.body)
         ):
@@ -193,14 +189,14 @@ def main(argv: list[str] | None = None) -> int:
         try:
             text = Path(name).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
-            print("%s: cannot be read" % name)
+            print(f"{name}: cannot be read")
             failed = True
             continue
         problems = check_text(text)
         for problem in problems:
-            print("%s: %s" % (name, problem))
+            print(f"{name}: {problem}")
         if not problems:
-            print("%s: ok" % name)
+            print(f"{name}: ok")
         failed = failed or bool(problems)
     return 1 if failed else 0
 

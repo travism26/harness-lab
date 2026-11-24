@@ -79,8 +79,10 @@ def test_only_spec_requirement_findings_block():
     [
         "no json",
         '{"spec_summary": "x"}',
-        '{"spec_summary": "", "standards_summary": "",'
-        ' "spec_findings": [{"kind": "nitpick"}]}',
+        (
+            '{"spec_summary": "", "standards_summary": "",'
+            ' "spec_findings": [{"kind": "nitpick"}]}'
+        ),
     ],
 )
 def test_parse_findings_rejects_bad_answers(text):
@@ -153,18 +155,18 @@ def _pr(labels=(), head="abc123", author="harness-factory[bot]", body="Closes #7
 def _args(tmp_path, **kw):
     import argparse
 
-    base = dict(
-        repo="travism26/harness-lab",
-        pr=3,
-        out=str(tmp_path),
-        base_sha="b",
-        head_sha="abc123",
-        code_dir=str(tmp_path),
-        login="subscription",
-        app_slug="harness-factory",
-        model="sonnet",
-        max_budget_usd=1.0,
-    )
+    base = {
+        "repo": "travism26/harness-lab",
+        "pr": 3,
+        "out": str(tmp_path),
+        "base_sha": "b",
+        "head_sha": "abc123",
+        "code_dir": str(tmp_path),
+        "login": "subscription",
+        "app_slug": "harness-factory",
+        "model": "sonnet",
+        "max_budget_usd": 1.0,
+    }
     base.update(kw)
     return argparse.Namespace(**base)
 

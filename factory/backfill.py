@@ -176,7 +176,9 @@ def _review_round(
 
 
 _LEGACY_HEAD_RE = re.compile(r"^Reviewed `([0-9a-f]{12})` against ", re.MULTILINE)
-_LEGACY_ROUND_RE = re.compile(r"^Sent to rework: round ([0-9]+) of [0-9]+\.$", re.MULTILINE)
+_LEGACY_ROUND_RE = re.compile(
+    r"^Sent to rework: round ([0-9]+) of [0-9]+\.$", re.MULTILINE
+)
 
 
 def _with_gate_lines(comments: list[dict], slug: str) -> list[dict]:

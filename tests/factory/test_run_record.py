@@ -60,7 +60,11 @@ FAILED = (
     f"The factory run for this Ticket failed: [run]({RUN_URL}). `in-progress` has been "
     "removed; re-apply `ready-for-factory` to try again.\n"
 )
-GONE = dict(agent_outcome="failure", job_status="failure", publish_outcome="skipped")
+GONE = {
+    "agent_outcome": "failure",
+    "job_status": "failure",
+    "publish_outcome": "skipped",
+}
 
 
 def _last(out, gh, **kw):
@@ -152,7 +156,11 @@ def test_a_run_with_no_result_line_is_no_result(tmp_path):
 def test_a_failed_check_is_check_failed(tmp_path):
     record_ = _failed(
         tmp_path,
-        dict(verify_outcome="failure", job_status="failure", publish_outcome="skipped"),
+        {
+            "verify_outcome": "failure",
+            "job_status": "failure",
+            "publish_outcome": "skipped",
+        },
         fixture_line("result-success.json"),
     )
     assert record_["reason"] == "check-failed" and record_["cost_usd"] == 0.1289566
@@ -161,7 +169,7 @@ def test_a_failed_check_is_check_failed(tmp_path):
 def test_a_publish_that_found_no_change_is_no_change(tmp_path):
     record_ = _failed(
         tmp_path,
-        dict(publish_outcome="failure", job_status="failure"),
+        {"publish_outcome": "failure", "job_status": "failure"},
         fixture_line("result-success.json"),
         files=("unchanged.md",),
     )
@@ -171,7 +179,7 @@ def test_a_publish_that_found_no_change_is_no_change(tmp_path):
 def test_any_other_publish_failure_is_publish_failed(tmp_path):
     record_ = _failed(
         tmp_path,
-        dict(publish_outcome="failure", job_status="failure"),
+        {"publish_outcome": "failure", "job_status": "failure"},
         fixture_line("result-success.json"),
     )
     assert record_["reason"] == "publish-failed"
@@ -509,7 +517,7 @@ def test_a_marker_in_the_agent_summary_of_a_no_change_comment_is_not_a_record(tm
             )
             == 0
         )
-    total = [x for x in printed.getvalue().splitlines() if x.startswith("| Total")][0]
+    total = next(x for x in printed.getvalue().splitlines() if x.startswith("| Total"))
     assert "0/1 (0%)" in total and "$9.00" not in total
 
 
@@ -539,7 +547,7 @@ def test_a_record_that_would_pass_the_comment_limit_is_its_own_one_line_comment(
     gh = FakeGitHub([bot_comment(6, big)])
     assert _last(out, gh) == 0
     assert gh.thread[0]["body"] == big
-    ((number, body),) = gh.posted
+    ((_number, body),) = gh.posted
     assert len(body.splitlines()) == 1 and marker_of(body) == record_of(out)
 
 

@@ -572,7 +572,7 @@ def test_results_outside_a_repo(tmp_path):
 
 def _shape(text):
     labels, headings = [], []
-    in_fence = in_table = False
+    in_fence = False
     for line in text.splitlines():
         if line.startswith("```"):
             in_fence = not in_fence

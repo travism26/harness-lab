@@ -60,19 +60,19 @@ def _root(tmp_path, name="harness", executable=True):
 
 
 def _args(tmp_path, **kw):
-    base = dict(
-        root=str(tmp_path / "root"),
-        repo=REPO,
-        issue=4,
-        pr=9,
-        out=str(tmp_path / "out"),
-        login="subscription",
-        app_slug="harness-factory",
-        run_url="https://run",
-        work=str(tmp_path),
-        model="sonnet",
-        max_budget_usd=5.0,
-    )
+    base = {
+        "root": str(tmp_path / "root"),
+        "repo": REPO,
+        "issue": 4,
+        "pr": 9,
+        "out": str(tmp_path / "out"),
+        "login": "subscription",
+        "app_slug": "harness-factory",
+        "run_url": "https://run",
+        "work": str(tmp_path),
+        "model": "sonnet",
+        "max_budget_usd": 5.0,
+    }
     base.update(kw)
     return argparse.Namespace(**base)
 

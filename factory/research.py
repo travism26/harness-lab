@@ -287,7 +287,7 @@ def note_from_reply(reply: str) -> str:
     if len(lines) >= 2 and lines[0].startswith("```") and lines[-1] == "```":
         lines = lines[1:-1]
     for i, line in enumerate(lines):
-        if line.startswith("# ") or line.startswith("## "):
+        if line.startswith(("# ", "## ")):
             lines = lines[i:]
             break
     return "\n".join(lines).strip()

@@ -243,8 +243,10 @@ def _render_failure(
     for job in jobs:
         lines += [
             "",
-            f"- **ci_failure** Job `{job.name}` failed ([run]({event.run_url})). "
-            "Fix: make the Project check pass. Log excerpt:",
+            (
+                f"- **ci_failure** Job `{job.name}` failed ([run]({event.run_url})). "
+                "Fix: make the Project check pass. Log excerpt:"
+            ),
             "",
             "```",
             _fence(_TOKEN_RE.sub("[REDACTED]", job.excerpt)) or "(no log)",
@@ -252,15 +254,15 @@ def _render_failure(
         ]
     lines += [
         "",
-        "A failing required CI run sends this PR to rework, on the same "
-        "counter as a Spec blocker. The merge is a human's.",
+        (
+            "A failing required CI run sends this PR to rework, on the same "
+            "counter as a Spec blocker. The merge is a human's."
+        ),
     ]
     return "\n".join(lines) + "\n"
 
 
-def conclusion_for_trigger(
-    workflow: str, conclusion: str, ci_run: dict | None
-) -> str:
+def conclusion_for_trigger(workflow: str, conclusion: str, ci_run: dict | None) -> str:
     """The CI conclusion this gate should judge.
 
     A Review completion is not a CI result. When Review finishes, only an
@@ -347,9 +349,7 @@ def _duplicate(event: GateEvent, meta) -> Decision:
     )
 
 
-def _review_ready(
-    review_run: dict | None, comments: Sequence, head_sha: str
-) -> bool:
+def _review_ready(review_run: dict | None, comments: Sequence, head_sha: str) -> bool:
     for comment in comments:
         meta = parse_gate(comment.get("body") or "")
         if meta and meta.head == head_sha and meta.source == "review":

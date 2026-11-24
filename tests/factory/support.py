@@ -125,28 +125,28 @@ def failed_out(tmp_path, message=None, subtype="success", success=True, files=()
 
 def step_args(workflow, out, **overrides):
     """What the workflow's last step passes to `run_record write`."""
-    base = dict(
-        workflow=workflow,
-        out=str(out),
-        repo=REPO,
-        run_id="777",
-        attempt="1",
-        issue=4,
-        pr=None,
-        pr_labels=None,
-        head_sha="",
-        project="harness",
-        login="subscription",
-        model="sonnet",
-        budget="5",
-        claude_code_version="2.1.319",
-        app_slug=SLUG,
-        run_url=RUN_URL,
-        job_status="success",
-        agent_outcome="success",
-        verify_outcome="skipped",
-        publish_outcome="success",
-    )
+    base = {
+        "workflow": workflow,
+        "out": str(out),
+        "repo": REPO,
+        "run_id": "777",
+        "attempt": "1",
+        "issue": 4,
+        "pr": None,
+        "pr_labels": None,
+        "head_sha": "",
+        "project": "harness",
+        "login": "subscription",
+        "model": "sonnet",
+        "budget": "5",
+        "claude_code_version": "2.1.319",
+        "app_slug": SLUG,
+        "run_url": RUN_URL,
+        "job_status": "success",
+        "agent_outcome": "success",
+        "verify_outcome": "skipped",
+        "publish_outcome": "success",
+    }
     base.update(overrides)
     return argparse.Namespace(**base)
 

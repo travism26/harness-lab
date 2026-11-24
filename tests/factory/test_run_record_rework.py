@@ -30,7 +30,7 @@ def _labels(round_):
 def _step(out, gh, round_=1, **kw):
     """What the workflow's last step passes to `run_record write --workflow rework`."""
     kw.setdefault("pr_labels", _labels(round_))
-    base = dict(run_id="888", pr=9)
+    base = {"run_id": "888", "pr": 9}
     base.update(kw)
     return run_record.write(step_args("rework", out, **base), gh)
 
@@ -77,7 +77,11 @@ def _failed(
 def test_a_cli_error_subtype_is_a_failed_round(tmp_path):
     record = _failed(
         tmp_path,
-        dict(agent_outcome="failure", job_status="failure", publish_outcome="skipped"),
+        {
+            "agent_outcome": "failure",
+            "job_status": "failure",
+            "publish_outcome": "skipped",
+        },
         fixture_line("result-budget-stop.json"),
         "error_max_budget_usd",
         False,
@@ -88,7 +92,7 @@ def test_a_cli_error_subtype_is_a_failed_round(tmp_path):
 def test_a_round_that_changed_nothing_is_no_change(tmp_path):
     record = _failed(
         tmp_path,
-        dict(publish_outcome="failure", job_status="failure"),
+        {"publish_outcome": "failure", "job_status": "failure"},
         fixture_line("result-success.json"),
         files=("unchanged.md",),
     )
@@ -98,7 +102,11 @@ def test_a_round_that_changed_nothing_is_no_change(tmp_path):
 def test_a_failed_check_is_check_failed(tmp_path):
     record = _failed(
         tmp_path,
-        dict(verify_outcome="failure", job_status="failure", publish_outcome="skipped"),
+        {
+            "verify_outcome": "failure",
+            "job_status": "failure",
+            "publish_outcome": "skipped",
+        },
         fixture_line("result-success.json"),
     )
     assert record["reason"] == "check-failed"
@@ -107,7 +115,7 @@ def test_a_failed_check_is_check_failed(tmp_path):
 def test_a_failed_push_is_publish_failed(tmp_path):
     record = _failed(
         tmp_path,
-        dict(publish_outcome="failure", job_status="failure"),
+        {"publish_outcome": "failure", "job_status": "failure"},
         fixture_line("result-success.json"),
     )
     assert record["reason"] == "publish-failed"
@@ -116,9 +124,11 @@ def test_a_failed_push_is_publish_failed(tmp_path):
 def test_a_cancelled_round_is_a_failed_round(tmp_path):
     record = _failed(
         tmp_path,
-        dict(
-            job_status="cancelled", agent_outcome="cancelled", publish_outcome="skipped"
-        ),
+        {
+            "job_status": "cancelled",
+            "agent_outcome": "cancelled",
+            "publish_outcome": "skipped",
+        },
         fixture_line("result-success.json"),
     )
     assert record["reason"] == "cancelled"

@@ -248,7 +248,7 @@ def test_a_ticket_with_no_draft_lowers_the_draft_rate(tmp_path, capsys):
     )
     code, out, _ = _run(capsys, "--fixtures", str(fx))
     assert code == 0
-    total = [line for line in out.splitlines() if line.startswith("| Total")][0]
+    total = next(line for line in out.splitlines() if line.startswith("| Total"))
     assert "1/2 (50%)" in total
 
 
@@ -283,7 +283,7 @@ def test_the_first_review_decides_first_pass(tmp_path, capsys):
     )
     code, out, _ = _run(capsys, "--fixtures", str(fx))
     assert code == 0
-    total = [line for line in out.splitlines() if line.startswith("| Total")][0]
+    total = next(line for line in out.splitlines() if line.startswith("| Total"))
     assert "0/1 (0%)" in total
 
 

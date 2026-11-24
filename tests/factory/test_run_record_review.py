@@ -98,18 +98,18 @@ def _apply(out, gh, ci=None):
 
 
 def _last(out, gh, review="success", apply="success", job="success", **kw):
-    base = dict(
-        run_id="888",
-        run_url=RUN_URL,
-        issue=None,
-        pr=3,
-        head_sha=HEAD,
-        project="",
-        budget="2",
-        job_status=job,
-        agent_outcome=review,
-        publish_outcome=apply,
-    )
+    base = {
+        "run_id": "888",
+        "run_url": RUN_URL,
+        "issue": None,
+        "pr": 3,
+        "head_sha": HEAD,
+        "project": "",
+        "budget": "2",
+        "job_status": job,
+        "agent_outcome": review,
+        "publish_outcome": apply,
+    }
     base.update(kw)
     return run_record.write(step_args("review", out, **base), gh)
 
@@ -124,7 +124,7 @@ def _whole(tmp_path, gh, answer=PASS, ci=None):
 
 def test_a_passing_review_leaves_a_record_in_a_file_and_on_its_report(tmp_path):
     gh = _gh()
-    out, record = _whole(tmp_path, gh)
+    _out, record = _whole(tmp_path, gh)
     assert len(gh.thread) == 1 and gh.thread[0]["body"].count("factory:run") == 1
     assert marker_of(gh.thread[0]["body"]) == record
     assert (record["outcome"], record["reason"], record["verdict"], record["gate"]) == (
@@ -159,15 +159,27 @@ def test_the_marker_leaves_the_first_two_lines_and_the_existing_readers_working(
 
 
 GATES = {
-    "pass": dict(gh=dict(), answer=PASS, verdict="PASS", round=0),
-    "rework": dict(gh=dict(), answer=BLOCK, verdict="BLOCKED", round=1),
-    "human": dict(
-        gh=dict(labels=["rework", "rework:2"]), answer=BLOCK, verdict="BLOCKED", round=2
-    ),
-    "human-owned": dict(
-        gh=dict(labels=["ready-for-human"]), answer=BLOCK, verdict="BLOCKED", round=0
-    ),
-    "ci-blocked": dict(gh=dict(), answer=PASS, verdict="PASS", round=0, ci="failure"),
+    "pass": {"gh": {}, "answer": PASS, "verdict": "PASS", "round": 0},
+    "rework": {"gh": {}, "answer": BLOCK, "verdict": "BLOCKED", "round": 1},
+    "human": {
+        "gh": {"labels": ["rework", "rework:2"]},
+        "answer": BLOCK,
+        "verdict": "BLOCKED",
+        "round": 2,
+    },
+    "human-owned": {
+        "gh": {"labels": ["ready-for-human"]},
+        "answer": BLOCK,
+        "verdict": "BLOCKED",
+        "round": 0,
+    },
+    "ci-blocked": {
+        "gh": {},
+        "answer": PASS,
+        "verdict": "PASS",
+        "round": 0,
+        "ci": "failure",
+    },
 }
 
 
@@ -175,7 +187,7 @@ GATES = {
 def test_each_gate_is_recorded(tmp_path, gate):
     spec = GATES[gate]
     gh = _gh(**spec["gh"])
-    out, record = _whole(tmp_path, gh, spec["answer"], spec.get("ci"))
+    _out, record = _whole(tmp_path, gh, spec["answer"], spec.get("ci"))
     assert (record["gate"], record["verdict"], record["round"], record["outcome"]) == (
         gate,
         spec["verdict"],
@@ -187,7 +199,7 @@ def test_each_gate_is_recorded(tmp_path, gate):
 
 def test_a_stale_review_records_stale(tmp_path):
     gh = _gh(head="d" * 40)
-    out, record = _whole(tmp_path, gh)
+    _out, record = _whole(tmp_path, gh)
     assert (record["gate"], record["head_sha"]) == ("stale", HEAD)
 
 
@@ -196,7 +208,7 @@ def test_a_lost_charge_race_records_the_corrected_gate(tmp_path):
         HEAD, True, "ci", ci_run=9, nonce="aa", add=("rework", "rework:1")
     )
     gh = _gh(plant=plant)
-    out, record = _whole(tmp_path, gh, BLOCK)
+    _out, record = _whole(tmp_path, gh, BLOCK)
     assert (record["gate"], record["verdict"], record["round"]) == (
         "same-round",
         "BLOCKED",
@@ -208,7 +220,7 @@ def test_a_lost_charge_race_records_the_corrected_gate(tmp_path):
 
 def test_a_review_that_finishes_on_a_closed_pull_request_leaves_one_line(tmp_path):
     gh = _gh(state="MERGED")
-    out, record = _whole(tmp_path, gh, BLOCK)
+    _out, record = _whole(tmp_path, gh, BLOCK)
     assert (record["outcome"], record["verdict"], record["gate"]) == (
         "ok",
         "BLOCKED",
@@ -227,7 +239,7 @@ def test_a_review_that_finishes_on_a_closed_pull_request_leaves_one_line(tmp_pat
 
 def test_a_pull_request_that_closes_no_ticket_gives_a_null_issue(tmp_path):
     gh = _gh(body="no keyword here")
-    out, record = _whole(tmp_path, gh)
+    _out, record = _whole(tmp_path, gh)
     assert record["issue"] is None
 
 
@@ -240,7 +252,7 @@ def test_the_command_line_accepts_a_missing_issue():
 
 
 def test_the_project_is_the_one_on_the_linked_tickets_label(tmp_path):
-    out, record = _whole(
+    _out, record = _whole(
         tmp_path, _gh(ticket_labels=["ready-for-factory", "project:ai-gateway"])
     )
     assert record["project"] == "ai-gateway"
@@ -257,7 +269,7 @@ def test_the_project_is_the_one_on_the_linked_tickets_label(tmp_path):
 def test_a_review_with_no_ticket_or_no_project_label_has_a_null_project(
     tmp_path, labels, body
 ):
-    out, record = _whole(tmp_path, _gh(ticket_labels=labels, body=body))
+    _out, record = _whole(tmp_path, _gh(ticket_labels=labels, body=body))
     assert record["project"] is None
 
 
@@ -304,8 +316,8 @@ def test_findings_that_do_not_parse_fail_as_unparsed_findings(tmp_path):
 
 
 def test_a_cancelled_review_fails_as_cancelled(tmp_path):
-    record, line = _failed(
-        tmp_path, message={}, success=False, subtype="", last=dict(job="cancelled")
+    record, _line = _failed(
+        tmp_path, message={}, success=False, subtype="", last={"job": "cancelled"}
     )
     assert record["reason"] == "cancelled"
 
@@ -364,7 +376,7 @@ def test_a_report_by_someone_else_or_for_another_head_is_not_used(tmp_path):
 
 def test_a_rerun_marks_its_own_report_and_leaves_the_first_attempts(tmp_path):
     gh = _gh()
-    out, first = _whole(tmp_path, gh)
+    _out, _first = _whole(tmp_path, gh)
     second_out = tmp_path / "again"
     assert _review(second_out) == "success"
     _apply(second_out, gh)
@@ -481,7 +493,7 @@ def test_a_marker_quoted_in_a_finding_is_not_read_as_a_record_by_the_report(tmp_
     )
     (tmp_path / "clean").mkdir()
     gh, clean = _gh(), _gh()
-    out, record = _whole(tmp_path, gh, quoting)
+    _out, record = _whole(tmp_path, gh, quoting)
     _whole(tmp_path / "clean", clean, BLOCK)
     code, table = _table_of(tmp_path, gh, "forged")
     clean_code, clean_table = _table_of(tmp_path, clean, "clean-fx")

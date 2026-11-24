@@ -100,17 +100,17 @@ class FakeGitHub:
 
 
 def args(tmp_path, **kw):
-    base = dict(
-        repo=REPO,
-        issue=4,
-        out=str(tmp_path / "out"),
-        login="subscription",
-        app_slug=SLUG,
-        run_url="https://run",
-        work=str(tmp_path / "work"),
-        model="sonnet",
-        max_budget_usd=2.0,
-    )
+    base = {
+        "repo": REPO,
+        "issue": 4,
+        "out": str(tmp_path / "out"),
+        "login": "subscription",
+        "app_slug": SLUG,
+        "run_url": "https://run",
+        "work": str(tmp_path / "work"),
+        "model": "sonnet",
+        "max_budget_usd": 2.0,
+    }
     base.update(kw)
     return argparse.Namespace(**base)
 
@@ -284,7 +284,7 @@ def test_claim_refuses_and_says_why(tmp_path, gh, reason):
     with pytest.raises(research.Refused) as raised:
         research.claim(args(tmp_path), gh)
     assert reason in str(raised.value)
-    ((number, body),) = gh.posted
+    ((_number, body),) = gh.posted
     assert body.startswith("The factory did not start this research request: ")
     assert reason in body and "`ready-for-research` has been removed" in body
     assert gh.removed == ["ready-for-research"] and gh.added == []
@@ -581,7 +581,7 @@ def test_publish_with_the_note_already_on_the_base_branch_raises(tmp_path, monke
 def test_release_says_so_and_drops_in_progress(tmp_path):
     gh = FakeGitHub(labels=("in-progress",))
     assert research.release(args(tmp_path, run_url=RUN_URL), gh) == 0
-    ((number, body),) = gh.posted
+    ((_number, body),) = gh.posted
     assert (
         body.startswith(ticket.failed_prefix(RUN_URL))
         and "`ready-for-research`" in body

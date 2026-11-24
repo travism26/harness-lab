@@ -190,10 +190,14 @@ def test_hand_built_arguments_carry_only_flags_the_parser_defines(monkeypatch):
         )
 
     keys = set()
-    # `_args` builds its base with dict(...); call sites override with keywords.
+    # `_args` builds its base with a dict literal; call sites override with keywords.
     for n in ast.walk(_functions(tree)["_args"]):
-        if isinstance(n, ast.Call) and callee(n) == "dict":
-            keys |= {k.arg for k in n.keywords if k.arg}
+        if isinstance(n, ast.Dict):
+            keys |= {
+                k.value
+                for k in n.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            }
     for n in ast.walk(tree):
         if isinstance(n, ast.Call) and callee(n) in ("_args", "Namespace"):
             keys |= {k.arg for k in n.keywords if k.arg}
