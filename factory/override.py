@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
+from typing import Any
 
 from factory.github import GitHub, GitHubError
 from factory.review_status import CONTEXT
@@ -30,7 +31,7 @@ def parse_override(body: str) -> str | None:
 
 
 def apply(
-    gh: GitHub, repo: str, pr: int, body: str, comment_url: str, set_status: SetStatus
+    gh: Any, repo: str, pr: int, body: str, comment_url: str, set_status: SetStatus
 ) -> int:
     """Set `factory/review` to success on the PR's current head, if the comment is an Override
     and the PR is open, then label the PR. Only the number, state and head sha are used."""
