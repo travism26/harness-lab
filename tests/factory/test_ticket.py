@@ -30,6 +30,9 @@ class FakeGitHub:
     def pr_comments(self, repo, number):
         return self._comments
 
+    def pull_files(self, repo, number):
+        return []
+
     def comment(self, repo, number, path):
         self.posted.append((number, path.read_text()))
 

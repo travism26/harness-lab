@@ -58,6 +58,14 @@ fails with a message naming what is missing. It never goes green without doing a
    `run-out/check-output.txt` and the head SHA: the command, exit code, result, whether the
    agent touched the check file, and the output tail (at most 40 lines and 4000 characters,
    neutralized, with `#<digits>` broken and a fence longer than any backtick run in it).
+   The block also holds `## Merge Danger`: a **Blast Radius** the code computes from the
+   changed paths (the Project's name, several names, or `shared` for any path outside
+   `projects/`; `git diff --cached --name-only` on Implement, `GitHub.pull_files` on a Rework
+   push) and a **Door** the agent proposes. The build prompt ends by asking for a last line
+   `Door: two-way - <reason>` or `Door: one-way - <reason>`; `build` strips it from
+   `summary.md` and writes `run-out/door.json` (reason capped at 200 characters and
+   neutralized). A missing or mid-text line reads `one-way (not stated)`. `door.json` is not
+   part of the Run record.
    Every Rework push rebuilds the block and replaces only what lies between the markers
    (`GitHub.edit_pr_body`), keeping edits outside them; if the markers were deleted, the block
    is appended.
