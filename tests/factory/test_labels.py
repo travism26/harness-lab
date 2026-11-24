@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 from factory.review_pr import HUMAN_LABEL, MAX_REWORK, REWORK_LABEL
 from factory.sync_labels import Label, load_labels, plan_changes
 from factory.ticket import PROGRESS_LABEL, START_LABEL
@@ -22,3 +25,18 @@ def test_plan_creates_missing_and_updates_changed_labels_only():
     existing = [Label("A", "FFFFFF", "A"), Label("b", "000000", "old"), Label("zzz", "1", "")]
     changes = plan_changes(desired, existing)
     assert [(c.action, c.label.name) for c in changes] == [("update", "b"), ("create", "c")]
+
+
+def test_every_project_with_a_check_has_a_project_row():
+    names = {label.name for label in load_labels()}
+    projects = Path(__file__).resolve().parents[2] / "projects"
+    folders = [d for d in projects.iterdir() if (d / "check").is_file() and os.access(d / "check", os.X_OK)]
+    assert folders
+    missing = sorted(d.name for d in folders if f"project:{d.name}" not in names)
+    assert not missing
+
+
+def test_the_set_holds_the_builder_and_wayfinder_labels():
+    names = {label.name for label in load_labels()}
+    assert {"ready-for-builder", "builder:claimed", "spec:ready-for-review", "ready-for-implementation",
+            *(f"wayfinder:{k}" for k in ("map", "research", "grilling", "prototype", "task"))} <= names
