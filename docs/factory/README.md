@@ -130,7 +130,7 @@ Python Project has `uv` for the whole turn, since Implement installs `uv` before
 
 Rework of that pull request uses the same rule. The label row is on the base, so a round can start
 before the check has merged, and the check runs from the pull request's branch. A failure leaves
-the `rework` label, as any failed rework does.
+the `rework` label and gains `factory-failed`, as any failed rework does.
 
 Once `projects/<name>/check` is an executable file on the default branch, later Tickets for that
 Project are ordinary. The prompt tells the agent to run the check. The factory does not run it
@@ -388,7 +388,8 @@ Ticket moves](#how-a-ticket-moves).
 |---|---|---|
 | `ready-for-factory` | Owner | Start the factory on this Ticket |
 | `ready-for-research` | Owner | Start the factory's research path on this Research request. See [Research path](#research-path) |
-| `in-progress` | Factory | The factory is building or reworking this Ticket. Removed when Review has passed the current head and CI is green, so a finished draft does not hold the one-at-a-time lock. |
+| `in-progress` | Factory | The factory is building or reworking this Ticket. Removed when Review has passed the current head and CI is green, so a finished draft does not hold the one-at-a-time lock. Also removed when the Ticket closes (`.github/workflows/clear-labels.yml`). A Ticket closed mid-run frees the one-at-a-time lock while the run goes on. |
+| `factory-failed` | Factory | The last Implement run on this Ticket, or Rework run on this PR, failed. The next start of that Ticket or PR removes it. |
 | `rework`, `rework:1`, `rework:2` | Factory (Review or CI gate) | A Spec blocker or a failed required CI run; the counter is the rework round, one charge per head |
 | `ready-for-human` | Factory (Review or CI gate) | Two rework rounds were not enough; the factory has stopped |
 | `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds. Every folder under `projects/` has a row in `factory/labels.json` (`harness`, `agent-identity`, `ai-gateway`, `agents`, `go-sandbox`, `spring-sandbox`, `ts-sandbox`); a test fails when one lacks it. A Project with an executable `check` is accepted whatever the file says; add a row only for a folder that has a `check`. See [Starting a Project](#starting-a-project) |
@@ -427,8 +428,9 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 | What you see | What to do |
 |---|---|
 | A comment says the factory did not start the Ticket | Read the reason. For "one Ticket at a time", finish or close the other Ticket. For "switch rule", switch to `openrouter`. Then re-apply `ready-for-factory`. |
-| A comment says the factory run failed | Open the run. A new Project whose `check` was missing or failed looks like this. The Ticket has lost `in-progress`, so it can be retried. |
-| A factory PR is closed without merging, and `in-progress` is still on the Ticket | Review had not passed that head with green CI (a red CI run, a Spec blocker, or a closed PR). Remove `in-progress` by hand, or one-at-a-time keeps every other Ticket waiting. |
+| A comment says the factory run failed | Open the run. A new Project whose `check` was missing or failed looks like this. The Ticket has lost `in-progress` and carries `factory-failed`, so it can be retried; the next start removes the label. |
+| A factory PR is closed without merging | Closing the PR removes `rework`. `in-progress` stays on the Ticket until the Ticket closes (closing it removes `in-progress`); if you keep the Ticket open, remove `in-progress` by hand, or one-at-a-time keeps every other Ticket waiting. |
+| A factory PR has `factory-failed` | Its last Rework run failed and left no comment. Open the run, then re-apply `rework` to try again; the next round removes `factory-failed`. |
 | A factory draft's CI is red and no rework starts | Open the CI gate run. It ignores a PR that is not a draft, not opened by the factory App, or not on `factory/issue-<N>`, and it stops at the daily cap. A `timed_out` or `cancelled` CI run is not a failure. |
 | A comment says the factory did not start the research request | Read the reason, fix the request or wait for the other Ticket, then re-apply `ready-for-research`. |
 | A comment says the note failed its check | No PR was opened and `in-progress` is gone. The comment lists what the check found. Change the request if that helps, then re-apply `ready-for-research`. |

@@ -696,3 +696,36 @@ def test_review_and_rework_check_out_the_factory_from_the_default_branch():
         for line in text.splitlines():
             if line.strip().startswith("ref:"):
                 assert "base.sha" not in line
+
+
+def test_release_labels_the_ticket_failed(tmp_path):
+    gh = FakeGitHub(issue=_issue(labels=("in-progress",)))
+    ticket.release(_args(tmp_path), gh)
+    assert gh.added == ["factory-failed"]
+
+
+def test_claim_removes_a_stale_failed_label(tmp_path):
+    _root(tmp_path)
+    gh = FakeGitHub(issue=_issue(labels=("ready-for-factory", "factory-failed", "project:harness")))
+    ticket.claim(_args(tmp_path), gh)
+    assert gh.removed == ["ready-for-factory", "factory-failed"]
+
+
+def test_revise_removes_a_stale_failed_label(tmp_path):
+    _root(tmp_path)
+    pr = _pr()
+    pr["labels"] = pr["labels"] + [{"name": "factory-failed"}]
+    pr["headRefOid"] = "ba2ea98635fd261912159e8bc8f4f54f1f5411d0"
+    comment = f"{MARKER}\n## Factory review: BLOCKED\n\nx\n"
+    gh = FakeGitHub(issue=_issue(), pr=pr, comments=[{"body": comment}])
+    ticket.revise(_args(tmp_path), gh)
+    assert gh.removed == ["factory-failed"]
+
+
+def test_fail_pr_labels_the_pr_once(tmp_path):
+    gh = FakeGitHub(pr=_pr())
+    ticket.fail_pr(_args(tmp_path), gh)
+    assert gh.added == ["factory-failed"]
+    gh = FakeGitHub(pr={**_pr(), "labels": [{"name": "factory-failed"}]})
+    ticket.fail_pr(_args(tmp_path), gh)
+    assert gh.added == []
