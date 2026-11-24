@@ -28,6 +28,7 @@
     {"name": "wayfinder:grilling", "color": "5319e7", "description": "Wayfinder grilling"},
     {"name": "wayfinder:prototype", "color": "5319e7", "description": "Wayfinder prototype"},
     {"name": "wayfinder:task", "color": "5319e7", "description": "Wayfinder task"},
+    {"name": "review-override", "color": "c5def5", "description": "Override workflow: the owner overrode the factory/review status on this PR"},
     {"name": "ready-for-factory", "color": "0b6e2c", "description": "Owner-applied: the factory builds this ticket"},
     {"name": "ready-for-research", "color": "5319e7", "description": "Owner-applied: the factory answers this research-request ticket"},
     {"name": "factory-check", "color": "bfdadc", "description": "Owner-applied: the factory answers with a short live check"},

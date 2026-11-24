@@ -173,6 +173,18 @@ step is a ruleset on `main` that requires `factory/review` and the `factory test
 (`.github/workflows/ci.yml`), with no bypass actors. It is not created by any workflow. Do it
 once Review runs on every head and you have checked its Verdicts against your own.
 
+### The Override
+
+If a Review is BLOCKED, missing or stuck, or the PR comes from a fork, the owner can turn the
+status green. Comment on the pull request, with the first line exactly `Override: <reason>`:
+`Override:` is case-sensitive, at the start of the first line, and the reason must not be empty.
+Only a comment by the repository owner counts; an edit does nothing.
+
+The workflow `.github/workflows/override.yml` then sets `factory/review` to `success` and adds the
+`review-override` label. The reason stays in your comment, which the status links to. It applies
+to the head at the time of the comment: a later push gets a fresh status from Review. Known
+limit: a Review still running when the Override lands can overwrite it. Comment again.
+
 ## If something goes wrong
 
 | What you see | What it means | What to do |
