@@ -3,13 +3,13 @@ from pathlib import Path
 
 from factory.review_pr import HUMAN_LABEL, MAX_REWORK, REWORK_LABEL
 from factory.sync_labels import Label, load_labels, plan_changes
-from factory.ticket import PROGRESS_LABEL, START_LABEL
+from factory.ticket import FAILED_LABEL, PROGRESS_LABEL, START_LABEL
 from factory.check import LABEL as CHECK_LABEL
 
 
 def test_the_set_holds_every_label_the_factory_uses():
     names = {label.name for label in load_labels()}
-    used = {START_LABEL, PROGRESS_LABEL, REWORK_LABEL, HUMAN_LABEL, CHECK_LABEL,
+    used = {START_LABEL, PROGRESS_LABEL, FAILED_LABEL, REWORK_LABEL, HUMAN_LABEL, CHECK_LABEL,
             "project:harness", "project:agent-identity", "standards-findings",
             *(f"rework:{n}" for n in range(1, MAX_REWORK + 1))}
     assert used <= names
@@ -40,3 +40,10 @@ def test_the_set_holds_the_builder_and_wayfinder_labels():
     names = {label.name for label in load_labels()}
     assert {"ready-for-builder", "builder:claimed", "spec:ready-for-review", "ready-for-implementation",
             *(f"wayfinder:{k}" for k in ("map", "research", "grilling", "prototype", "task"))} <= names
+
+
+def test_clear_labels_workflow_has_no_secret_checkout_or_fork_path():
+    text = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "clear-labels.yml").read_text()
+    assert "secrets." not in text and "checkout" not in text
+    assert "pull_request_target" not in text
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in text
