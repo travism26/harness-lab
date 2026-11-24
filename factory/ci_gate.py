@@ -11,6 +11,8 @@ CI failure that lands in the same round.
   apply    (App token) re-reads the PR and posts, labels, or clears in-progress.
   wait     (GITHUB_TOKEN) blocks revise until CI has finished and, when CI
            failed, until this gate's comment is on the PR.
+  context  (GITHUB_TOKEN) waits for CI on a head and writes review-out/ci.md
+           for Review's agent to read as evidence.
 
 Usage:
   uv run python -m factory.ci_gate collect --repo O/R --run-id N --run-url URL \\
@@ -18,6 +20,7 @@ Usage:
       --head-sha SHA --head-repo O/R --out run-out
   uv run python -m factory.ci_gate apply --out run-out --app-slug S
   uv run python -m factory.ci_gate wait --repo O/R --pr N --sha SHA
+  uv run python -m factory.ci_gate context --repo O/R --sha SHA --out review-out
 """
 
 import argparse
@@ -631,6 +634,77 @@ def wait(
     return 0
 
 
+def render_ci_context(
+    conclusion: str, jobs: Sequence[dict] | None, logs: dict, hidden: Sequence[str]
+) -> str:
+    """The text of ci.md. `conclusion` is empty when CI had not finished."""
+    if not conclusion:
+        return (
+            "CI had not finished when Review stopped waiting. Nothing here says "
+            "whether CI passes or fails on this head.\n"
+        )
+    lines = [f"CI conclusion for this head: {conclusion}", ""]
+    if jobs is None:
+        lines.append("The job list could not be read.")
+    elif conclusion == "failure":
+        failed = failed_findings(jobs, logs, hidden)
+        lines.append("Failed jobs:" if failed else NO_FAILED_JOB)
+        for job in failed:
+            lines += ["", f"### {job.name}", "```", _fence(job.excerpt), "```"]
+    else:
+        names = [str(job.get("name") or "CI") for job in jobs]
+        lines.append("Jobs: " + (", ".join(names) or "none listed"))
+    return "\n".join(lines) + "\n"
+
+
+def context(
+    args, gh: GitHub | None = None, sleep=time.sleep, monotonic=time.monotonic
+) -> int:
+    """Wait for CI on the head, then write CI's result for the reviewer.
+
+    Runs with GITHUB_TOKEN before the agent starts. A read error polls again and
+    the step always exits 0: Review goes on without CI when CI cannot be read.
+    """
+    gh = gh or GitHub()
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    start = monotonic()
+    run: dict | None = None
+    conclusion = ""
+    while True:
+        try:
+            run = gh.workflow_run(args.repo, args.sha, CI_WORKFLOW)
+        except (GitHubError, ValueError):
+            print("::warning title=CI wait::GitHub could not be read; polling again")
+        else:
+            conclusion = (run or {}).get("conclusion") or ""
+            if conclusion in _CI_DONE:
+                break
+            conclusion = ""
+        if monotonic() - start >= args.timeout or args.interval <= 0:
+            break
+        sleep(args.interval)
+    jobs: list[dict] | None = None
+    logs: dict = {}
+    if conclusion and run:
+        try:
+            jobs = gh.jobs(args.repo, int(run["databaseId"]))
+            if conclusion == "failure":
+                for job in jobs:
+                    if job.get("conclusion") != "failure":
+                        continue
+                    try:
+                        logs[job.get("id")] = gh.job_log(args.repo, job["id"])
+                    except GitHubError:
+                        logs[job.get("id")] = ""
+        except (GitHubError, ValueError, KeyError):
+            jobs = None
+    text = render_ci_context(conclusion, jobs, logs, env_secrets(os.environ))
+    (out / "ci.md").write_text(text)
+    print(f"CI for {args.sha[:12]}: {conclusion or 'had not finished'}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="step", required=True)
@@ -659,9 +733,17 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--interval", type=float, default=15)
     w.add_argument("--failure-grace", type=float, default=120)
 
+    x = sub.add_parser("context")
+    x.add_argument("--repo", required=True)
+    x.add_argument("--sha", required=True)
+    x.add_argument("--out", required=True)
+    x.add_argument("--timeout", type=float, default=600)
+    x.add_argument("--interval", type=float, default=15)
+
     args = parser.parse_args(argv)
+    steps = {"collect": collect, "apply": apply, "wait": wait, "context": context}
     try:
-        return {"collect": collect, "apply": apply, "wait": wait}[args.step](args)
+        return steps[args.step](args)
     except (RuntimeError, GitHubError, OSError, ValueError, KeyError) as e:
         print(f"::error title=CI gate {args.step} failed::{e}")
         return 1

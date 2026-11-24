@@ -139,6 +139,19 @@ jobs:
           --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" --code-dir pr --out review-out
           --login "$LOGIN" --app-slug "$APP_SLUG"
 
+      # Waits up to ten minutes for CI on this head and writes review-out/ci.md for the
+      # reviewer. GITHUB_TOKEN only (actions: read): no Claude login, no App token
+      # (docs/adr/0007-*.md). It always exits 0; Review goes on without CI if CI is unreadable.
+      - name: Wait for CI on this head and write its result for the reviewer
+        if: steps.preflight.outputs.capped != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          uv run --no-dev python -m factory.ci_gate context
+          --repo "$REPO" --sha "$SHA" --out review-out --timeout 600 --interval 15
+
       - name: Review (fresh context, read-only, budget-capped)
         if: steps.preflight.outputs.capped != 'true'
         id: review
