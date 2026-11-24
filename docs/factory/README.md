@@ -52,6 +52,15 @@ fails with a message naming what is missing. It never goes green without doing a
    Ticket), with a 600-second limit and no App token or Claude login. A failing check still
    publishes the draft, and CI's red run starts a Rework round. The result goes in the Run record
    (`check`: `pass`, `fail` or `not-run`, and `touched_check`).
+   The PR body is `Closes #N`, the agent's summary, a factory-owned block between
+   `<!-- factory:pr-block -->` and `<!-- factory:pr-block-end -->`, then a footer. The block
+   holds `## Evidence`, which the code writes (not the model) from `run-out/check.json`,
+   `run-out/check-output.txt` and the head SHA: the command, exit code, result, whether the
+   agent touched the check file, and the output tail (at most 40 lines and 4000 characters,
+   neutralized, with `#<digits>` broken and a fence longer than any backtick run in it).
+   Every Rework push rebuilds the block and replaces only what lies between the markers
+   (`GitHub.edit_pr_body`), keeping edits outside them; if the markers were deleted, the block
+   is appended.
 3. **Review** (`.github/workflows/review.yml`) runs on the new PR. A fresh agent with read-only
    tools reviews the diff along two axes: Spec (does it do what the Ticket asks?) and Standards
    (does it follow `CLAUDE.md`, the glossaries and the decision records?). It posts one report on the PR.

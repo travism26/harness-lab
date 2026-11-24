@@ -609,10 +609,90 @@ def _git(work: str, *args: str) -> str:
     return r.stdout
 
 
-def pr_body(ctx: dict, summary: str) -> str:
+PR_BLOCK_START = "<!-- factory:pr-block -->"
+PR_BLOCK_END = "<!-- factory:pr-block-end -->"
+EVIDENCE_MAX_LINES = 40
+EVIDENCE_MAX_CHARS = 4000
+
+
+def _untrusted(text: str) -> str:
+    """Text from the agent's checkout or its check, made safe for the factory's PR body: it
+    cannot form a marker or a hidden comment, and cannot close an issue (`#12` gets a
+    zero-width space after the `#`)."""
+    return re.sub(r"#(?=\d)", "#\u200b", neutralize_comments(text))
+
+
+def _fenced(text: str) -> str:
+    longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}text\n{text}\n{fence}"
+
+
+def _check_output(out: Path) -> tuple[list[str], str]:
+    """The check's header lines (command, exit code) and its output tail, capped."""
+    try:
+        raw = (out / CHECK_OUTPUT_FILE).read_text(errors="replace")
+    except OSError:
+        return [], ""
+    head, _, rest = raw.partition("\n\n")
+    tail = "\n".join(rest.rstrip("\n").splitlines()[-EVIDENCE_MAX_LINES:])
+    return head.splitlines(), tail[-EVIDENCE_MAX_CHARS:]
+
+
+def evidence_section(out: Path, head_sha: str) -> str:
+    """`## Evidence`: what the factory's own run of the check found. The code writes it
+    from <out>/check.json and check-output.txt (see `verify`); the model writes none of it."""
+    try:
+        result = json.loads((out / CHECK_RESULT_FILE).read_text())
+    except (OSError, ValueError):
+        result = {}
+    if not isinstance(result, dict):
+        result = {}
+    header, tail = _check_output(out)
+    fields = {}
+    for line in header:
+        key, _, value = line.partition(":")
+        fields[key.strip()] = value.strip()
+    verdict = result.get("result")
+    shown = (
+        _untrusted(str(verdict)) if verdict else "unknown (no check result recorded)"
+    )
+    lines = [
+        "## Evidence",
+        "",
+        f"- Command: `{_untrusted(fields.get('command') or 'none')}`",
+        f"- Exit code: {_untrusted(fields.get('exit code') or 'none')}",
+        f"- Result: {shown}",
+        f"- Touched the check file: {'yes' if result.get('touched_check') else 'no'}",
+        f"- Head: `{_untrusted(head_sha.strip()) or 'unknown'}`",
+    ]
+    if tail:
+        lines += ["", "Output tail:", "", _fenced(_untrusted(tail))]
+    return "\n".join(lines)
+
+
+def pr_block(out: Path, head_sha: str) -> str:
+    """The factory-owned block of a PR body. Each section starts with a `## ` heading; the
+    Merge Danger section joins `evidence_section` in `sections`."""
+    sections = [evidence_section(out, head_sha)]
+    return f"{PR_BLOCK_START}\n" + "\n\n".join(sections) + f"\n{PR_BLOCK_END}\n"
+
+
+def replace_pr_block(body: str, block: str) -> str:
+    """`body` with only what lies between the markers replaced. The block is appended
+    when either marker is gone."""
+    start = body.find(PR_BLOCK_START)
+    end = body.find(PR_BLOCK_END, start + len(PR_BLOCK_START)) if start >= 0 else -1
+    if start < 0 or end < 0:
+        return body.rstrip("\n") + "\n\n" + block
+    return body[:start] + block.rstrip("\n") + body[end + len(PR_BLOCK_END) :]
+
+
+def pr_body(ctx: dict, summary: str, block: str = "") -> str:
     return (
-        f"Closes #{ctx['issue']}\n\n{summary.strip()}\n\n"
-        "Opened by the factory as a draft. The factory's review runs on every push; "
+        f"Closes #{ctx['issue']}\n\n{neutralize_comments(summary).strip()}\n\n"
+        + (block.rstrip("\n") + "\n\n" if block else "")
+        + "Opened by the factory as a draft. The factory's review runs on every push; "
         "a human merges.\n"
     )
 
@@ -727,11 +807,18 @@ def publish(args, gh: GitHub | None = None) -> int:
     remote = f"https://x-access-token:{token}@github.com/{ctx['repo']}.git"
     # A new Ticket's branch must not exist yet; a rework round fast-forwards.
     _git(work, "push", "-q", remote, f"HEAD:refs/heads/{ctx['branch']}")
+    block = pr_block(out, _git(work, "rev-parse", "HEAD").strip())
     if ctx["pr"]:
+        current = gh.pr(ctx["repo"], ctx["pr"]).get("body") or ""
+        gh.edit_pr_body(
+            ctx["repo"],
+            ctx["pr"],
+            write_comment(out, "pr-body.md", replace_pr_block(current, block)),
+        )
         print(f"Pushed a rework round to {ctx['branch']}; review runs on the push")
         return 0
     summary = _summary_text(out)
-    body = write_comment(out, "pr-body.md", pr_body(ctx, summary))
+    body = write_comment(out, "pr-body.md", pr_body(ctx, summary, block))
     url = gh.create_draft_pr(
         ctx["repo"], BASE_BRANCH, ctx["branch"], ctx["title"], body
     )
