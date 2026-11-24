@@ -71,6 +71,55 @@ def _last(out, gh, **kw):
     return run_record.write(step_args("implement", out, **kw), gh)
 
 
+def test_the_record_keeps_only_the_check_result_and_the_boolean(tmp_path):
+    out = built(tmp_path, fixture_line("result-success.json"))
+    (out / "check.json").write_text(
+        json.dumps({"result": "fail", "touched_check": True, "extra": "text"})
+    )
+    gh = FakeGitHub([bot_comment(6, OPENED)])
+    assert _last(out, gh) == 0
+    record_ = record_of(out)
+    assert (record_["check"], record_["touched_check"]) == ("fail", True)
+    assert "extra" not in record_
+
+
+def test_a_hostile_check_file_leaves_both_fields_null(tmp_path):
+    out = built(tmp_path, fixture_line("result-success.json"))
+    (out / "check.json").write_text(
+        json.dumps({"result": "maybe <!-- x -->", "touched_check": "yes"})
+    )
+    gh = FakeGitHub([bot_comment(6, OPENED)])
+    assert _last(out, gh) == 0
+    record_ = record_of(out)
+    assert record_["check"] is None and record_["touched_check"] is None
+
+
+def test_a_rework_record_carries_the_check_fields(tmp_path):
+    out = built(tmp_path, fixture_line("result-success.json"))
+    (out / "check.json").write_text(
+        json.dumps({"result": "not-run", "touched_check": False})
+    )
+    record_ = record.build_record(
+        "rework",
+        RunContext.from_args(step_args("rework", out, pr=9), 4),
+        {},
+        "ok",
+        None,
+        check="not-run",
+        touched_check=False,
+    )
+    assert (record_["check"], record_["touched_check"]) == ("not-run", False)
+
+
+def test_an_old_record_without_the_check_fields_still_passes_metrics(tmp_path):
+    out = built(tmp_path, fixture_line("result-success.json"))
+    gh = FakeGitHub([bot_comment(6, OPENED)])
+    _last(out, gh)
+    old = record_of(out)
+    del old["check"], old["touched_check"]
+    metrics.check_schema([old])  # raises MetricsError on a refused record
+
+
 def test_an_opened_draft_leaves_a_record_in_a_file_and_on_the_opened_comment(tmp_path):
     out = built(tmp_path, fixture_line("result-success.json"))
     gh = FakeGitHub(
@@ -106,7 +155,8 @@ def test_an_opened_draft_leaves_a_record_in_a_file_and_on_the_opened_comment(tmp
     assert record_["login"] == "subscription" and record_["model"] == "sonnet"
     assert record_["budget"] == 5 and record_["claude_code_version"] == "2.1.319"
     assert record_["project"] == "harness" and record_["ts"].endswith("Z")
-    assert len(record_) == 28
+    assert len(record_) == 30
+    assert record_["check"] is None and record_["touched_check"] is None
 
 
 def _failed(

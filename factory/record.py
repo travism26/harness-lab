@@ -21,6 +21,7 @@ from factory.github import GitHub, GitHubError, write_comment
 from factory.switch_rule import LOGINS, is_factory_app
 
 SCHEMA = 1
+CHECK_RESULTS = ("pass", "fail", "not-run")
 WORKFLOWS = ("implement", "rework", "review")
 # Every workflow a record may name. `WORKFLOWS` stays the three `factory.backfill` rebuilds
 # records for: the research path started after records did, so it has no past run to rebuild.
@@ -190,6 +191,27 @@ def read_numbers(out: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def read_check(out: Path) -> tuple[str | None, bool | None]:
+    """The factory's check result and whether the change edited the check file, from
+    <out>/check.json. Both None when the file is missing or unreadable; only the three words
+    and a boolean are kept."""
+    path = Path(out) / "check.json"
+    try:
+        if not path.is_file() or path.stat().st_size > MAX_FILE:
+            return None, None
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    result = data.get("result")
+    touched = data.get("touched_check")
+    return (
+        result if result in CHECK_RESULTS else None,
+        touched if isinstance(touched, bool) else None,
+    )
+
+
 def _tokens(numbers: dict) -> dict:
     """The four counts from `usage`. A count of the wrong type is None. When `usage` is
     well-typed and all zero, they are summed from `modelUsage` instead (the CLI reports zero
@@ -228,6 +250,8 @@ def build_record(
     round_=0,
     verdict=None,
     gate=None,
+    check=None,
+    touched_check=None,
     now: datetime | None = None,
 ) -> dict:
     """The Run record from trusted `ctx` and untrusted `numbers`. Bad fields become None."""
@@ -281,6 +305,10 @@ def build_record(
         if verdict is not None
         else None,
         "gate": keep("gate", _choice(gate, GATES)) if gate is not None else None,
+        "check": keep("check", _choice(check, CHECK_RESULTS))
+        if check is not None
+        else None,
+        "touched_check": touched_check if isinstance(touched_check, bool) else None,
         "cost_usd": cost,
         "cost_note": COST_NOTE,
         "turns": turns,

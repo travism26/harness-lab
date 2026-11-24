@@ -198,6 +198,8 @@ def test_implement_run_with_an_artifact_gets_a_backfilled_record(tmp_path, capsy
             "reason": None,
             "verdict": None,
             "gate": None,
+            "check": None,
+            "touched_check": None,
             "cost_usd": 0.1289566,
             "cost_note": "client-estimate",
             "turns": 5,

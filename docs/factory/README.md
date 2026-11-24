@@ -37,8 +37,8 @@ fails with a message naming what is missing. It never goes green without doing a
    Project's glossary and decision records. For factory-root work the prompt tells the agent to run
    `uv run pytest tests/factory` until it passes, and to limit edits to the factory package, its
    tests, the factory doc, the lab glossary, the glossary map, the lab decision records and the root
-   gitignore. It does not name a Project folder or a `projects/<name>/check`, and the run is not a
-   bootstrap, so the factory does not run a new-project check. A Project with a `go.mod` already on
+   gitignore. It does not name a Project folder or a `projects/<name>/check`. The factory runs the
+   root `./check`, if there is one, after the agent (see below). A Project with a `go.mod` already on
    the branch gets Go first, at
    the version its `go.mod` names (Rework does the same). Rework of a factory-root Ticket uses the
    same prompt.
@@ -46,8 +46,12 @@ fails with a message naming what is missing. It never goes green without doing a
    whose body closes the Ticket. If the agent finishes and the work checkout is unchanged,
    publish fails. The failure comment on the Ticket says so, includes the agent's summary, and
    lists any edits it finds in the factory checkout outside `work/`. A new Project is the
-   exception: before that commit, the factory itself runs the `check` the agent just wrote. See
-   [Starting a Project](#starting-a-project).
+   exception: a new Project with no executable `check` publishes nothing. See
+   [Starting a Project](#starting-a-project). On every Implement and Rework run, before that
+   commit, the factory itself runs the Project's `check` (the root `./check` for a factory-root
+   Ticket), with a 600-second limit and no App token or Claude login. A failing check still
+   publishes the draft, and CI's red run starts a Rework round. The result goes in the Run record
+   (`check`: `pass`, `fail` or `not-run`, and `touched_check`).
 3. **Review** (`.github/workflows/review.yml`) runs on the new PR. A fresh agent with read-only
    tools reviews the diff along two axes: Spec (does it do what the Ticket asks?) and Standards
    (does it follow `CLAUDE.md`, the glossaries and the decision records?). It posts one report on the PR.
@@ -122,7 +126,8 @@ when the Ticket adds a Python workspace member, the root `pyproject.toml` and `u
 may not edit `.github/`. After the agent finishes, and only on a bootstrap, the job installs Go if
 the new `go.mod` exists, the same way [CI](#ci) does (the same setup-go action, version file and
 cache path), and then runs `projects/<name>/check`. That step has no App token and no Claude login.
-A missing check, a check that is not executable, or a check that exits non-zero fails the job.
+A missing check or a check that is not executable fails the job, and its comment says why. A check
+that exits non-zero is recorded as `fail` and the draft is still published. When the job fails,
 Publish does not run. Implement's existing failure step drops `in-progress`, and the Ticket can be
 labelled again. On a Go Project the agent does not have Go during its own turn, because
 `go.mod` appears during that turn. The factory installs Go afterwards and runs the check once. A
@@ -133,8 +138,8 @@ before the check has merged, and the check runs from the pull request's branch. 
 the `rework` label and gains `factory-failed`, as any failed rework does.
 
 Once `projects/<name>/check` is an executable file on the default branch, later Tickets for that
-Project are ordinary. The prompt tells the agent to run the check. The factory does not run it
-itself. CI runs it after the pull request opens, as for every other Project.
+Project are ordinary. The prompt tells the agent to run the check, and the factory runs it once more after the
+agent and records the result. CI runs it after the pull request opens, as for every other Project.
 
 The one gate on the check is the owner's merge of that pull request. The factory only sees the
 script's exit code. A script whose body is `exit 0` passes this step, and it passes CI. Review can
@@ -263,8 +268,8 @@ From [ADR 0005](../adr/0005-label-only-factory-start-and-no-secrets-for-forks.md
 - **The agent never holds a GitHub token.** The steps that hold the App token (`claim`, `prepare`,
   `publish`, `apply`) run no agent. The agent step gets only its Claude Code login, through
   `factory/claude.py`, which drops every other credential from its environment. The checkouts keep
-  no git credentials, so the agent cannot push. The new-project check is its own step, after the
-  agent and before publish, and it gets neither the App token nor the Claude login: it runs a
+  no git credentials, so the agent cannot push. The check is its own step, after the
+  agent and before publish, and it gets neither the App token nor the Claude login: it may run a
   script the agent just wrote. Any secret value found in a run's files is redacted
   before they are posted or uploaded.
 - **The reviewer reads PR content, so it gets no shell.** Review's agent has only Read, Grep and
@@ -331,6 +336,8 @@ A Run record is the one small JSON object a Factory run leaves behind: what ran 
 It lives in two places. The durable copy is a hidden `<!-- factory:run {...} -->` marker appended to the comment the run already posted on the Ticket (the "opened a draft PR" comment, or the "failed" comment), so it lasts as long as the Ticket. A cancelled run posts neither comment, so its record goes on one plain line the last step posts. A marker counts only as the whole final line of a bot comment, which is where the last step writes it; a copy anywhere else in a comment is somebody's quotation and is never read as a record. The places that put model text into a bot comment (the review report's summaries and findings, the agent's summary in the "failed" comment, and the live check's reply) put a zero-width space inside `<!--` and `-->`, so that text cannot form a marker either and a quoted `<!--` still reads. The other copy is `run-out/run.json` in the run's uploaded files, which GitHub deletes after 90 days. The decision is in [ADR 0010](../adr/0010-run-records-live-in-comment-markers.md).
 
 `factory.ticket build` saves only the raw numbers from the CLI's result line to `run-out/result.json`. The last step of `.github/workflows/implement.yml` (`factory.run_record write`) runs whenever the agent step started, holds the App token, and trusts nothing the agent step wrote: the run's identity comes from the workflow's context, it copies only known fields from `result.json`, checks each one's type, writes a field that fails its check as null with a workflow warning, and never puts `-->` or a token-shaped string in the marker; one last check of the whole serialized line, before it is posted, enforces that, and a line that fails posts no marker and warns. A count in `usage` of the wrong type is null; the token counts are summed from `modelUsage` only when `usage` is well-typed and all zero, which is what the CLI reports when it stops at its budget cap. It finds its comment among the bot's own comments on the Ticket, never from a file. Rework has no comment of its own, so its last step (`factory.run_record write --workflow rework`) posts one plain line on the pull request, for example "Rework round 1 pushed `abc1234`." or "Rework round 1 failed: `no-change`.", with a link to the run, and the marker on a second line. `round` and `pr` come from the workflow's context (the event's pull request and its `rework:N` label when the run started; when the event's labels hold no `rework:N`, the pull request's labels read at the end of the run), never from `run-out/`. `issue` is the number in the head branch `factory/issue-<N>`, and null for any other branch. A Rework run refused before its agent starts leaves no record.
+
+The record has two more fields for Implement and Rework runs: `check` (`pass`, `fail` or `not-run`) and `touched_check` (true when the change edited the check file that was run). `factory.ticket verify` writes them to `run-out/check.json` after the agent step, with `run-out/check-output.txt` (the command, the exit code and the last 200 lines of output); the last step keeps only the three words and the boolean. They are null on Review, Research and backfilled records and on records made before they existed. The schema stays 1, so `factory.metrics` still reads old records.
 
 Each last step sets `LOGIN` in its own `env:` from the repository variable `FACTORY_CLAUDE_LOGIN` instead of reading the job's `env`. `CLAUDE_CODE_VERSION` it still reads from the job's `env`. `factory/claude.py` removes the GitHub token, the Claude secrets and every `ANTHROPIC_*` variable from the agent's environment, but it does not remove `GITHUB_ENV`, so the agent's process holds the path of the file a step writes to change the environment of the steps after it. A value the agent wrote there would reach the last step through the job's `env`. The record's `claude_code_version` is therefore what the workflow's env said, checked only to be shaped like `1.2.3`; it is not a measurement of the CLI that ran.
 
@@ -435,7 +442,7 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 | What you see | What to do |
 |---|---|
 | A comment says the factory did not start the Ticket | Read the reason. For "one Ticket at a time", finish or close the other Ticket. For "switch rule", switch to `openrouter`. Then re-apply `ready-for-factory`. |
-| A comment says the factory run failed | Open the run. A new Project whose `check` was missing or failed looks like this. The Ticket has lost `in-progress` and carries `factory-failed`, so it can be retried; the next start removes the label. |
+| A comment says the factory run failed | Open the run. A new Project whose `check` was missing looks like this; the comment quotes why. A `check` that merely failed does not: the draft is published, and the Run record says `check: fail`. The Ticket has lost `in-progress` and carries `factory-failed`, so it can be retried; the next start removes the label. |
 | A factory PR is closed without merging | Closing the PR removes `rework`. `in-progress` stays on the Ticket until the Ticket closes (closing it removes `in-progress`); if you keep the Ticket open, remove `in-progress` by hand, or one-at-a-time keeps every other Ticket waiting. |
 | A factory PR has `factory-failed` | Its last Rework run failed and left no comment. Open the run, then re-apply `rework` to try again; the next round removes `factory-failed`. |
 | A factory draft's CI is red and no rework starts | Open the CI gate run. It ignores a PR that is not a draft, not opened by the factory App, or not on `factory/issue-<N>`, and it stops at the daily cap. A `timed_out` or `cancelled` CI run is not a failure. |
