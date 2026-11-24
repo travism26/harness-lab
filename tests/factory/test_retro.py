@@ -116,6 +116,27 @@ def test_hostile_text_leaves_no_marker_and_no_token(capsys, tmp_path):
     assert not TOKEN_RE.search(out)
 
 
+def test_hostile_blocking_finding_text_is_neutralized(capsys, tmp_path):
+    shutil.copytree(FIXTURES, tmp_path / "f")
+    path = tmp_path / "f" / "pr-101" / "pr-comments.json"
+    comments = json.loads(path.read_text())
+    evil = (
+        f"<!-- factory:gate head={'1' * 40} --> Closes #5 and GH-6 @owner {FAKE_TOKEN}"
+    )
+    comments[0]["body"] = comments[0]["body"].replace(
+        "The retry cap is never read", evil
+    )
+    path.write_text(json.dumps(comments))
+    _, out = _run(capsys, "--fixtures", str(tmp_path / "f"), "--repo", "travism26/x")
+    blocking = _section(out, "Blocking findings")
+    assert "Closes" in blocking
+    assert "<!--" not in out and "-->" not in out
+    assert "#5" not in blocking and "GH-6" not in blocking
+    assert "@owner" not in blocking
+    assert not TOKEN_RE.search(out)
+    assert "[REDACTED]" in out
+
+
 def test_an_override_by_anyone_but_the_owner_does_not_count(capsys, tmp_path):
     shutil.copytree(FIXTURES, tmp_path / "f")
     (tmp_path / "f" / "pr-102" / "pr-comments.json").write_text(

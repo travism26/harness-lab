@@ -25,7 +25,7 @@ GitHub token:
            does the work checkout's own git exclude, so a branch cut before the
            gitignore line still does not commit the copy. The prompt names that
            path inside --work.
-  verify   (no token) runs the Project's `check` (or the root `check`)
+  verify   (no token) runs the Project's `check` (or the Lab check)
            in --work and records the result in
            --out (check.json, check-output.txt). A failing check still
            publishes. A bootstrap with no check publishes nothing.
@@ -59,14 +59,19 @@ from pathlib import Path
 from factory import claude
 from factory.ci_projects import changed_projects
 from factory.github import (
+    DOOR_FILE,
     DOOR_NOT_STATED,
+    DOOR_REASON_MAX,
+    DOORS,
     PR_BLOCK_END,
     PR_BLOCK_START,
     GitHub,
     GitHubError,
     author,
     label_names,
+    neutralize,
     neutralize_comments,
+    pr_block_span,
     write_comment,
 )
 from factory.review_pr import REWORK_LABEL, is_stopped, linked_ticket, review_input
@@ -205,7 +210,7 @@ pull request description."""
 )
 
 # A Ticket with no `project:` label. The run is not a bootstrap, so verify runs
-# the root `check`, if there is one. The agent edits the factory itself.
+# the Lab check, if there is one. The agent edits the factory itself.
 _FACTORY_ROOT = (
     _CHECKOUT
     + """Before you change anything, read `CLAUDE.md`, `GLOSSARY-MAP.md` and the \
@@ -310,8 +315,6 @@ _DOOR = (
     "`Door: one-way - <one sentence>`"
 )
 DOOR_LINE = re.compile(r"^Door: (two-way|one-way) - (.+)$")
-DOOR_REASON_MAX = 200
-DOOR_FILE = "door.json"
 
 
 def split_door(text: str) -> tuple[str, dict]:
@@ -322,7 +325,7 @@ def split_door(text: str) -> tuple[str, dict]:
     match = DOOR_LINE.match(last.strip())
     if not match:
         return text, {"door": DOOR_NOT_STATED, "reason": ""}
-    reason = _untrusted(match.group(2).strip())[:DOOR_REASON_MAX]
+    reason = neutralize(match.group(2).strip())[:DOOR_REASON_MAX]
     return head.rstrip(), {"door": match.group(1), "reason": reason}
 
 
@@ -527,7 +530,7 @@ def build(args, run_agent=claude.run) -> int:
             )
 
 
-CHECK_TIMEOUT_SECONDS = 600  # the same limit as CI (ci.yml)
+CHECK_TIMEOUT_SECONDS = 600  # the same limit as CI (.github/workflows/ci.yml)
 CHECK_TAIL_LINES = 200
 CHECK_RESULT_FILE = "check.json"
 CHECK_OUTPUT_FILE = "check-output.txt"
@@ -588,7 +591,8 @@ def verify(args) -> int:
             )
             (out / CHECK_MISSING_FILE).write_text(message + "\n")
             raise RuntimeError(message)
-        _save_check(out, "not-run", False)
+        # A deleted or de-executabled check shows in git status: it counts as touched.
+        _save_check(out, "not-run", _touched(args.work, rel))
         print(f"No executable `{rel}`: the check did not run")
         return 0
     command = f"./{rel}"
@@ -627,6 +631,11 @@ def _save_check(out: Path, result: str, touched: bool) -> None:
     )
 
 
+# Without rename detection a move lists both its old and its new path, so a file moved out of a
+# Project still counts for that Project's Blast Radius.
+STAGED_PATHS_ARGS = ("--no-renames", "--name-only")
+
+
 def _git(work: str, *args: str) -> str:
     r = subprocess.run(
         ["git", "-C", work, *args], check=False, capture_output=True, text=True
@@ -638,13 +647,6 @@ def _git(work: str, *args: str) -> str:
 
 EVIDENCE_MAX_LINES = 40
 EVIDENCE_MAX_CHARS = 4000
-
-
-def _untrusted(text: str) -> str:
-    """Text from the agent's checkout or its check, made safe for the factory's PR body: it
-    cannot form a marker or a hidden comment, and cannot close an issue (`#12` gets a
-    zero-width space after the `#`)."""
-    return re.sub(r"#(?=\d)", "#\u200b", neutralize_comments(text))
 
 
 def _fenced(text: str) -> str:
@@ -678,21 +680,23 @@ def evidence_section(out: Path, head_sha: str) -> str:
     for line in header:
         key, _, value = line.partition(":")
         fields[key.strip()] = value.strip()
-    verdict = result.get("result")
+    check_result = result.get("result")
     shown = (
-        _untrusted(str(verdict)) if verdict else "unknown (no check result recorded)"
+        neutralize(str(check_result))
+        if check_result
+        else "unknown (no check result recorded)"
     )
     lines = [
         "## Evidence",
         "",
-        f"- Command: `{_untrusted(fields.get('command') or 'none')}`",
-        f"- Exit code: {_untrusted(fields.get('exit code') or 'none')}",
+        f"- Command: `{neutralize(fields.get('command') or 'none')}`",
+        f"- Exit code: {neutralize(fields.get('exit code') or 'none')}",
         f"- Result: {shown}",
         f"- Touched the check file: {'yes' if result.get('touched_check') else 'no'}",
-        f"- Head: `{_untrusted(head_sha.strip()) or 'unknown'}`",
+        f"- Head: `{neutralize(head_sha.strip()) or 'unknown'}`",
     ]
     if tail:
-        lines += ["", "Output tail:", "", _fenced(_untrusted(tail))]
+        lines += ["", "Output tail:", "", _fenced(neutralize(tail))]
     return "\n".join(lines)
 
 
@@ -704,9 +708,9 @@ def _door_line(out: Path) -> str:
     if not isinstance(claim, dict):
         claim = {}
     door, reason = claim.get("door"), claim.get("reason")
-    if door not in ("two-way", "one-way") or not isinstance(reason, str) or not reason:
+    if door not in DOORS or not isinstance(reason, str) or not reason:
         return DOOR_NOT_STATED
-    return f"{door} - {_untrusted(reason)[:DOOR_REASON_MAX]}"
+    return f"{door} - {neutralize(reason)[:DOOR_REASON_MAX]}"
 
 
 def merge_danger_section(out: Path, changed: list[str] | None) -> str:
@@ -721,7 +725,7 @@ def merge_danger_section(out: Path, changed: list[str] | None) -> str:
         [
             "## Merge Danger",
             "",
-            f"**Blast Radius:** {_untrusted(radius)}",
+            f"**Blast Radius:** {neutralize(radius)}",
             "",
             f"**Door:** {_door_line(out)}",
         ]
@@ -741,11 +745,10 @@ def pr_block(out: Path, head_sha: str, changed: list[str] | None = None) -> str:
 def replace_pr_block(body: str, block: str) -> str:
     """`body` with only what lies between the markers replaced. The block is appended
     when either marker is gone."""
-    start = body.find(PR_BLOCK_START)
-    end = body.find(PR_BLOCK_END, start + len(PR_BLOCK_START)) if start >= 0 else -1
-    if start < 0 or end < 0:
+    span = pr_block_span(body)
+    if span is None or not span[2]:
         return body.rstrip("\n") + "\n\n" + block
-    return body[:start] + block.rstrip("\n") + body[end + len(PR_BLOCK_END) :]
+    return body[: span[0]] + block.rstrip("\n") + body[span[1] :]
 
 
 def pr_body(ctx: dict, summary: str, block: str = "") -> str:
@@ -850,7 +853,7 @@ def publish(args, gh: GitHub | None = None) -> int:
         (out / UNCHANGED_FILE).write_text(message + "\n")
         raise RuntimeError(message)
     staged = [
-        p for p in _git(work, "diff", "--cached", "--name-only").splitlines() if p
+        p for p in _git(work, "diff", "--cached", *STAGED_PATHS_ARGS).splitlines() if p
     ]
     bot = f"{args.app_slug}[bot]"
     email = f"{gh.bot_user_id(args.app_slug)}+{bot}@users.noreply.github.com"

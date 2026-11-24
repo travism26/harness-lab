@@ -649,6 +649,32 @@ def test_touched_check_is_true_only_when_the_diff_edits_the_check_file(tmp_path)
     assert _check_json(out)["touched_check"] is True
 
 
+def test_a_deleted_or_de_executabled_check_counts_as_touched(tmp_path):
+    out, work = _wrote(
+        tmp_path, "#!/bin/sh\nexit 0\n", bootstrap=False, project="harness"
+    )
+    _git_init(work)
+    check = work / "projects" / "harness" / "check"
+    check.chmod(0o644)
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert _check_json(out) == {"result": "not-run", "touched_check": True}
+    check.unlink()
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert _check_json(out) == {"result": "not-run", "touched_check": True}
+
+
+def test_a_factory_root_ticket_runs_the_root_check_and_writes_pass(tmp_path):
+    out, work = _wrote(tmp_path, None, bootstrap=False, project=None)
+    work.mkdir()
+    root_check = work / "check"
+    root_check.write_text("#!/bin/sh\necho ran > ran\nexit 0\n")
+    root_check.chmod(0o755)
+    assert ticket.verify(_args(tmp_path, out=str(out), work=str(work))) == 0
+    assert (work / "ran").is_file()
+    assert _check_json(out) == {"result": "pass", "touched_check": False}
+    assert "command: ./check" in (out / "check-output.txt").read_text()
+
+
 def test_a_new_check_file_counts_as_touched(tmp_path):
     out, work = _wrote(tmp_path, None, bootstrap=False, project="harness")
     _git_init(work)

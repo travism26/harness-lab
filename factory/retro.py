@@ -17,8 +17,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from factory.collect_findings import findings_in, neutralize, review_for_head
-from factory.github import GitHub, GitHubError
+from factory import collect_findings
+from factory.collect_findings import finding_line, findings_in, review_for_head
+from factory.github import REDACTED, GitHub, GitHubError, neutralize
 from factory.metrics import Facts
 from factory.override import parse_override
 from factory.record import TOKEN_RE
@@ -26,10 +27,8 @@ from factory.review_pr import SPEC_KINDS, review_verdict
 from factory.switch_rule import default_app_slug
 
 LABEL = "retro"
-STANDARDS_LABEL = "standards-findings"
 DUE_AT = 10
 FIXTURES_REPO = "travism26/harness-lab"
-REDACTED = "[redacted]"
 
 
 class RetroError(RuntimeError):
@@ -85,7 +84,7 @@ class LiveSource:
         return self.gh.pull_commits(self.repo, pr)
 
     def standards_issue(self) -> dict | None:
-        issues = self.gh.open_issues_labelled(self.repo, STANDARDS_LABEL)
+        issues = self.gh.open_issues_labelled(self.repo, collect_findings.LABEL)
         if not issues:
             return None
         number = min(issues)
@@ -146,14 +145,10 @@ def build(source: Any, repo: str, app_slug: str, since: str | None) -> str:
         if reason:
             overrides.append(f"- #{n} {title}: {neutralize(reason)}")
         if (is_blocked or reason) and review:
-            for kind, description, path, fix in findings_in(
+            for finding in findings_in(
                 review, "Spec", [k for k, blocks in SPEC_KINDS.items() if blocks]
             ):
-                where = f" (`{neutralize(path)}`)" if path else ""
-                blocking.append(
-                    f"- #{n} **{kind}** {neutralize(description)}{where}. "
-                    f"Fix: {neutralize(fix)}"
-                )
+                blocking.append(f"- #{n} {finding_line(finding)}")
         if (pr.get("headRefName") or "").startswith("factory/"):
             count = Facts(app_slug, commits=source.commits(n)).owner_commits
             if count:

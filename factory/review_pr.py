@@ -41,14 +41,16 @@ from typing import Any
 
 from factory import claude
 from factory.github import (
+    DOOR_FILE,
     DOOR_NOT_STATED,
-    PR_BLOCK_END,
-    PR_BLOCK_START,
+    DOOR_REASON_MAX,
+    DOORS,
     GitHub,
     GitHubError,
     author,
     label_names,
     neutralize_comments,
+    pr_block_span,
     write_comment,
 )
 from factory.switch_rule import LOGINS, refusal
@@ -168,10 +170,8 @@ def parse_findings(text: str) -> Findings:
     )
 
 
-DOOR_REASON_MAX = 200
-DOOR_FILE = "door.json"
-_DOORS = ("two-way", "one-way")
-_DOOR_LINE_RE = re.compile(r"^\s*\*\*Door:\*\*\s*(two-way|one-way)\b", re.MULTILINE)
+_DOOR_LINE_RE = re.compile(r"^\s*\*\*Door:\*\*\s*(two-way|one-way)\b")
+_FENCE_RE = re.compile(r"^\s*(`{3,})")
 
 
 def parse_door(text: str) -> tuple[str, str]:
@@ -182,7 +182,7 @@ def parse_door(text: str) -> tuple[str, str]:
         door, reason = raw.get("door"), raw.get("door_reason")
     except (ValueError, AttributeError):
         return DOOR_NOT_STATED, ""
-    if door not in _DOORS:
+    if door not in DOORS:
         return DOOR_NOT_STATED, ""
     return door, reason.strip() if isinstance(reason, str) else ""
 
@@ -194,33 +194,54 @@ def read_door(out: Path) -> tuple[str, str]:
         door, reason = raw["door"], raw["reason"]
     except (OSError, ValueError, KeyError, TypeError):
         return DOOR_NOT_STATED, ""
-    if door not in _DOORS or not isinstance(reason, str):
+    if door not in DOORS or not isinstance(reason, str):
         return DOOR_NOT_STATED, ""
     return door, reason
 
 
 def strip_pr_block(body: str) -> str:
     """`body` without the factory block. A start marker with no end marker strips to the end."""
-    start = body.find(PR_BLOCK_START)
-    if start < 0:
-        return body
-    end = body.find(PR_BLOCK_END, start + len(PR_BLOCK_START))
-    if end < 0:
-        return body[:start]
-    return body[:start] + body[end + len(PR_BLOCK_END) :]
+    span = pr_block_span(body)
+    return body if span is None else body[: span[0]] + body[span[1] :]
+
+
+def _merge_danger_lines(block: str) -> list[str]:
+    """The lines of the block's `## Merge Danger` section, leaving out anything in a code
+    fence: the Evidence section quotes the check's output, which is not the factory's."""
+    lines: list[str] = []
+    fence = ""
+    in_section = False
+    for line in block.splitlines():
+        found = _FENCE_RE.match(line)
+        if fence:
+            if found and len(found.group(1)) >= len(fence) and not line.strip("` \t"):
+                fence = ""
+            continue
+        if found:
+            fence = found.group(1)
+            continue
+        if line.startswith("## "):
+            in_section = line.strip() == "## Merge Danger"
+        elif in_section:
+            lines.append(line)
+    return lines
 
 
 def door_in_body(body: str) -> str | None:
-    """The Door the PR body states: the factory block's `**Door:**` line, else a hand-written
-    one, else None. `one-way (not stated)` reads as one-way."""
-    start = body.find(PR_BLOCK_START)
-    if start >= 0:
-        end = body.find(PR_BLOCK_END, start + len(PR_BLOCK_START))
-        match = _DOOR_LINE_RE.search(body[start : end if end >= 0 else len(body)])
+    """The Door the PR body states: the `**Door:**` line in the factory block's Merge Danger
+    section, else a hand-written one outside the block, else None. `one-way (not stated)`
+    reads as one-way."""
+    span = pr_block_span(body)
+    if span:
+        for line in _merge_danger_lines(body[span[0] : span[1]]):
+            match = _DOOR_LINE_RE.match(line)
+            if match:
+                return match.group(1)
+    for line in strip_pr_block(body).splitlines():
+        match = _DOOR_LINE_RE.match(line)
         if match:
             return match.group(1)
-    match = _DOOR_LINE_RE.search(strip_pr_block(body))
-    return match.group(1) if match else None
+    return None
 
 
 def findings_from_json(text: str) -> Findings:

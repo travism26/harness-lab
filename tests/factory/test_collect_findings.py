@@ -226,3 +226,11 @@ def test_workflow_runs_no_agent_and_holds_no_claude_login():
         assert banned not in text
     assert "group: collect-findings" in text
     assert "issues: write" in text and "pull-requests: read" in text
+
+
+def test_neutralize_breaks_a_gh_number_reference_too() -> None:
+    from factory.github import neutralize
+
+    for text in ("Closes GH-5", "closes gh-5"):
+        out = neutralize(text)
+        assert "GH-5" not in out.upper() and out.replace("\u200b", "") == text

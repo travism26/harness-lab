@@ -101,8 +101,27 @@ def test_no_door_file_reads_as_not_stated(tmp_path):
     assert "**Door:** one-way (not stated)" in _block(tmp_path / "out", [])
 
 
-def test_door_json_is_not_read_by_the_run_record():
-    assert "door" not in Path("factory/run_record.py").read_text().lower()
+def test_door_json_does_not_change_a_run_record(tmp_path):
+    from factory import run_record
+    from tests.factory.support import bot_comment, built, fixture_line, record_of
+    from tests.factory.support import step_args
+
+    records = []
+    for name, door in (
+        ("plain", None),
+        ("with-door", {"door": "two-way", "reason": "r"}),
+    ):
+        base = tmp_path / name
+        base.mkdir()
+        out = built(base, fixture_line("result-success.json"))
+        if door:
+            (out / "door.json").write_text(json.dumps(door))
+        gh = FakeGitHub(
+            [bot_comment(6, "The factory opened a draft PR: https://x/pull/9\n")]
+        )
+        assert run_record.write(step_args("implement", out), gh) == 0
+        records.append(record_of(out))
+    assert records[0] == records[1]
 
 
 def test_an_implement_body_has_merge_danger_from_the_staged_paths(
@@ -115,7 +134,8 @@ def test_an_implement_body_has_merge_danger_from_the_staged_paths(
     def fake_git(work, *args):
         if args[:2] == ("status", "--porcelain"):
             return " M x\n"
-        if args[:3] == ("diff", "--cached", "--name-only"):
+        if args[:2] == ("diff", "--cached"):
+            assert "--no-renames" in args
             return "projects/harness/a.py\nREADME.md\n"
         return "sha1\n"
 
@@ -162,3 +182,22 @@ def test_a_rework_push_refreshes_merge_danger_and_keeps_the_rest(tmp_path, monke
     assert "Human text." in body and "new tail" in body
     assert body.count("## Merge Danger") == 1
     assert body.endswith(old.rsplit(ticket.PR_BLOCK_END, 1)[1])
+
+
+def test_a_rename_out_of_a_project_lists_both_paths(tmp_path):
+    import subprocess
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-C", str(tmp_path), *args], check=True, capture_output=True
+        )
+
+    git("init", "-q")
+    (tmp_path / "factory").mkdir()
+    (tmp_path / "factory" / "x.py").write_text("print('hello')\n" * 20)
+    git("add", "-A")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base")
+    (tmp_path / "projects" / "harness").mkdir(parents=True)
+    git("mv", "factory/x.py", "projects/harness/x.py")
+    staged = ticket._git(str(tmp_path), "diff", "--cached", *ticket.STAGED_PATHS_ARGS)
+    assert sorted(staged.split()) == ["factory/x.py", "projects/harness/x.py"]

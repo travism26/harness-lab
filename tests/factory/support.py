@@ -66,7 +66,11 @@ class FakeGitHub:
 
     def pull_api(self, repo, number):
         """The REST shape: lower-case state, the head under `head.sha`."""
-        return {"number": number, "state": self.state.lower(), "head": {"sha": self.head}}
+        return {
+            "number": number,
+            "state": self.state.lower(),
+            "head": {"sha": self.head},
+        }
 
     def pr_comments(self, repo, number):
         self.reads += 1
