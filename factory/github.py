@@ -373,6 +373,13 @@ class GitHub:
     def edit_pr_body(self, repo: str, number: int, body_file: Path) -> None:
         self._gh(["pr", "edit", str(number), "-R", repo, "--body-file", str(body_file)])
 
+    def pull_files(self, repo: str, number: int) -> list[str]:
+        """Every path the pull request changes (all pages)."""
+        return [
+            f["filename"]
+            for f in self._paged(f"repos/{repo}/pulls/{number}/files?per_page=100")
+        ]
+
     def bot_user_id(self, app_slug: str) -> int:
         return int(self._gh(["api", f"users/{app_slug}[bot]", "--jq", ".id"]).strip())
 

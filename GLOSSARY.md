@@ -56,6 +56,14 @@ _Avoid_: Postmortem, audit
 One attempt of the factory's Implement, Rework, Review or Research workflow that started its agent. A refused Ticket, the CI gate and the Factory check are not Factory runs.
 _Avoid_: Run, job, session
 
+**Door**:
+Whether merging a change can be cleanly undone: two-way if reverting the merge restores the old state, one-way if not. The agent proposes it; a change that does not state one counts as one-way.
+_Avoid_: Reversibility, rollback
+
+**Blast radius**:
+How much of the Lab a change can affect: one Project, several Projects, or the shared code. The factory computes it from the changed paths.
+_Avoid_: Impact, scope
+
 **Run record**:
 The one small record a Factory run leaves: what ran, on which Ticket or pull request, how it ended and what it cost. It holds facts and numbers, never text from the model.
 _Avoid_: Run log, Call record, ledger row

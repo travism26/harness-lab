@@ -57,6 +57,7 @@ import sys
 from pathlib import Path
 
 from factory import claude
+from factory.ci_projects import changed_projects
 from factory.github import (
     GitHub,
     GitHubError,
@@ -301,6 +302,28 @@ def stage_ticket(out: Path, work: Path) -> None:
     _exclude_staged(work)
 
 
+_DOOR = (
+    "\n\nYour last line must be `Door: two-way - <one sentence>` or "
+    "`Door: one-way - <one sentence>`"
+)
+DOOR_LINE = re.compile(r"^Door: (two-way|one-way) - (.+)$")
+DOOR_REASON_MAX = 200
+DOOR_FILE = "door.json"
+DOOR_NOT_STATED = "one-way (not stated)"
+
+
+def split_door(text: str) -> tuple[str, dict]:
+    """The reply without a last-line `Door:` claim, and the claim as `{door, reason}`. A reply
+    with no such last line gets `one-way (not stated)`."""
+    text = text.strip()
+    head, _, last = text.rpartition("\n")
+    match = DOOR_LINE.match(last.strip())
+    if not match:
+        return text, {"door": DOOR_NOT_STATED, "reason": ""}
+    reason = _untrusted(match.group(2).strip())[:DOOR_REASON_MAX]
+    return head.rstrip(), {"door": match.group(1), "reason": reason}
+
+
 def build_prompt(
     out: Path, ticket_path: str | None = None, review_path: str | None = None
 ) -> str:
@@ -326,7 +349,7 @@ def build_prompt(
         prompt = _FACTORY_ROOT.format(ticket=ticket_path)
     if (out / "review.md").is_file():
         prompt += _REWORK.format(review=review_path)
-    return prompt
+    return prompt + _DOOR
 
 
 # ---- steps -----------------------------------------------------------------
@@ -489,7 +512,9 @@ def build(args, run_agent=claude.run) -> int:
                     result, args.max_budget_usd, "FACTORY_BUILD_BUDGET_USD"
                 )
             )
-        (out / "summary.md").write_text(result.text.strip() + "\n")
+        summary, door = split_door(result.text)
+        (out / "summary.md").write_text(summary + "\n")
+        (out / DOOR_FILE).write_text(json.dumps(door) + "\n")
         print(f"The agent finished: ${result.cost_usd:.2f}")
         return 0
     finally:
@@ -671,10 +696,45 @@ def evidence_section(out: Path, head_sha: str) -> str:
     return "\n".join(lines)
 
 
-def pr_block(out: Path, head_sha: str) -> str:
-    """The factory-owned block of a PR body. Each section starts with a `## ` heading; the
-    Merge Danger section joins `evidence_section` in `sections`."""
-    sections = [evidence_section(out, head_sha)]
+def _door_line(out: Path) -> str:
+    try:
+        claim = json.loads((out / DOOR_FILE).read_text())
+    except (OSError, ValueError):
+        claim = {}
+    if not isinstance(claim, dict):
+        claim = {}
+    door, reason = claim.get("door"), claim.get("reason")
+    if door not in ("two-way", "one-way") or not isinstance(reason, str) or not reason:
+        return DOOR_NOT_STATED
+    return f"{door} - {_untrusted(reason)[:DOOR_REASON_MAX]}"
+
+
+def merge_danger_section(out: Path, changed: list[str] | None) -> str:
+    """`## Merge Danger`: the Blast Radius the code computes from the changed paths, and the
+    Door the agent proposed (<out>/door.json, written by `build`)."""
+    if changed is None:
+        radius = "unknown"
+    else:
+        names, outside = changed_projects(changed)
+        radius = "shared" if outside else ", ".join(names) or "none"
+    return "\n".join(
+        [
+            "## Merge Danger",
+            "",
+            f"**Blast Radius:** {_untrusted(radius)}",
+            "",
+            f"**Door:** {_door_line(out)}",
+        ]
+    )
+
+
+def pr_block(out: Path, head_sha: str, changed: list[str] | None = None) -> str:
+    """The factory-owned block of a PR body. Each section starts with a `## ` heading.
+    `changed` is the PR's changed paths; None when they are not known."""
+    sections = [
+        evidence_section(out, head_sha),
+        merge_danger_section(out, changed),
+    ]
     return f"{PR_BLOCK_START}\n" + "\n\n".join(sections) + f"\n{PR_BLOCK_END}\n"
 
 
@@ -789,6 +849,9 @@ def publish(args, gh: GitHub | None = None) -> int:
         message = _unchanged_report(out, detail)
         (out / UNCHANGED_FILE).write_text(message + "\n")
         raise RuntimeError(message)
+    staged = [
+        p for p in _git(work, "diff", "--cached", "--name-only").splitlines() if p
+    ]
     bot = f"{args.app_slug}[bot]"
     email = f"{gh.bot_user_id(args.app_slug)}+{bot}@users.noreply.github.com"
     round_note = "rework round" if ctx["pr"] else "build"
@@ -807,7 +870,9 @@ def publish(args, gh: GitHub | None = None) -> int:
     remote = f"https://x-access-token:{token}@github.com/{ctx['repo']}.git"
     # A new Ticket's branch must not exist yet; a rework round fast-forwards.
     _git(work, "push", "-q", remote, f"HEAD:refs/heads/{ctx['branch']}")
-    block = pr_block(out, _git(work, "rev-parse", "HEAD").strip())
+    # A Rework push stages only this round's edits, so the Blast Radius reads the whole PR.
+    changed = gh.pull_files(ctx["repo"], ctx["pr"]) if ctx["pr"] else staged
+    block = pr_block(out, _git(work, "rev-parse", "HEAD").strip(), changed)
     if ctx["pr"]:
         current = gh.pr(ctx["repo"], ctx["pr"]).get("body") or ""
         gh.edit_pr_body(
