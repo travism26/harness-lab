@@ -167,6 +167,17 @@ jobs:
           uv run --no-dev python -m factory.ticket publish --out run-out --work work
           --app-slug "$APP_SLUG"
 
+      # Label the PR when the round failed, so the label list shows it. `revise` removes
+      # the label at the next start. The App token adds it, as Implement's failure step does.
+      - name: Mark the PR after a failure
+        if: failure() && steps.preflight.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.preflight.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: >-
+          uv run --no-dev python -m factory.ticket fail-pr --repo "$REPO" --pr "$PR"
+
       # Runs after the agent step started, whatever happened, and holds the App token.
       # It takes the run's identity from this workflow's context (the event's pull
       # request and its labels when the run started), never from run-out/, and runs only

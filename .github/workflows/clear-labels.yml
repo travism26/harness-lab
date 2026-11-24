@@ -1,0 +1,55 @@
+# Clears the factory's live-work labels when work closes (docs/factory/README.md).
+#
+# A closed Ticket loses `in-progress`; a closed PR loses `rework`. `rework:1` and
+# `rework:2` stay as history. No agent, no repository files and no App key: the
+# job only calls the GitHub API with the run's own token. Removing a label starts
+# no workflow (Rework starts only on `rework` being added).
+
+name: Clear labels
+
+on:
+  issues:
+    types: [closed]
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  clear-issue:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Remove in-progress
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
+        run: |
+          if jq -e 'index("in-progress")' <<<"$LABELS" >/dev/null; then
+            gh api -X DELETE "repos/$REPO/issues/$NUMBER/labels/in-progress"
+          fi
+
+  clear-pr:
+    # A fork PR's token is read-only, and the factory builds only same-repo branches.
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Remove rework
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          if jq -e 'index("rework")' <<<"$LABELS" >/dev/null; then
+            gh api -X DELETE "repos/$REPO/issues/$NUMBER/labels/rework"
+          fi

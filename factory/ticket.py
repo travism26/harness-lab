@@ -65,6 +65,7 @@ from factory.sync_labels import load_labels
 
 START_LABEL = "ready-for-factory"
 PROGRESS_LABEL = "in-progress"
+FAILED_LABEL = "factory-failed"
 PROJECT_PREFIX = "project:"
 PROJECTS_DIR = "projects"
 BRANCH_PREFIX = "factory/"
@@ -345,7 +346,8 @@ def claim(args, gh: Optional[GitHub] = None) -> int:
             gh.remove_labels(args.repo, args.issue, (START_LABEL,))
         raise Refused(reason)
 
-    gh.remove_labels(args.repo, args.issue, (START_LABEL,))
+    stale = (FAILED_LABEL,) if FAILED_LABEL in label_names(issue) else ()
+    gh.remove_labels(args.repo, args.issue, (START_LABEL, *stale))
     gh.add_labels(args.repo, args.issue, (PROGRESS_LABEL,))
     gh.comment(args.repo, args.issue, write_comment(
         out, "started.md", f"{STARTED_PREFIX} [Run]({args.run_url})\n"))
@@ -376,6 +378,8 @@ def revise(args, gh: Optional[GitHub] = None) -> int:
     reason = refusal(args.login, [author(issue), author(pr)], owner, args.app_slug)
     if reason:
         raise RuntimeError(f"switch rule: {reason}")
+    if FAILED_LABEL in labels:
+        gh.remove_labels(args.repo, args.pr, (FAILED_LABEL,))
     try:
         project, bootstrap = project_of(issue, Path(args.root))
     except Refused as e:
@@ -594,6 +598,16 @@ def release(args, gh: Optional[GitHub] = None) -> int:
     gh.comment(args.repo, args.issue, write_comment(out, "failed.md", body))
     if PROGRESS_LABEL in label_names(issue):
         gh.remove_labels(args.repo, args.issue, (PROGRESS_LABEL,))
+    if FAILED_LABEL not in label_names(issue):
+        gh.add_labels(args.repo, args.issue, (FAILED_LABEL,))
+    return 0
+
+
+def fail_pr(args, gh: Optional[GitHub] = None) -> int:
+    """Mark a PR whose Rework run failed, so the label list shows it."""
+    gh = gh or GitHub()
+    if FAILED_LABEL not in label_names(gh.pr(args.repo, args.pr)):
+        gh.add_labels(args.repo, args.pr, (FAILED_LABEL,))
     return 0
 
 
@@ -641,9 +655,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     r.add_argument("--out", required=True)
     r.add_argument("--run-url", required=True)
 
+    f = sub.add_parser("fail-pr")
+    f.add_argument("--repo", required=True)
+    f.add_argument("--pr", type=int, required=True)
+
     args = parser.parse_args(argv)
     steps = {"claim": claim, "revise": revise, "build": build, "verify": verify,
-             "publish": publish, "release": release}
+             "publish": publish, "release": release, "fail-pr": fail_pr}
     try:
         return steps[args.step](args)
     except (RuntimeError, GitHubError, claude.ConfigError) as e:
