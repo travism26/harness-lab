@@ -54,14 +54,21 @@ def test_unknown_input_is_an_error() -> None:
     ],
 )
 def test_pick_uses_what_was_handed_over_else_how_review_ended(
-    verdict: str, reason: str, result: str, expected: tuple[Optional[str], Optional[str]]
+    verdict: str,
+    reason: str,
+    result: str,
+    expected: tuple[Optional[str], Optional[str]],
 ) -> None:
     assert pick(verdict, reason, result) == expected
 
 
 def test_capped_crashed_and_timed__out_reviews_give_error() -> None:
-    for verdict, reason, result in [("", "capped", "failure"), ("", "", "failure"),
-                                    ("", "", "cancelled"), ("", "timed-out", "failure")]:
+    for verdict, reason, result in [
+        ("", "capped", "failure"),
+        ("", "", "failure"),
+        ("", "", "cancelled"),
+        ("", "timed-out", "failure"),
+    ]:
         assert status_for(*pick(verdict, reason, result))[0] == "error"
 
 
@@ -70,7 +77,9 @@ def _outputs(capsys: pytest.CaptureFixture[str]) -> dict[str, str]:
     return dict(line.split("=", 1) for line in lines if "=" in line)
 
 
-def test_resolve_targets_the_comment_else_the_run(capsys: pytest.CaptureFixture[str]) -> None:
+def test_resolve_targets_the_comment_else_the_run(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     run = "https://github.com/o/r/actions/runs/9"
     args = ["resolve", "--repo", "o/r", "--pr", "4", "--run-url", run]
     assert review_status.main([*args, "--verdict", "PASS", "--comment-id", "77"]) == 0
@@ -125,7 +134,9 @@ def test_a_capped_review_hands_over_capped(
 ) -> None:
     review_status.handoff(tmp_path, capped=True)
     got = _outputs(capsys)
-    assert got["reason"] == "capped" and got["verdict"] == "" and got["comment-id"] == ""
+    assert (
+        got["reason"] == "capped" and got["verdict"] == "" and got["comment-id"] == ""
+    )
 
 
 def test_handoff_with_nothing_written_hands_over_nothing(
@@ -143,7 +154,13 @@ def test_statuses_write_is_only_in_the_status_job() -> None:
 
 def test_the_status_job_holds_no_agent_secret_or_pr_code() -> None:
     lowered = STATUS_JOB.lower()
-    for text in ("claude", "claude_code_oauth_token", "secrets.", "pr/", "factory-preflight"):
+    for text in (
+        "claude",
+        "claude_code_oauth_token",
+        "secrets.",
+        "pr/",
+        "factory-preflight",
+    ):
         assert text not in lowered
     assert "persist-credentials: false" in STATUS_JOB
     assert "github.event.repository.default_branch" in STATUS_JOB
@@ -159,7 +176,9 @@ def test_the_status_job_runs_always_after_review_but_not_for_a_fork() -> None:
 
 
 def test_the_handoff_is_the_last_step_of_the_review_job() -> None:
-    assert REVIEW_JOB.index("Keep the review's files") < REVIEW_JOB.index("Hand the outcome")
+    assert REVIEW_JOB.index("Keep the review's files") < REVIEW_JOB.index(
+        "Hand the outcome"
+    )
     assert REVIEW_JOB.rstrip().splitlines()[-1].lstrip().startswith("run:")
     for name in ("verdict", "reason", "comment-id"):
         assert f"{name}: ${{{{ steps.handoff.outputs.{name} }}}}" in REVIEW_JOB

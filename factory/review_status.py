@@ -36,7 +36,9 @@ def status_for(outcome: Optional[str], reason: Optional[str]) -> Tuple[str, str]
     return "error", "Review ended in a state the factory does not recognise"
 
 
-def pick(verdict: str, reason: str, review_result: str) -> Tuple[Optional[str], Optional[str]]:
+def pick(
+    verdict: str, reason: str, review_result: str
+) -> Tuple[Optional[str], Optional[str]]:
     """The (outcome, reason) for the status job.
 
     A handed-over reason or Verdict wins. With neither, the reason comes from how the
@@ -78,7 +80,7 @@ def handoff(out: Path, capped: bool) -> int:
         verdict = ""
         for line in _read(out / "report.md").splitlines():
             if line.startswith("## Factory review: "):
-                verdict = line[len("## Factory review: "):].strip()
+                verdict = line[len("## Factory review: ") :].strip()
                 break
         if verdict not in VERDICTS:
             verdict = ""
@@ -89,8 +91,15 @@ def handoff(out: Path, capped: bool) -> int:
     return 0
 
 
-def resolve(verdict: str, reason: str, comment_id: str, review_result: str,
-            repo: str, pr: str, run_url: str) -> int:
+def resolve(
+    verdict: str,
+    reason: str,
+    comment_id: str,
+    review_result: str,
+    repo: str,
+    pr: str,
+    run_url: str,
+) -> int:
     """Print the status to set: `state`, `description` and `target-url` (the Review comment,
     else the run)."""
     outcome, why = pick(verdict, reason, review_result)
@@ -121,8 +130,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.step == "handoff":
         return handoff(Path(args.out), args.capped == "true")
-    return resolve(args.verdict, args.reason, args.comment_id, args.review_result,
-                   args.repo, args.pr, args.run_url)
+    return resolve(
+        args.verdict,
+        args.reason,
+        args.comment_id,
+        args.review_result,
+        args.repo,
+        args.pr,
+        args.run_url,
+    )
 
 
 if __name__ == "__main__":
