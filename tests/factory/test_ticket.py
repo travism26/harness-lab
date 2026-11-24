@@ -7,7 +7,7 @@ import pytest
 
 from factory import ticket
 from factory.claude import Result
-from factory.review_pr import MARKER
+from factory.review_pr import LEGACY_STOPPED_LABEL, MARKER
 
 REPO = "travism26/harness-lab"
 
@@ -349,6 +349,7 @@ def test_only_the_rework_prompt_tells_the_agent_to_leave_open_questions(tmp_path
     "pr",
     [
         _pr(labels=("rework", "factory-stopped")),
+        _pr(labels=("rework", LEGACY_STOPPED_LABEL)),
         _pr(labels=()),
         _pr(branch="fm/hand-made"),
     ],

@@ -64,6 +64,10 @@ class FakeGitHub:
             "labels": [{"name": n} for n in self.labels],
         }
 
+    def pull_api(self, repo, number):
+        """The REST shape: lower-case state, the head under `head.sha`."""
+        return {"number": number, "state": self.state.lower(), "head": {"sha": self.head}}
+
     def pr_comments(self, repo, number):
         self.reads += 1
         extra = [{"id": 0, "body": self.plant}] if self.plant and self.reads > 1 else []

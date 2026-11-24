@@ -37,6 +37,7 @@ import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from factory import claude
 from factory.github import (
@@ -135,7 +136,7 @@ class Findings:
 
 def parse_findings(text: str) -> Findings:
     """The agent's JSON answer, which may sit inside a ```json fence or prose.
-    Raises ValueError when it is missing or malformed."""
+    Raises ValueError when it is missing or malformed, and TypeError when a summary is missing."""
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end < start:
         raise ValueError("no JSON object in the agent's answer")
@@ -485,9 +486,8 @@ def render_report(
             f"so it is labelled `{STOPPED_LABEL}` and the factory stops here."
         )
     elif moves.outcome == "human-owned":
-        lines.append(
-            f"The PR is labelled `{STOPPED_LABEL}`, so no labels were changed."
-        )
+        carried = next((x for x in labels_after if x in STOPPED_LABELS), STOPPED_LABEL)
+        lines.append(f"The PR is labelled `{carried}`, so no labels were changed.")
     elif moves.outcome == "stale":
         lines.append(
             f"The PR has moved on to `{(stale_head or '')[:12]}` since this "
@@ -867,7 +867,7 @@ def ci_conclusion(args, gh: GitHub | None = None) -> int:
     return 0
 
 
-def apply(args, gh: GitHub | None = None) -> int:
+def apply(args, gh: Any | None = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
     ctx = json.loads((out / "context.json").read_text())
@@ -959,7 +959,7 @@ def capped_comment(head_sha: str, cap: str, variable: str) -> str:
     )
 
 
-def capped(args: argparse.Namespace, gh: GitHub | None = None) -> int:
+def capped(args: argparse.Namespace, gh: Any | None = None) -> int:
     """Say on the PR that the daily cap stopped Review for this head. Once per head. The
     comment carries no review marker, so nothing reads it as a verdict."""
     gh = gh or GitHub()

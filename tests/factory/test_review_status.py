@@ -98,7 +98,7 @@ def _applied(tmp_path: Path, head: str, monkeypatch: pytest.MonkeyPatch) -> Path
     answer = (Path(__file__).parent / "review-answer.json").read_text()
     (out / "findings.json").write_text(answer)
     gh = FakeGitHub(head=head)
-    review_pr.apply(_Args(out), gh)  # type: ignore[arg-type]
+    review_pr.apply(_Args(out), gh)
     return out
 
 
@@ -181,3 +181,14 @@ def test_the_handoff_is_the_last_step_of_the_review_job() -> None:
     assert REVIEW_JOB.rstrip().splitlines()[-1].lstrip().startswith("run:")
     for name in ("verdict", "reason", "comment-id"):
         assert f"{name}: ${{{{ steps.handoff.outputs.{name} }}}}" in REVIEW_JOB
+
+
+def test_a_report_without_a_posted_comment_hands_over_no_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The post failed: report.md was written but comment-id.txt and outcome.txt were not.
+    (tmp_path / "report.md").write_text("## Factory review: PASS\n\nbody\n")
+    review_status.handoff(tmp_path, capped=False)
+    got = _outputs(capsys)
+    assert got["verdict"] == "" and got["comment-id"] == ""
+    assert status_for(*pick(got["verdict"], got["reason"], "success"))[0] == "error"

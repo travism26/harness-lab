@@ -77,7 +77,8 @@ def handoff(out: Path, capped: bool) -> int:
         if not comment_id.isdigit():
             comment_id = ""
         verdict = ""
-        for line in _read(out / "report.md").splitlines():
+        # A Verdict counts only once its comment is posted: report.md is written before the post.
+        for line in _read(out / "report.md").splitlines() if comment_id else []:
             if line.startswith("## Factory review: "):
                 verdict = line[len("## Factory review: ") :].strip()
                 break

@@ -1,6 +1,6 @@
 """The owner Override: a comment `Override: <reason>` sets the status `factory/review` to success.
 
-`parse_override` is pure. `apply` reads the PR's state and head, sets the status and adds the
+`parse_override` is pure. `apply` reads the PR's state and head (`gh api`, the REST read), sets the status and adds the
 label. The workflow (.github/workflows/override.yml) holds no agent and no secret
 (docs/adr/0012-review-verdict-is-a-commit-status-with-a-recorded-override.md). The reason stays
 in the owner's comment: it is never copied into the status.
@@ -38,13 +38,13 @@ def apply(
     if parse_override(body) is None:
         print("not an Override: nothing to do")
         return 0
-    info = gh.pr(repo, pr)
-    if info.get("state") != "OPEN":
+    info = gh.pull_api(repo, pr)
+    if info.get("state") != "open":
         print("the pull request is not open: nothing to do")
         return 0
-    set_status(info["headRefOid"], "success", DESCRIPTION, comment_url)
+    set_status(info["head"]["sha"], "success", DESCRIPTION, comment_url)
     gh.add_labels(repo, pr, (LABEL,))
-    print(f"Override set {CONTEXT} on {info['headRefOid']}")
+    print(f"Override set {CONTEXT} on {info['head']['sha']}")
     return 0
 
 

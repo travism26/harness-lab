@@ -66,7 +66,7 @@ def test_a_new_head_gets_its_own_comment(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_capped_takes_a_fake_github_directly() -> None:
     gh = FakeGitHub()
     ns = argparse.Namespace(repo=REPO, pr=5, head_sha=SHA, cap="40", variable="V")
-    assert capped(ns, gh) == 0  # type: ignore[arg-type]
+    assert capped(ns, gh) == 0
     assert len(gh.posted) == 1
 
 
