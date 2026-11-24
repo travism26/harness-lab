@@ -34,8 +34,8 @@ from typing import Callable, List, Optional, Sequence, Tuple
 from factory import claude
 from factory.github import GitHub, GitHubError, author, label_names, write_comment
 from factory.review_pr import (
-    HUMAN_LABEL, MARKER, MAX_REWORK, REWORK_LABEL, Moves, charge_won,
-    drop_in_progress, gate_line, head_charged, label_moves, linked_ticket, mark_for_run,
+    MARKER, MAX_REWORK, REWORK_LABEL, STOPPED_LABEL, Moves, charge_won,
+    drop_in_progress, gate_line, head_charged, is_stopped, label_moves, linked_ticket, mark_for_run,
     move_labels, parse_gate, review_passed, rework_round,
 )
 
@@ -195,7 +195,7 @@ def _render_failure(event: GateEvent, moves: Moves, charged: bool, nonce: Option
         lines.append(f"Sent to rework: round {rework_round(labels_after)} of {MAX_REWORK}.")
     elif moves.outcome == "human":
         lines.append(f"CI blocked this PR again after {MAX_REWORK} rework rounds, "
-                     f"so it is labelled `{HUMAN_LABEL}` and the factory stops here.")
+                     f"so it is labelled `{STOPPED_LABEL}` and the factory stops here.")
     lines += ["", "### Spec: BLOCKER", "",
               "Required CI failed. This is a blocker the rework round must fix."]
     for job in jobs:
@@ -252,8 +252,8 @@ def _decide_success(event: GateEvent) -> Decision:
 def _decide_failure(event: GateEvent, nonce: str) -> Decision:
     if not event.pr_draft:
         return Decision("ignore", "pull request is not a draft")
-    if HUMAN_LABEL in event.labels:
-        return Decision("ignore", "pull request is ready-for-human")
+    if is_stopped(event.labels):
+        return Decision("ignore", "pull request is stopped")
     posted = mark_for_run(event.comments, event.run_id)
     if posted is not None:
         return _duplicate(event, posted)
@@ -272,7 +272,7 @@ def _duplicate(event: GateEvent, meta) -> Decision:
     labels = list(event.labels)
     missing = tuple(label for label in meta.add if label not in labels)
     remove = ()
-    if HUMAN_LABEL in meta.add and REWORK_LABEL in labels:
+    if is_stopped(meta.add) and REWORK_LABEL in labels:
         remove = (REWORK_LABEL,)
     if not missing and not remove:
         return Decision("ignore", "duplicate ci run")
@@ -321,7 +321,7 @@ def wait_for_inputs(fetch: Callable, sleep: Callable, monotonic: Callable, timeo
     failed and Review is ready, wait only `failure_grace` seconds for the
     gate's comment. The same grace applies when no CI run exists for the head
     and Review is already ready. The gate posts nothing for a non-draft, a
-    fork, or `ready-for-human`.
+    fork, or `factory-stopped`.
     """
     start = monotonic()
     failure_since = None

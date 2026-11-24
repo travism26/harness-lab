@@ -97,7 +97,7 @@ GATES = {
     "rework": dict(gh=dict(), answer=BLOCK, verdict="BLOCKED", round=1),
     "human": dict(gh=dict(labels=["rework", "rework:2"]), answer=BLOCK, verdict="BLOCKED",
                   round=2),
-    "human-owned": dict(gh=dict(labels=["ready-for-human"]), answer=BLOCK, verdict="BLOCKED",
+    "human-owned": dict(gh=dict(labels=["factory-stopped"]), answer=BLOCK, verdict="BLOCKED",
                         round=0),
     "ci-blocked": dict(gh=dict(), answer=PASS, verdict="PASS", round=0, ci="failure"),
 }

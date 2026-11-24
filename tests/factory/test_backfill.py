@@ -389,7 +389,7 @@ def test_older_reports_give_the_gate_their_sentence_names(tmp_path):
     review_with(gh, 1601, [old_report(HEAD, "BLOCKED", "Sent to rework: round 2 of 2.")])
     review_with(gh, 1602, [old_report(HEAD, "BLOCKED",
                                       "Review blocked this PR again after 2 rework rounds, "
-                                      "so it is labelled `ready-for-human` and the factory "
+                                      "so it is labelled `factory-stopped` and the factory "
                                       "stops here.")], pr=136)
     rows = {r["run_id"]: r for r in go(gh, tmp_path)[1]}
     assert (rows[1601]["verdict"], rows[1601]["gate"], rows[1601]["round"]) == ("BLOCKED", "rework", 2)

@@ -250,7 +250,7 @@ def test_only_the_rework_prompt_tells_the_agent_to_leave_open_questions(tmp_path
     assert "open_question" not in ticket.build_prompt(tmp_path / "plain")
 
 
-@pytest.mark.parametrize("pr", [_pr(labels=("rework", "ready-for-human")), _pr(labels=()),
+@pytest.mark.parametrize("pr", [_pr(labels=("rework", "factory-stopped")), _pr(labels=()),
                                 _pr(branch="fm/hand-made")])
 def test_revise_refuses_prs_not_waiting_for_factory_rework(tmp_path, pr):
     _root(tmp_path)

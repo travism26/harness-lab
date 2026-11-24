@@ -143,7 +143,7 @@ def _review_round(report: dict, comments: List[dict], slug: str, created: str) -
     the one in force when the run was created."""
     meta = review_pr.parse_gate(report["body"])
     if meta and meta.charged:
-        if review_pr.HUMAN_LABEL in meta.add:
+        if review_pr.is_stopped(meta.add):
             return review_pr.MAX_REWORK
         return review_pr.rework_round(list(meta.add)) or None
     return _round_in_force(comments, slug, created)
@@ -167,8 +167,8 @@ def _with_gate_lines(comments: List[dict], slug: str) -> List[dict]:
             head = _LEGACY_HEAD_RE.search(body)
             if head:
                 round_ = _LEGACY_ROUND_RE.search(body)
-                human = f"`{review_pr.HUMAN_LABEL}`" in body and "rework rounds" in body
-                add = ((review_pr.HUMAN_LABEL,) if human else
+                human = any(f"`{label}`" in body for label in review_pr.STOPPED_LABELS) and "rework rounds" in body
+                add = ((review_pr.STOPPED_LABEL,) if human else
                        (review_pr.REWORK_LABEL, f"rework:{round_.group(1)}") if round_ else ())
                 gate = review_pr.gate_line(head.group(1), bool(add), "review", add=add)
                 first, rest = body.split("\n", 1)

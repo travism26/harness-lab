@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from factory.review_pr import HUMAN_LABEL, MAX_REWORK, REWORK_LABEL
+from factory.review_pr import STOPPED_LABEL, MAX_REWORK, REWORK_LABEL
 from factory.sync_labels import Label, load_labels, plan_changes
 from factory.ticket import FAILED_LABEL, PROGRESS_LABEL, START_LABEL
 from factory.check import LABEL as CHECK_LABEL
@@ -9,7 +9,7 @@ from factory.check import LABEL as CHECK_LABEL
 
 def test_the_set_holds_every_label_the_factory_uses():
     names = {label.name for label in load_labels()}
-    used = {START_LABEL, PROGRESS_LABEL, FAILED_LABEL, REWORK_LABEL, HUMAN_LABEL, CHECK_LABEL,
+    used = {START_LABEL, PROGRESS_LABEL, FAILED_LABEL, REWORK_LABEL, STOPPED_LABEL, CHECK_LABEL,
             "project:harness", "project:agent-identity", "standards-findings",
             *(f"rework:{n}" for n in range(1, MAX_REWORK + 1))}
     assert used <= names
@@ -47,3 +47,15 @@ def test_clear_labels_workflow_has_no_secret_checkout_or_fork_path():
     assert "secrets." not in text and "checkout" not in text
     assert "pull_request_target" not in text
     assert "github.event.pull_request.head.repo.full_name == github.repository" in text
+
+
+def test_no_workflow_or_factory_code_names_the_issue_label():
+    """`ready-for-human` is an issue label; the PR stop label is `factory-stopped`. One legacy
+    definition in review_pr.py may name it."""
+    root = Path(__file__).resolve().parents[2]
+    files = [*(root / ".github" / "workflows").glob("*.yml"), *(root / "factory").glob("*.py")]
+    assert files
+    hits = [f"{f.relative_to(root)}:{n}" for f in files
+            for n, line in enumerate(f.read_text().splitlines(), 1)
+            if "ready-for-human" in line and not line.startswith("LEGACY_STOPPED_LABEL = ")]
+    assert not hits
