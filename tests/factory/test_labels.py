@@ -19,6 +19,7 @@ def test_the_set_holds_every_label_the_factory_uses():
         "project:harness",
         "project:agent-identity",
         "standards-findings",
+        "retro",
         *(f"rework:{n}" for n in range(1, MAX_REWORK + 1)),
     }
     assert used <= names

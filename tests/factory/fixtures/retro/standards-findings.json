@@ -1,0 +1,9 @@
+{
+  "number": 50,
+  "body": "The Review's non-blocking Standards Findings.\n",
+  "comments": [
+    {
+      "body": "<!-- factory:findings pr=103 -->\n### Pull request #103: Tidy the docs\n\n- **repo_standard** A doc names a file by bare name (`README.md`). Fix: use the repo-root path\n"
+    }
+  ]
+}

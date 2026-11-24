@@ -32,6 +32,7 @@
     {"name": "ready-for-factory", "color": "0b6e2c", "description": "Owner-applied: the factory builds this ticket"},
     {"name": "ready-for-research", "color": "5319e7", "description": "Owner-applied: the factory answers this research-request ticket"},
     {"name": "factory-check", "color": "bfdadc", "description": "Owner-applied: the factory answers with a short live check"},
-    {"name": "standards-findings", "color": "c5def5", "description": "The rolling issue that collects merged PRs' non-blocking Standards Findings"}
+    {"name": "standards-findings", "color": "c5def5", "description": "The rolling issue that collects merged PRs' non-blocking Standards Findings"},
+    {"name": "retro", "color": "c5def5", "description": "A Retro: proposals for new checks and standards, drafted from a local retro report (docs/factory/README.md)"}
   ]
 }

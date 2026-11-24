@@ -196,6 +196,45 @@ class GitHub:
         """The REST pull request (state, created_at, merged_at), not `gh pr view`'s shape."""
         return json.loads(self._gh(["api", f"repos/{repo}/pulls/{number}"]))
 
+    def merged_prs(self, repo: str) -> list[dict]:
+        """The most recent merged pull requests (`gh pr list` shape, up to 500)."""
+        out = self._gh(
+            [
+                "pr",
+                "list",
+                "-R",
+                repo,
+                "--state",
+                "merged",
+                "--limit",
+                "500",
+                "--json",
+                "number,title,mergedAt,headRefOid,headRefName",
+            ]
+        )
+        return json.loads(out)
+
+    def newest_issue_created(self, repo: str, label: str) -> str | None:
+        """The creation time of the newest issue, open or closed, with this label."""
+        out = self._gh(
+            [
+                "issue",
+                "list",
+                "-R",
+                repo,
+                "--state",
+                "all",
+                "--label",
+                label,
+                "--limit",
+                "1",
+                "--json",
+                "createdAt",
+            ]
+        )
+        found = json.loads(out)
+        return found[0]["createdAt"] if found else None
+
     def pull_commits(self, repo: str, number: int) -> list[dict]:
         return self._paged(f"repos/{repo}/pulls/{number}/commits?per_page=100")
 
