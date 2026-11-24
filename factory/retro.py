@@ -99,7 +99,7 @@ class LiveSource:
 
 def _when(text: str) -> datetime:
     """An ISO date or timestamp, read as UTC when it names no zone."""
-    when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    when = datetime.fromisoformat(text)
     return when if when.tzinfo else when.replace(tzinfo=UTC)
 
 
