@@ -6,9 +6,14 @@ Usage:
   uv run python -m factory.sync_labels --apply        # create and update for real
 
 A dry run reads the repo's labels and prints what --apply would do; it writes
-nothing. --apply creates each missing label and corrects the colour and
-description of each one that differs. It never deletes a label, so labels
-outside the set are left alone. GitHub label names are case-insensitive, so
+nothing. --apply renames a label whose old name is in the file and whose new
+name is not, with `gh label edit <old> --name <new>`, and it does not also
+create that name. When both names exist it does not delete: it updates the new
+name in place if the colour or description differs, and it says the old name is
+left. When only the new name exists it plans nothing for that pair. It creates
+each other missing label and corrects the colour and description of each one
+that differs. It never deletes a label, so labels outside the set, including
+`ready-for-factory`, are left alone. GitHub label names are case-insensitive, so
 `Bug` and `bug` are the same label.
 
 Exit codes: 0 done (or nothing to do), 1 a gh call failed, 2 bad usage.
@@ -18,6 +23,7 @@ import argparse
 import json
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,9 +39,10 @@ class Label:
 
 @dataclass(frozen=True)
 class Change:
-    action: str  # "create" or "update"
+    action: str  # "create", "update", "rename", or "leave"
     label: Label
     current: Label | None = None
+    left: str | None = None
 
 
 def load_labels(path: Path = LABELS_FILE) -> list[Label]:
@@ -51,18 +58,54 @@ def load_labels(path: Path = LABELS_FILE) -> list[Label]:
     return labels
 
 
-def plan_changes(desired: list[Label], existing: list[Label]) -> list[Change]:
-    """What --apply must do to make existing hold every desired label."""
-    by_name = {l.name.lower(): l for l in existing}
-    changes = []
+def load_renames(path: Path = LABELS_FILE) -> list[tuple[str, str]]:
+    raw = json.loads(path.read_text())
+    return [(item["old"], item["new"]) for item in raw.get("renames", [])]
+
+
+def _differs(current: Label, label: Label) -> bool:
+    return (current.color.lower(), current.description) != (
+        label.color,
+        label.description,
+    )
+
+
+def plan_changes(
+    desired: list[Label],
+    existing: list[Label],
+    renames: Sequence[tuple[str, str]] | None = None,
+) -> list[Change]:
+    """What --apply must do to make existing hold every desired label.
+
+    A rename is one edit of the old name. It is not also a create, and it is
+    never a delete. `ready-for-factory` is not a rename and is not created.
+    """
+    by_name = {label.name.lower(): label for label in existing}
+    desired_by = {label.name.lower(): label for label in desired}
+    changes: list[Change] = []
+    renamed: set[str] = set()
+    for old, new in renames or ():
+        wanted = desired_by.get(new.lower())
+        if wanted is None:
+            continue
+        old_label = by_name.get(old.lower())
+        new_label = by_name.get(new.lower())
+        if old_label is not None and new_label is None:
+            changes.append(Change("rename", wanted, old_label))
+            renamed.add(new.lower())
+        elif old_label is not None and new_label is not None:
+            renamed.add(new.lower())
+            if _differs(new_label, wanted):
+                changes.append(Change("update", wanted, new_label, left=old_label.name))
+            else:
+                changes.append(Change("leave", wanted, old_label))
     for label in desired:
+        if label.name.lower() in renamed:
+            continue
         current = by_name.get(label.name.lower())
         if current is None:
             changes.append(Change("create", label))
-        elif (current.color.lower(), current.description) != (
-            label.color,
-            label.description,
-        ):
+        elif _differs(current, label):
             changes.append(Change("update", label, current))
     return changes
 
@@ -100,10 +143,13 @@ def existing_labels(repo: str) -> list[Label]:
 
 
 def command_for(change: Change, repo: str) -> list[str]:
-    verb = "create" if change.action == "create" else "edit"
+    if change.action == "leave":
+        raise ValueError("a leave change is not a gh command")
     # `edit` addresses the label by the name it already has on the repo.
+    # A rename passes `--name` and does not also create the new name.
     name = change.current.name if change.current else change.label.name
-    return [
+    verb = "create" if change.action == "create" else "edit"
+    command = [
         "label",
         verb,
         name,
@@ -114,19 +160,35 @@ def command_for(change: Change, repo: str) -> list[str]:
         "--description",
         change.label.description,
     ]
+    if change.action == "rename":
+        command.extend(["--name", change.label.name])
+    return command
 
 
 def describe(change: Change) -> str:
     if change.action == "create":
-        return f"create  {change.label.name}  #{change.label.color}  {change.label.description}"
+        return (
+            f"create  {change.label.name}  #{change.label.color}  "
+            f"{change.label.description}"
+        )
     cur = change.current
-    assert cur is not None, "an update change carries the current label"
+    assert cur is not None, "an update, rename, or leave carries the current label"
+    if change.action == "rename":
+        return (
+            f"rename  {cur.name} -> {change.label.name}  "
+            f"#{change.label.color}  {change.label.description}"
+        )
+    if change.action == "leave":
+        return f"leave  {cur.name}  both names exist; the old name is left"
     diffs = []
     if cur.color.lower() != change.label.color:
         diffs.append(f"colour #{cur.color} -> #{change.label.color}")
     if cur.description != change.label.description:
         diffs.append(f"description {cur.description!r} -> {change.label.description!r}")
-    return f"update  {cur.name}  " + "; ".join(diffs)
+    text = f"update  {cur.name}  " + "; ".join(diffs)
+    if change.left:
+        text += f"; {change.left} is left"
+    return text
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -146,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     try:
-        changes = plan_changes(desired, existing_labels(repo))
+        changes = plan_changes(desired, existing_labels(repo), load_renames())
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -159,7 +221,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     failed = 0
-    for change in changes:
+    applied = [change for change in changes if change.action != "leave"]
+    for change in applied:
         r = _gh(command_for(change, repo))
         if r.returncode != 0:
             failed += 1
@@ -168,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
     if failed:
-        print(f"{failed} of {len(changes)} changes failed", file=sys.stderr)
+        print(f"{failed} of {len(applied)} changes failed", file=sys.stderr)
         return 1
     print("Labels match the set.")
     return 0

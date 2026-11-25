@@ -88,7 +88,7 @@ def event(**kw):
 def test_ci_failure_after_a_pass_becomes_the_rework_finding():
     decision = decide(event(), nonce="abc")
     assert decision.action == "rework"
-    assert decision.add == ("rework", "rework:1")
+    assert decision.add == ("factory:rework", "factory:rework-1")
     assert decision.remove == ()
     assert "check ai-gateway" in decision.comment
     assert "TestOnlyPostMessages" in decision.comment
@@ -104,10 +104,10 @@ def test_ci_failure_after_a_pass_becomes_the_rework_finding():
 def test_the_third_blocker_hands_the_pr_to_a_human():
     decision = decide(event(labels=("rework", "rework:2")), nonce="abc")
     assert decision.action == "human"
-    assert decision.add == ("factory-stopped",)
+    assert decision.add == ("factory:stopped",)
     assert decision.remove == ("rework",)
     assert "check ai-gateway" in decision.comment
-    assert "factory-stopped" in decision.comment
+    assert "factory:stopped" in decision.comment
     assert "TestOnlyPostMessages" in decision.comment
 
 
@@ -119,7 +119,7 @@ def test_a_pr_with_the_legacy_stopped_label_is_ignored():
 def test_a_second_new_head_is_round_two():
     decision = decide(event(labels=("rework", "rework:1")), nonce="abc")
     assert decision.action == "rework"
-    assert decision.add == ("rework", "rework:2")
+    assert decision.add == ("factory:rework", "factory:rework-2")
     assert "rework:1" in decision.remove and "rework" in decision.remove
     assert "round 2 of 2" in decision.comment
 
@@ -144,7 +144,7 @@ def test_same_head_already_at_the_cap_does_not_escalate():
         event(labels=("rework", "rework:2"), comments=(charged,), run_id=RUN + 1)
     )
     assert decision.action == "join"
-    assert "factory-stopped" not in decision.add
+    assert "factory:stopped" not in decision.add
 
 
 @pytest.mark.parametrize(
@@ -250,8 +250,16 @@ def test_green_ci_after_pass_clears_in_progress():
     decision = decide(event(conclusion="success", failed_jobs=()))
     assert decision.action == "settle"
     assert decision.clear_in_progress and decision.issue == 114
-    assert decision.comment == ""
     assert decision.add == () and decision.remove == ()
+
+
+def test_settle_comments_on_the_ticket():
+    decision = decide(event(conclusion="success", failed_jobs=()))
+    assert decision.action == "settle"
+    assert decision.comment
+    assert decision.comment_on == "ticket"
+    assert decision.issue == 114
+    assert decision.issue != event().pr
 
 
 def test_green_ci_on_a_ready_pull_request_still_clears_in_progress():
@@ -296,7 +304,7 @@ def test_review_pass_after_green_ci_settles_on_pull_request_target():
         )
     )
     assert decision.action == "settle" and decision.clear_in_progress
-    assert decision.comment == ""
+    assert decision.comment_on == "ticket"
 
 
 def test_a_head_with_in_progress_already_off_is_left_alone():
@@ -639,7 +647,7 @@ def test_apply_posts_the_finding_and_the_rework_labels(tmp_path):
 
     ns = argparse.Namespace(out=str(out), app_slug="travism26-factory")
     assert ci_gate.apply(ns, gh) == 0
-    assert gh.added == ["rework", "rework:1"]
+    assert gh.added == ["factory:rework", "factory:rework-1"]
     assert gh.posted and "TestOnlyPostMessages" in gh.posted[0][1]
     assert gh.posted[0][0] == 118
 
@@ -721,7 +729,7 @@ def test_apply_second_time_does_not_charge_again(tmp_path):
     first = FakeGitHub(_pr(), comments=[_pass()])
     assert ci_gate.apply(ns, first) == 0
     second = FakeGitHub(
-        _pr(labels=("rework", "rework:1")),
+        _pr(labels=("factory:rework", "factory:rework-1")),
         comments=[_pass(), {"id": 2, "body": first.posted[0][1]}],
     )
     assert ci_gate.apply(ns, second) == 0

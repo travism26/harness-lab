@@ -1,6 +1,6 @@
 # The live check at the end of docs/factory/setup.md.
 #
-# When the owner labels an issue `factory-check`, the factory proves each piece
+# When the owner labels an issue `owner:check`, the factory proves each piece
 # of its setup in a few cents: the preflight finds its configuration, the App
 # token mints, Claude Code answers on the configured login, and the App posts
 # the answer on the issue and removes the label.
@@ -20,7 +20,7 @@ env:
 jobs:
   check:
     if: >-
-      github.event.label.name == 'factory-check'
+      github.event.label.name == 'owner:check'
       && github.event.sender.login == github.repository_owner
     runs-on: ubuntu-latest
     timeout-minutes: 10

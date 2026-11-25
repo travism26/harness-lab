@@ -206,7 +206,7 @@ def _with_gate_lines(comments: list[dict], slug: str) -> list[dict]:
                 add = (
                     (review_pr.STOPPED_LABEL,)
                     if human
-                    else (review_pr.REWORK_LABEL, f"rework:{round_.group(1)}")
+                    else (review_pr.REWORK_LABEL, f"factory:rework-{round_.group(1)}")
                     if round_
                     else ()
                 )

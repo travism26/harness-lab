@@ -28,7 +28,8 @@ from factory.github import (
 )
 from factory.switch_rule import LOGINS
 
-LABEL = "factory-check"
+LABEL = "owner:check"
+LEGACY_LABEL = "factory-check"
 EXPECTED = "factory ok"
 PROMPT = f"Reply with exactly these two words and nothing else: {EXPECTED}"
 BUDGET_USD = 0.10
@@ -89,8 +90,10 @@ def answer(args, gh: GitHub | None = None) -> int:
         f"(${reply['cost_usd']:.4f}). [Run]({args.run_url})\n"
     )
     gh.comment(args.repo, args.issue, write_comment(out, "answer.md", body))
-    if LABEL in label_names(gh.issue(args.repo, args.issue)):
-        gh.remove_labels(args.repo, args.issue, (LABEL,))
+    names = label_names(gh.issue(args.repo, args.issue))
+    present = tuple(label for label in (LABEL, LEGACY_LABEL) if label in names)
+    if present:
+        gh.remove_labels(args.repo, args.issue, present)
     print(body)
     return 0
 

@@ -1,0 +1,48 @@
+# The owner asks for a failed Ticket again by commenting `Retry:`.
+#
+# The first line must start with `Retry:`, and the sender must be the repository
+# owner. The App token clears `factory:failed`. It adds `factory:start` only when
+# the lock is free. The workflow token is not the token that adds that label.
+
+name: Retry
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  retry:
+    if: >-
+      !github.event.issue.pull_request
+      && github.event.sender.login == github.repository_owner
+      && startsWith(github.event.comment.body, 'Retry:')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the factory (default branch)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Mint the factory App token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_KEY }}
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Add factory:start
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          BODY: ${{ github.event.comment.body }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: >-
+          uv run --no-dev python -m factory.picker retry
+          --repo "$REPO" --issue "$ISSUE"

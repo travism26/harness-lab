@@ -51,6 +51,41 @@ class GitHub:
             )
         )
 
+    def issue_fields(self, repo: str, number: int, fields: str) -> dict:
+        return json.loads(
+            self._gh(["issue", "view", str(number), "-R", repo, "--json", fields])
+        )
+
+    def approval(self, repo: str, number: int) -> dict | None:
+        """Who put `owner:implement` on this issue, or on its parent Spec, and when."""
+        parent = self._parent_number(repo, number)
+        event = self._approval_event(repo, parent or number)
+        spec = parent
+        if event is None and parent:
+            event = self._approval_event(repo, number)
+            spec = None
+        if event is None:
+            return None
+        return {
+            "spec": spec,
+            "login": (event.get("actor") or {}).get("login") or "",
+            "approved_at": event.get("created_at") or "",
+        }
+
+    def _parent_number(self, repo: str, number: int) -> int | None:
+        parent = self.issue_fields(repo, number, "parent").get("parent") or {}
+        return int(parent["number"]) if parent.get("number") else None
+
+    def _approval_event(self, repo: str, number: int) -> dict | None:
+        found = None
+        for event in self.label_events(repo, number):
+            if event.get("event") != "labeled":
+                continue
+            name = (event.get("label") or {}).get("name")
+            if name in ("owner:implement", "ready-for-implementation"):
+                found = event
+        return found
+
     def open_issues_labelled(self, repo: str, label: str) -> list[int]:
         out = self._gh(
             [

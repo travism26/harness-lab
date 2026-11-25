@@ -112,13 +112,13 @@ def test_the_workflow_holds_no_agent_secret_or_pr_code() -> None:
 
 
 def test_the_label_is_in_the_label_set() -> None:
-    assert override.LABEL == "review-override"
-    assert '"review-override"' in (ROOT / "factory" / "labels.json").read_text()
+    assert override.LABEL == "factory:override"
+    assert '"factory:override"' in (ROOT / "factory" / "labels.json").read_text()
 
 
 @pytest.mark.parametrize(
     "text",
-    ["Override: <reason>", "case-sensitive", "review-override", "head", "overwrite"],
+    ["Override: <reason>", "case-sensitive", "factory:override", "head", "overwrite"],
 )
 def test_the_setup_doc_explains_the_override(text: str) -> None:
     assert text in GATE

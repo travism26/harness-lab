@@ -44,7 +44,7 @@ class FakeGitHub:
 
 
 def _issue(
-    author="travism26", state="OPEN", labels=("ready-for-factory", "project:harness")
+    author="travism26", state="OPEN", labels=("factory:start", "project:harness")
 ):
     return {
         "title": "Add a loop",
@@ -84,7 +84,7 @@ def test_claim_labels_the_ticket_and_writes_it(tmp_path):
     _root(tmp_path)
     gh = FakeGitHub(issue=_issue())
     assert ticket.claim(_args(tmp_path), gh) == 0
-    assert gh.removed == ["ready-for-factory"] and gh.added == ["in-progress"]
+    assert gh.removed == ["factory:start"] and gh.added == ["factory:in-progress"]
     ctx = json.loads((tmp_path / "out" / "context.json").read_text())
     assert ctx["branch"] == "factory/issue-4" and ctx["pr"] is None
     assert ctx["project"] == "harness" and ctx["bootstrap"] is False
@@ -101,17 +101,17 @@ def test_claim_labels_the_ticket_and_writes_it(tmp_path):
     "labels, executable, match",
     [
         (
-            ("ready-for-factory", "project:harness", "project:other"),
+            ("factory:start", "project:harness", "project:other"),
             True,
             "more than one",
         ),
         (
-            ("ready-for-factory", "project:missing"),
+            ("factory:start", "project:missing"),
             True,
             "no executable `projects/missing/check`",
         ),
         (
-            ("ready-for-factory", "project:harness"),
+            ("factory:start", "project:harness"),
             False,
             "no executable `projects/harness/check`",
         ),
@@ -125,7 +125,7 @@ def test_claim_refuses_a_ticket_without_a_buildable_project(
     gh = FakeGitHub(issue=_issue(labels=labels))
     with pytest.raises(ticket.Refused, match=match):
         ticket.claim(args, gh)
-    assert gh.added == [] and gh.removed == ["ready-for-factory"]
+    assert gh.added == [] and gh.removed == ["factory:start"]
     assert (
         "did not start" in gh.posted[0][1]
         and not (tmp_path / "out" / "context.json").exists()
@@ -154,9 +154,9 @@ def _assert_factory_root_prompt(prompt):
 
 
 def test_claim_factory_root_ticket_with_no_project_label(tmp_path, capsys):
-    gh = FakeGitHub(issue=_issue(labels=("ready-for-factory",)))
+    gh = FakeGitHub(issue=_issue(labels=("factory:start",)))
     assert ticket.claim(_args(tmp_path), gh) == 0
-    assert gh.removed == ["ready-for-factory"] and gh.added == ["in-progress"]
+    assert gh.removed == ["factory:start"] and gh.added == ["factory:in-progress"]
     assert gh.posted and all("did not start" not in body for _, body in gh.posted)
     ctx = json.loads((tmp_path / "out" / "context.json").read_text())
     assert ctx["project"] is None and ctx["bootstrap"] is False
@@ -255,7 +255,7 @@ def test_claim_refuses_a_second_ticket_in_progress(tmp_path):
     gh = FakeGitHub(issue=_issue(), in_progress=[2, 4])
     with pytest.raises(ticket.Refused, match="one Ticket at a time: #2"):
         ticket.claim(_args(tmp_path), gh)
-    assert gh.added == [] and gh.removed == ["ready-for-factory"]
+    assert gh.added == [] and gh.removed == ["factory:start"]
     assert "did not start" in gh.posted[0][1]
 
 
@@ -417,11 +417,11 @@ def _labels(tmp_path, names):
 
 def test_claim_bootstraps_a_registered_project_with_no_check(tmp_path):
     _labels(tmp_path, ["ai-gateway"])
-    gh = FakeGitHub(issue=_issue(labels=("ready-for-factory", "project:ai-gateway")))
+    gh = FakeGitHub(issue=_issue(labels=("factory:start", "project:ai-gateway")))
     assert ticket.claim(_args(tmp_path), gh) == 0
     ctx = json.loads((tmp_path / "out" / "context.json").read_text())
     assert ctx["project"] == "ai-gateway" and ctx["bootstrap"] is True
-    assert gh.removed == ["ready-for-factory"] and gh.added == ["in-progress"]
+    assert gh.removed == ["factory:start"] and gh.added == ["factory:in-progress"]
     prompt = ticket.build_prompt(tmp_path / "out")
     assert "projects/ai-gateway/check" in prompt
     assert "not on the base branch yet" in prompt
@@ -447,10 +447,10 @@ def test_an_existing_check_stays_an_ordinary_ticket_when_the_name_is_registered(
 
 def test_claim_refuses_an_unregistered_project_with_no_check(tmp_path):
     _labels(tmp_path, ["ai-gateway"])
-    gh = FakeGitHub(issue=_issue(labels=("ready-for-factory", "project:other")))
+    gh = FakeGitHub(issue=_issue(labels=("factory:start", "project:other")))
     with pytest.raises(ticket.Refused, match="not registered in `factory/labels.json`"):
         ticket.claim(_args(tmp_path), gh)
-    assert gh.added == [] and gh.removed == ["ready-for-factory"]
+    assert gh.added == [] and gh.removed == ["factory:start"]
     assert "did not start" in gh.posted[0][1]
     assert "no executable `projects/other/check`" in gh.posted[0][1]
     assert not (tmp_path / "out" / "context.json").exists()
@@ -459,7 +459,7 @@ def test_claim_refuses_an_unregistered_project_with_no_check(tmp_path):
 @pytest.mark.parametrize("slug", ["../x", "a/b", "..", ".", "Bad", "a--b", "-ab"])
 def test_claim_refuses_an_unsafe_slug(tmp_path, slug):
     _labels(tmp_path, ["ai-gateway", slug])
-    gh = FakeGitHub(issue=_issue(labels=("ready-for-factory", f"project:{slug}")))
+    gh = FakeGitHub(issue=_issue(labels=("factory:start", f"project:{slug}")))
     with pytest.raises(ticket.Refused, match="not a safe project name"):
         ticket.claim(_args(tmp_path), gh)
     assert gh.added == [] and "did not start" in gh.posted[0][1]
@@ -469,7 +469,7 @@ def test_claim_refuses_an_unsafe_slug(tmp_path, slug):
 def test_claim_refuses_an_unsafe_slug_even_when_a_check_file_exists(tmp_path):
     _root(tmp_path, name="Bad")
     _labels(tmp_path, ["Bad"])
-    gh = FakeGitHub(issue=_issue(labels=("ready-for-factory", "project:Bad")))
+    gh = FakeGitHub(issue=_issue(labels=("factory:start", "project:Bad")))
     with pytest.raises(ticket.Refused, match="not a safe project name"):
         ticket.claim(_args(tmp_path), gh)
     assert gh.added == []
@@ -1044,16 +1044,16 @@ def test_review_and_rework_check_out_the_factory_from_the_default_branch():
 def test_release_labels_the_ticket_failed(tmp_path):
     gh = FakeGitHub(issue=_issue(labels=("in-progress",)))
     ticket.release(_args(tmp_path), gh)
-    assert gh.added == ["factory-failed"]
+    assert gh.added == ["factory:failed"]
 
 
 def test_claim_removes_a_stale_failed_label(tmp_path):
     _root(tmp_path)
     gh = FakeGitHub(
-        issue=_issue(labels=("ready-for-factory", "factory-failed", "project:harness"))
+        issue=_issue(labels=("factory:start", "factory-failed", "project:harness"))
     )
     ticket.claim(_args(tmp_path), gh)
-    assert gh.removed == ["ready-for-factory", "factory-failed"]
+    assert gh.removed == ["factory:start", "factory-failed"]
 
 
 def test_revise_removes_a_stale_failed_label(tmp_path):
@@ -1070,7 +1070,24 @@ def test_revise_removes_a_stale_failed_label(tmp_path):
 def test_fail_pr_labels_the_pr_once(tmp_path):
     gh = FakeGitHub(pr=_pr())
     ticket.fail_pr(_args(tmp_path), gh)
-    assert gh.added == ["factory-failed"]
+    assert gh.added == ["factory:failed"]
     gh = FakeGitHub(pr={**_pr(), "labels": [{"name": "factory-failed"}]})
     ticket.fail_pr(_args(tmp_path), gh)
     assert gh.added == []
+
+
+def test_claim_names_the_spec_and_the_approval(tmp_path):
+    _root(tmp_path)
+    gh = FakeGitHub(
+        issue=_issue(labels=("factory:start", "project:harness", "ready-for-agent"))
+    )
+    gh.approval = lambda repo, number: {
+        "spec": 229,
+        "login": "travism26",
+        "approved_at": "2026-11-25T11:27:00Z",
+    }
+    assert ticket.claim(_args(tmp_path), gh) == 0
+    body = gh.posted[0][1]
+    assert "#229" in body
+    assert "travism26" in body
+    assert "2026-11-25T11:27:00Z" in body

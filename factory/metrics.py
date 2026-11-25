@@ -33,11 +33,12 @@ from factory.github import GitHub, GitHubError
 from factory.record import BACKFILL_FILE, SCHEMA, TOKEN_RE, record_text
 from factory.review_pr import STOPPED_LABELS, rework_round
 from factory.switch_rule import default_app_slug, is_factory_app
-from factory.ticket import START_LABEL, STARTED_PREFIX
+from factory.ticket import STARTED_PREFIX
 
 COMMENT_FILES = ("issue-comments.json", "pr-comments.json")
-# Tickets started before the rename (2026-11-08) used the old label.
-START_LABELS = ("ready-for-agent", START_LABEL)
+# Historical start labels stay. `factory:start` is the name claim removes now.
+# `ready-for-factory` is not renamed; old timelines still count it.
+START_LABELS = ("ready-for-agent", "ready-for-factory", "factory:start")
 CI_WORKFLOW = "CI"
 # The repo the committed fixtures were captured from, for the App slug when none is given.
 FIXTURES_REPO = "travism26/harness-lab"

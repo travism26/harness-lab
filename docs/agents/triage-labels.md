@@ -12,6 +12,6 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
-Starting the factory is a separate, deliberate step: the owner adds `ready-for-factory`. A skill that applies `ready-for-agent` never starts a factory run.
+Starting the factory is a separate step. The owner adds `owner:implement` to a Spec, or to a hand-written Ticket. The factory App then adds `factory:start` to one eligible Ticket. `ready-for-agent` still does not start a build, on a laptop Ticket or a factory Ticket.
 
-The factory's own labels (`ready-for-factory`, `in-progress`, `rework`, `rework:1`, `rework:2`, `factory-stopped`, `factory-check`) are in [docs/factory/README.md](../factory/README.md#labels). All of them are defined in `factory/labels.json`.
+The factory's own labels are in [docs/factory/README.md](../factory/README.md#labels). All of them are defined in `factory/labels.json`. A label's prefix says who applies it: `owner:`, `builder:`, `scout:`, or `factory:`.

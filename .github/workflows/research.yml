@@ -1,7 +1,7 @@
 # The factory's research path (docs/factory/README.md, "Research path").
 #
 # Turns one Research request into one cited Research note on a draft PR, when the
-# repository owner labels the issue `ready-for-research`. Nothing else starts it:
+# repository owner labels the issue `owner:research`. Nothing else starts it:
 # not opening an issue, not a label from anyone else (docs/adr/0005).
 #
 # Three jobs, so the agent's whole job holds no GitHub write token, not only its
@@ -36,7 +36,7 @@ concurrency:
   # identical to the `claim` job's `if:` below.
   group: >-
     ${{
-      (github.event.label.name == 'ready-for-research'
+      (github.event.label.name == 'owner:research'
         && github.event.sender.login == github.repository_owner
         && !github.event.issue.pull_request)
       && 'factory-ticket'
@@ -50,9 +50,9 @@ env:
 
 jobs:
   claim:
-    # Only the owner's `ready-for-research` label on an issue (not a PR).
+    # Only the owner's `owner:research` label on an issue (not a PR).
     if: >-
-      github.event.label.name == 'ready-for-research'
+      github.event.label.name == 'owner:research'
       && github.event.sender.login == github.repository_owner
       && !github.event.issue.pull_request
     runs-on: ubuntu-latest

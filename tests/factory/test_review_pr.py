@@ -23,16 +23,20 @@ from factory.review_pr import (
 @pytest.mark.parametrize(
     "labels,blocker,expected",
     [
-        ([], True, Moves("rework", add=("rework", "rework:1"))),
+        ([], True, Moves("rework", add=("factory:rework", "factory:rework-1"))),
         (
             ["rework", "rework:1"],
             True,
-            Moves("rework", add=("rework", "rework:2"), remove=("rework:1", "rework")),
+            Moves(
+                "rework",
+                add=("factory:rework", "factory:rework-2"),
+                remove=("rework:1", "rework"),
+            ),
         ),
         (
             ["rework", "rework:2"],
             True,
-            Moves("human", add=("factory-stopped",), remove=("rework",)),
+            Moves("human", add=("factory:stopped",), remove=("rework",)),
         ),
         (["rework", "rework:2"], False, Moves("pass", remove=("rework",))),
         (["rework:1"], False, Moves("pass")),
@@ -382,7 +386,10 @@ def test_apply_posts_and_sends_to_rework(tmp_path):
     _write_review(tmp_path)
     gh = FakeGitHub(_pr(labels=["rework", "rework:1"]))
     review_pr.apply(_args(tmp_path), gh)
-    assert gh.removed == ["rework:1", "rework"] and gh.added == ["rework", "rework:2"]
+    assert gh.removed == ["rework:1", "rework"] and gh.added == [
+        "factory:rework",
+        "factory:rework-2",
+    ]
     assert "round 2 of 2" in gh.comments[0]
 
 

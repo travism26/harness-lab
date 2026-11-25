@@ -28,6 +28,14 @@ _Avoid_: Pipeline, CI bot, automation
 A GitHub issue written for the factory to act on.
 _Avoid_: Task, story
 
+**Goal**:
+A planning issue with one destination. The Builder turns it into a Spec and Tickets. It is not a Ticket.
+_Avoid_: Epic, initiative
+
+**Spec**:
+The agreed design for a Goal. The Factory builds the Tickets cut from it, and does not build the Spec. It is not a Ticket.
+_Avoid_: Design doc, proposal
+
 **Rework round**:
 One pass in which the factory revises a draft PR after review. A ticket stops after two.
 _Avoid_: Retry, iteration

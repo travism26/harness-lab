@@ -15,7 +15,7 @@ from typing import Any
 from factory.github import GitHub, GitHubError
 from factory.review_status import CONTEXT
 
-LABEL = "review-override"
+LABEL = "factory:override"
 DESCRIPTION = "Overridden by the owner"
 PREFIX = "Override:"
 
