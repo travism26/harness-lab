@@ -11,26 +11,28 @@ The story behind it: [Two Grok Bots, One Software Factory: How My Lab Finds and 
 ```mermaid
 flowchart TD
   classDef owner fill:#f4d35e,stroke:#333,color:#111
-  S[Scout files a Goal] --> B[Builder claims, grills, and writes the Spec]
-  B --> V[Validation]
-  V --> R[builder:spec-ready]
+  S[Scout files a Goal] --> B[Builder claims, grills, specs]
+  B --> R[builder:spec-ready]
   R --> A[Owner adds owner:implement]:::owner
   A --> T[Builder cuts Tickets with ready-for-agent]
   T --> F[App adds factory:start to the lowest eligible Ticket]
   F --> I[Implement]
-  I --> C[CI and Review on every push]
-  C --> W{Blocker?}
-  W -->|rework, at most 2| C
-  W -->|factory:stopped| H[Owner merges, or comments Override:]:::owner
-  C -->|pass| H
-  H --> N[Lock release starts the next eligible Ticket]
+  I -->|fails| Z[factory:failed]
+  Z --> Q[Owner comments Retry:]:::owner
+  Q --> F
+  I -->|draft| C[CI and Review on every push]
+  C -->|rework, at most 2| C
+  C -->|pass| G[Settle comments on the Ticket, releases the lock, starts the next Ticket]
+  C -->|factory:stopped| H[Owner fixes and merges, or comments Override:]:::owner
+  I -->|draft waits| M[Owner merges]:::owner
+  M --> U[Close unblocks Tickets that depended on it]
 ```
 
-The owner does three things on this path:
+The owner does three things:
 
 1. Add `owner:implement` to a Spec, or to a hand-written Ticket.
-2. Merge the draft, or comment `Override:` and the reason.
-3. Comment `Retry:` on a Ticket whose Implement failed.
+2. Merge the draft. That closes the Ticket. On `factory:stopped`, fix and merge, or comment `Override:`.
+3. Comment `Retry:` when Implement has added `factory:failed`.
 
 ## What we're experimenting with
 
