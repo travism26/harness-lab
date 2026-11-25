@@ -7,7 +7,7 @@ import pytest
 
 from factory import ticket
 from factory.claude import Result
-from factory.review_pr import MARKER
+from factory.review_pr import LEGACY_STOPPED_LABEL, MARKER
 
 REPO = "travism26/harness-lab"
 
@@ -30,6 +30,9 @@ class FakeGitHub:
     def pr_comments(self, repo, number):
         return self._comments
 
+    def pull_files(self, repo, number):
+        return []
+
     def comment(self, repo, number, path):
         self.posted.append((number, path.read_text()))
 
@@ -40,9 +43,16 @@ class FakeGitHub:
         self.removed += list(labels)
 
 
-def _issue(author="travism26", state="OPEN", labels=("ready-for-factory", "project:harness")):
-    return {"title": "Add a loop", "body": "Acceptance: it loops", "state": state,
-            "author": {"login": author}, "labels": [{"name": n} for n in labels]}
+def _issue(
+    author="travism26", state="OPEN", labels=("ready-for-factory", "project:harness")
+):
+    return {
+        "title": "Add a loop",
+        "body": "Acceptance: it loops",
+        "state": state,
+        "author": {"login": author},
+        "labels": [{"name": n} for n in labels],
+    }
 
 
 def _root(tmp_path, name="harness", executable=True):
@@ -53,9 +63,19 @@ def _root(tmp_path, name="harness", executable=True):
 
 
 def _args(tmp_path, **kw):
-    base = dict(root=str(tmp_path / "root"), repo=REPO, issue=4, pr=9, out=str(tmp_path / "out"), login="subscription",
-                app_slug="harness-factory", run_url="https://run", work=str(tmp_path),
-                model="sonnet", max_budget_usd=5.0)
+    base = {
+        "root": str(tmp_path / "root"),
+        "repo": REPO,
+        "issue": 4,
+        "pr": 9,
+        "out": str(tmp_path / "out"),
+        "login": "subscription",
+        "app_slug": "harness-factory",
+        "run_url": "https://run",
+        "work": str(tmp_path),
+        "model": "sonnet",
+        "max_budget_usd": 5.0,
+    }
     base.update(kw)
     return argparse.Namespace(**base)
 
@@ -69,37 +89,66 @@ def test_claim_labels_the_ticket_and_writes_it(tmp_path):
     assert ctx["branch"] == "factory/issue-4" and ctx["pr"] is None
     assert ctx["project"] == "harness" and ctx["bootstrap"] is False
     prompt = ticket.build_prompt(tmp_path / "out")
-    assert "projects/harness/check" in prompt and "projects/harness/GLOSSARY.md" in prompt
+    assert (
+        "projects/harness/check" in prompt and "projects/harness/GLOSSARY.md" in prompt
+    )
     assert "not on the base branch yet" not in prompt
-    assert "uv run pytest tests/factory" not in prompt and "factory-root" not in prompt
+    assert "./check" not in prompt and "factory-root" not in prompt
     assert "it loops" in (tmp_path / "out" / "ticket.md").read_text()
 
 
-@pytest.mark.parametrize("labels, executable, match", [
-    (("ready-for-factory", "project:harness", "project:other"), True, "more than one"),
-    (("ready-for-factory", "project:missing"), True, "no executable `projects/missing/check`"),
-    (("ready-for-factory", "project:harness"), False, "no executable `projects/harness/check`"),
-])
-def test_claim_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, executable, match):
+@pytest.mark.parametrize(
+    "labels, executable, match",
+    [
+        (
+            ("ready-for-factory", "project:harness", "project:other"),
+            True,
+            "more than one",
+        ),
+        (
+            ("ready-for-factory", "project:missing"),
+            True,
+            "no executable `projects/missing/check`",
+        ),
+        (
+            ("ready-for-factory", "project:harness"),
+            False,
+            "no executable `projects/harness/check`",
+        ),
+    ],
+)
+def test_claim_refuses_a_ticket_without_a_buildable_project(
+    tmp_path, labels, executable, match
+):
     _root(tmp_path, executable=executable)
     args = _args(tmp_path)
     gh = FakeGitHub(issue=_issue(labels=labels))
     with pytest.raises(ticket.Refused, match=match):
         ticket.claim(args, gh)
     assert gh.added == [] and gh.removed == ["ready-for-factory"]
-    assert "did not start" in gh.posted[0][1] and not (tmp_path / "out" / "context.json").exists()
+    assert (
+        "did not start" in gh.posted[0][1]
+        and not (tmp_path / "out" / "context.json").exists()
+    )
 
 
 def _assert_factory_root_prompt(prompt):
-    assert "run `uv run pytest tests/factory` until it passes" in prompt
-    for path in ("`factory/`", "`tests/factory/`", "`docs/factory/README.md`", "`GLOSSARY.md`",
-                 "`GLOSSARY-MAP.md`", "`docs/adr/`", "`.gitignore`"):
+    assert "run `./check` until it passes" in prompt
+    for path in (
+        "`factory/`",
+        "`tests/factory/`",
+        "`docs/factory/README.md`",
+        "`GLOSSARY.md`",
+        "`GLOSSARY-MAP.md`",
+        "`docs/adr/`",
+        "`.gitignore`",
+    ):
         assert path in prompt
     assert "Limit edits to" in prompt
     assert "only checkout that will be published" in prompt
     assert "Leave that checkout untouched" in prompt
     assert "Do not edit a Project" in prompt and "`.github/`" in prompt
-    assert "Build inside" not in prompt and "/check" not in prompt
+    assert "Build inside" not in prompt and "projects/harness/check" not in prompt
     assert "The Ticket is for the Project" not in prompt
     assert "not on the base branch yet" not in prompt
 
@@ -114,21 +163,26 @@ def test_claim_factory_root_ticket_with_no_project_label(tmp_path, capsys):
     _assert_factory_root_prompt(ticket.build_prompt(tmp_path / "out"))
 
     work = tmp_path / "work"
-    script = work / "projects" / "harness" / "check"
+    script = work / "check"
     script.parent.mkdir(parents=True)
-    script.write_text("#!/bin/sh\necho ran > ran\nexit 1\n")
+    script.write_text("#!/bin/sh\necho ran > ran\nexit 0\n")
     script.chmod(0o755)
     assert ticket.verify(_args(tmp_path, work=str(work))) == 0
-    assert not (work / "ran").exists()
-    assert "does not run a new-project check" in capsys.readouterr().out
+    assert (work / "ran").is_file()
+    assert _check_json(tmp_path / "out")["result"] == "pass"
 
 
-@pytest.mark.parametrize("labels, executable, match", [
-    (("project:harness", "project:other"), True, "more than one"),
-    (("project:missing",), True, "no executable `projects/missing/check`"),
-    (("project:harness",), False, "no executable `projects/harness/check`"),
-])
-def test_revise_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, executable, match):
+@pytest.mark.parametrize(
+    "labels, executable, match",
+    [
+        (("project:harness", "project:other"), True, "more than one"),
+        (("project:missing",), True, "no executable `projects/missing/check`"),
+        (("project:harness",), False, "no executable `projects/harness/check`"),
+    ],
+)
+def test_revise_refuses_a_ticket_without_a_buildable_project(
+    tmp_path, labels, executable, match
+):
     _root(tmp_path, executable=executable)
     gh = FakeGitHub(issue=_issue(labels=labels), pr=_pr(), comments=[{"body": MARKER}])
     with pytest.raises(RuntimeError, match=match):
@@ -138,7 +192,11 @@ def test_revise_refuses_a_ticket_without_a_buildable_project(tmp_path, labels, e
 
 
 def test_revise_factory_root_ticket_is_not_refused(tmp_path):
-    gh = FakeGitHub(issue=_issue(labels=()), pr=_pr(), comments=[{"body": f"{MARKER}\nfix the spec"}])
+    gh = FakeGitHub(
+        issue=_issue(labels=()),
+        pr=_pr(),
+        comments=[{"body": f"{MARKER}\nfix the spec"}],
+    )
     assert ticket.revise(_args(tmp_path), gh) == 0
     assert gh.posted == []
     ctx = json.loads((tmp_path / "out" / "context.json").read_text())
@@ -148,16 +206,32 @@ def test_revise_factory_root_ticket_is_not_refused(tmp_path):
     assert "rework round" in prompt
 
 
-def test_revise_refusal_through_the_cli_comments_with_the_run_url(tmp_path, monkeypatch, capsys):
+def test_revise_refusal_through_the_cli_comments_with_the_run_url(
+    tmp_path, monkeypatch, capsys
+):
     _root(tmp_path, executable=False)
     gh = FakeGitHub(issue=_issue(labels=("project:harness",)), pr=_pr())
     monkeypatch.setattr(ticket, "GitHub", lambda: gh)
     run = "https://example.test/actions/runs/1"
-    code = ticket.main([
-        "revise", "--repo", REPO, "--pr", "9", "--out", str(tmp_path / "out"),
-        "--login", "subscription", "--app-slug", "harness-factory",
-        "--root", str(tmp_path / "root"), "--run-url", run,
-    ])
+    code = ticket.main(
+        [
+            "revise",
+            "--repo",
+            REPO,
+            "--pr",
+            "9",
+            "--out",
+            str(tmp_path / "out"),
+            "--login",
+            "subscription",
+            "--app-slug",
+            "harness-factory",
+            "--root",
+            str(tmp_path / "root"),
+            "--run-url",
+            run,
+        ]
+    )
     assert code == 1
     assert len(gh.posted) == 1
     comment = gh.posted[0][1]
@@ -166,9 +240,14 @@ def test_revise_refusal_through_the_cli_comments_with_the_run_url(tmp_path, monk
     assert "no executable `projects/harness/check`" in comment
     assert run in comment
     assert "AttributeError" not in capsys.readouterr().out
-    rework = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "rework.yml").read_text()
+    rework = (
+        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "rework.yml"
+    ).read_text()
     revise = rework.index("python -m factory.ticket revise")
-    assert '--run-url "$RUN_URL"' in rework[revise:rework.index("python -m factory.ticket build")]
+    assert (
+        '--run-url "$RUN_URL"'
+        in rework[revise : rework.index("python -m factory.ticket build")]
+    )
 
 
 def test_claim_refuses_a_second_ticket_in_progress(tmp_path):
@@ -194,9 +273,13 @@ def test_claim_allows_someone_elses_ticket_on_openrouter(tmp_path):
 
 
 def _pr(labels=("rework", "rework:1"), branch="factory/issue-4"):
-    return {"state": "OPEN", "body": "Closes #4", "headRefName": branch,
-            "author": {"login": "harness-factory[bot]"},
-            "labels": [{"name": n} for n in labels]}
+    return {
+        "state": "OPEN",
+        "body": "Closes #4",
+        "headRefName": branch,
+        "author": {"login": "harness-factory[bot]"},
+        "labels": [{"name": n} for n in labels],
+    }
 
 
 def test_revise_includes_every_blocker_on_this_head(tmp_path):
@@ -206,15 +289,21 @@ def test_revise_includes_every_blocker_on_this_head(tmp_path):
 
     def comment(source, verdict, head=sha):
         charged = verdict == "BLOCKED" and source == "ci"
-        return (f"{MARKER}\n{gate_line(head, charged, source)}\n"
-                f"## Factory review: {verdict}\n\n{source} {verdict}\n")
+        return (
+            f"{MARKER}\n{gate_line(head, charged, source)}\n"
+            f"## Factory review: {verdict}\n\n{source} {verdict}\n"
+        )
 
     comments = [
         {"body": comment("review", "PASS")},
         {"body": comment("review", "BLOCKED")},
         {"body": "a human wrote this"},
         {"body": comment("ci", "BLOCKED")},
-        {"body": comment("review", "BLOCKED", head="0000000000000000000000000000000000000000")},
+        {
+            "body": comment(
+                "review", "BLOCKED", head="0000000000000000000000000000000000000000"
+            )
+        },
     ]
     pr = _pr()
     pr["headRefOid"] = sha
@@ -229,7 +318,11 @@ def test_revise_includes_every_blocker_on_this_head(tmp_path):
 
 def test_revise_takes_the_latest_factory_review(tmp_path):
     _root(tmp_path)
-    comments = [{"body": f"{MARKER}\nold"}, {"body": "human chat"}, {"body": f"{MARKER}\nnew"}]
+    comments = [
+        {"body": f"{MARKER}\nold"},
+        {"body": "human chat"},
+        {"body": f"{MARKER}\nnew"},
+    ]
     gh = FakeGitHub(issue=_issue(), pr=_pr(), comments=comments)
     assert ticket.revise(_args(tmp_path), gh) == 0
     out = tmp_path / "out"
@@ -246,12 +339,21 @@ def test_only_the_rework_prompt_tells_the_agent_to_leave_open_questions(tmp_path
     ticket.revise(_args(tmp_path), gh)
     rework = ticket.build_prompt(tmp_path / "out")
     assert "Do not act on a finding of kind `open_question`" in rework
-    ticket.claim(_args(tmp_path, out=str(tmp_path / "plain")), FakeGitHub(issue=_issue()))
+    ticket.claim(
+        _args(tmp_path, out=str(tmp_path / "plain")), FakeGitHub(issue=_issue())
+    )
     assert "open_question" not in ticket.build_prompt(tmp_path / "plain")
 
 
-@pytest.mark.parametrize("pr", [_pr(labels=("rework", "ready-for-human")), _pr(labels=()),
-                                _pr(branch="fm/hand-made")])
+@pytest.mark.parametrize(
+    "pr",
+    [
+        _pr(labels=("rework", "factory-stopped")),
+        _pr(labels=("rework", LEGACY_STOPPED_LABEL)),
+        _pr(labels=()),
+        _pr(branch="fm/hand-made"),
+    ],
+)
 def test_revise_refuses_prs_not_waiting_for_factory_rework(tmp_path, pr):
     _root(tmp_path)
     gh = FakeGitHub(issue=_issue(), pr=pr, comments=[{"body": MARKER}])
@@ -301,8 +403,16 @@ def test_release_drops_in_progress(tmp_path):
 def _labels(tmp_path, names):
     path = tmp_path / "root" / "factory" / "labels.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"labels": [
-        {"name": f"project:{name}", "color": "c2e0c6", "description": name} for name in names]}))
+    path.write_text(
+        json.dumps(
+            {
+                "labels": [
+                    {"name": f"project:{name}", "color": "c2e0c6", "description": name}
+                    for name in names
+                ]
+            }
+        )
+    )
 
 
 def test_claim_bootstraps_a_registered_project_with_no_check(tmp_path):
@@ -319,7 +429,9 @@ def test_claim_bootstraps_a_registered_project_with_no_check(tmp_path):
     assert "GLOSSARY-MAP.md" in prompt and "pyproject.toml" in prompt
 
 
-def test_an_existing_check_stays_an_ordinary_ticket_when_the_name_is_registered(tmp_path):
+def test_an_existing_check_stays_an_ordinary_ticket_when_the_name_is_registered(
+    tmp_path,
+):
     _root(tmp_path)
     _labels(tmp_path, ["harness"])
     gh = FakeGitHub(issue=_issue())
@@ -327,7 +439,10 @@ def test_an_existing_check_stays_an_ordinary_ticket_when_the_name_is_registered(
     ctx = json.loads((tmp_path / "out" / "context.json").read_text())
     assert ctx["project"] == "harness" and ctx["bootstrap"] is False
     prompt = ticket.build_prompt(tmp_path / "out")
-    assert "`projects/harness/check`" in prompt and "not on the base branch yet" not in prompt
+    assert (
+        "`projects/harness/check`" in prompt
+        and "not on the base branch yet" not in prompt
+    )
 
 
 def test_claim_refuses_an_unregistered_project_with_no_check(tmp_path):
@@ -371,22 +486,32 @@ def test_a_registered_name_with_a_non_executable_check_is_refused(tmp_path):
 
 def test_revise_bootstraps_when_the_base_has_the_label_and_no_check(tmp_path):
     _labels(tmp_path, ["ai-gateway"])
-    gh = FakeGitHub(issue=_issue(labels=("project:ai-gateway",)), pr=_pr(),
-                    comments=[{"body": MARKER}])
+    gh = FakeGitHub(
+        issue=_issue(labels=("project:ai-gateway",)),
+        pr=_pr(),
+        comments=[{"body": MARKER}],
+    )
     assert ticket.revise(_args(tmp_path), gh) == 0
     ctx = json.loads((tmp_path / "out" / "context.json").read_text())
-    assert ctx["bootstrap"] is True and ctx["project"] == "ai-gateway" and ctx["pr"] == 9
+    assert (
+        ctx["bootstrap"] is True and ctx["project"] == "ai-gateway" and ctx["pr"] == 9
+    )
     prompt = ticket.build_prompt(tmp_path / "out")
     assert "not on the base branch yet" in prompt and "rework round" in prompt
 
 
-@pytest.mark.parametrize("slug, match", [
-    ("other", "not registered in `factory/labels.json`"),
-    ("../x", "not a safe project name"),
-])
+@pytest.mark.parametrize(
+    "slug, match",
+    [
+        ("other", "not registered in `factory/labels.json`"),
+        ("../x", "not a safe project name"),
+    ],
+)
 def test_revise_refuses_an_unregistered_or_unsafe_name(tmp_path, slug, match):
     _labels(tmp_path, ["ai-gateway"])
-    gh = FakeGitHub(issue=_issue(labels=(f"project:{slug}",)), pr=_pr(), comments=[{"body": MARKER}])
+    gh = FakeGitHub(
+        issue=_issue(labels=(f"project:{slug}",)), pr=_pr(), comments=[{"body": MARKER}]
+    )
     with pytest.raises(RuntimeError, match=match):
         ticket.revise(_args(tmp_path), gh)
     assert "did not start a rework round" in gh.posted[0][1]
@@ -396,7 +521,9 @@ def test_revise_refuses_an_unregistered_or_unsafe_name(tmp_path, slug, match):
 def _wrote(tmp_path, body, mode=0o755, bootstrap=True, project="ai-gateway"):
     out = tmp_path / "out"
     out.mkdir()
-    (out / "context.json").write_text(json.dumps({"project": project, "bootstrap": bootstrap}))
+    (out / "context.json").write_text(
+        json.dumps({"project": project, "bootstrap": bootstrap})
+    )
     work = tmp_path / "work"
     if body is not None:
         check = work / "projects" / project / "check"
@@ -406,30 +533,157 @@ def _wrote(tmp_path, body, mode=0o755, bootstrap=True, project="ai-gateway"):
     return out, work
 
 
-def test_verify_does_not_run_the_check_of_an_existing_project(tmp_path):
-    out, work = _wrote(tmp_path, "#!/bin/sh\necho ran > ran\nexit 1\n", bootstrap=False,
-                       project="harness")
+def _check_json(out):
+    return json.loads((out / "check.json").read_text())
+
+
+def _git_init(work):
+    work.mkdir(parents=True, exist_ok=True)
+    for cmd in (
+        ["init", "-q"],
+        ["add", "-A"],
+        [
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(work), *cmd], check=True)
+
+
+def test_verify_runs_the_check_of_an_existing_project_and_writes_pass(tmp_path):
+    out, work = _wrote(
+        tmp_path,
+        "#!/bin/sh\necho ran > ran\nexit 0\n",
+        bootstrap=False,
+        project="harness",
+    )
     assert ticket.verify(_args(tmp_path, out=str(out), work=str(work))) == 0
-    assert not (work / "ran").exists()
-
-
-@pytest.mark.parametrize("body, mode", [
-    ("#!/bin/sh\nexit 1\n", 0o755),
-    ("#!/bin/sh\nexit 0\n", 0o644),
-    (None, None),
-])
-def test_a_failing_or_missing_new_check_blocks_publish(tmp_path, capsys, body, mode):
-    out, work = _wrote(tmp_path, body, mode if mode is not None else 0o755)
-    code = ticket.main(["verify", "--out", str(out), "--work", str(work)])
-    assert code == 1
-    assert "nothing is published" in capsys.readouterr().out
-
-
-def test_a_passing_new_check_lets_publish_proceed(tmp_path, capsys):
-    out, work = _wrote(tmp_path, "#!/bin/sh\necho ran > ran\nexit 0\n")
-    assert ticket.main(["verify", "--out", str(out), "--work", str(work)]) == 0
     assert (work / "ran").is_file()
-    assert "Bootstrap check passed" in capsys.readouterr().out
+    assert _check_json(out) == {"result": "pass", "touched_check": False}
+
+
+def test_a_failing_check_gives_fail_and_exit_zero_with_the_exit_code(tmp_path):
+    out, work = _wrote(
+        tmp_path, "#!/bin/sh\necho boom\nexit 3\n", bootstrap=False, project="harness"
+    )
+    assert ticket.main(["verify", "--out", str(out), "--work", str(work)]) == 0
+    assert _check_json(out)["result"] == "fail"
+    text = (out / "check-output.txt").read_text()
+    assert "exit code: 3" in text and "boom" in text
+    assert "./projects/harness/check" in text
+
+
+def test_check_output_keeps_the_last_200_lines(tmp_path):
+    out, work = _wrote(
+        tmp_path,
+        "#!/bin/sh\nseq 1 500\n",
+        bootstrap=False,
+        project="harness",
+    )
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    lines = (out / "check-output.txt").read_text().splitlines()
+    assert "500" in lines and "301" in lines and "300" not in lines
+
+
+def test_a_check_that_times_out_is_a_fail(tmp_path, monkeypatch):
+    monkeypatch.setattr(ticket, "CHECK_TIMEOUT_SECONDS", 1)
+    out, work = _wrote(
+        tmp_path, "#!/bin/sh\nsleep 5\n", bootstrap=False, project="harness"
+    )
+    assert ticket.verify(_args(tmp_path, out=str(out), work=str(work))) == 0
+    assert _check_json(out)["result"] == "fail"
+    assert "timeout" in (out / "check-output.txt").read_text()
+
+
+def test_a_factory_root_ticket_with_no_root_check_is_not_run(tmp_path):
+    out, work = _wrote(tmp_path, None, bootstrap=False, project=None)
+    work.mkdir()
+    assert ticket.verify(_args(tmp_path, out=str(out), work=str(work))) == 0
+    assert _check_json(out) == {"result": "not-run", "touched_check": False}
+
+
+@pytest.mark.parametrize(
+    "body, mode",
+    [
+        ("#!/bin/sh\nexit 0\n", 0o644),
+        (None, None),
+    ],
+)
+def test_a_bootstrap_with_no_executable_check_raises_and_says_why(tmp_path, body, mode):
+    out, work = _wrote(tmp_path, body, mode if mode is not None else 0o755)
+    work.mkdir(exist_ok=True)
+    with pytest.raises(RuntimeError, match="nothing is published"):
+        ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert (
+        "executable `projects/ai-gateway/check`"
+        in (out / "check-missing.md").read_text()
+    )
+    assert not (out / "check.json").exists()
+
+
+def test_the_failure_comment_quotes_the_missing_check(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "check-missing.md").write_text("no check <!-- factory:run {} -->")
+    body = ticket._failure_comment(out, "https://example/run/1")
+    assert "no check" in body and "<!-- factory:run" not in body
+
+
+def test_touched_check_is_true_only_when_the_diff_edits_the_check_file(tmp_path):
+    out, work = _wrote(
+        tmp_path, "#!/bin/sh\nexit 0\n", bootstrap=False, project="harness"
+    )
+    _git_init(work)  # commits the check as the base
+    (work / "other.txt").write_text("x")
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert _check_json(out)["touched_check"] is False
+    (work / "projects" / "harness" / "check").write_text("#!/bin/sh\nexit 0\n# edit\n")
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert _check_json(out)["touched_check"] is True
+
+
+def test_a_deleted_or_de_executabled_check_counts_as_touched(tmp_path):
+    out, work = _wrote(
+        tmp_path, "#!/bin/sh\nexit 0\n", bootstrap=False, project="harness"
+    )
+    _git_init(work)
+    check = work / "projects" / "harness" / "check"
+    check.chmod(0o644)
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert _check_json(out) == {"result": "not-run", "touched_check": True}
+    check.unlink()
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert _check_json(out) == {"result": "not-run", "touched_check": True}
+
+
+def test_a_factory_root_ticket_runs_the_root_check_and_writes_pass(tmp_path):
+    out, work = _wrote(tmp_path, None, bootstrap=False, project=None)
+    work.mkdir()
+    root_check = work / "check"
+    root_check.write_text("#!/bin/sh\necho ran > ran\nexit 0\n")
+    root_check.chmod(0o755)
+    assert ticket.verify(_args(tmp_path, out=str(out), work=str(work))) == 0
+    assert (work / "ran").is_file()
+    assert _check_json(out) == {"result": "pass", "touched_check": False}
+    assert "command: ./check" in (out / "check-output.txt").read_text()
+
+
+def test_a_new_check_file_counts_as_touched(tmp_path):
+    out, work = _wrote(tmp_path, None, bootstrap=False, project="harness")
+    _git_init(work)
+    check = work / "projects" / "harness" / "check"
+    check.parent.mkdir(parents=True)
+    check.write_text("#!/bin/sh\nexit 0\n")
+    check.chmod(0o755)
+    ticket.verify(_args(tmp_path, out=str(out), work=str(work)))
+    assert _check_json(out) == {"result": "pass", "touched_check": True}
 
 
 def test_the_new_check_does_not_see_factory_secrets(tmp_path, monkeypatch):
@@ -442,14 +696,20 @@ def test_the_new_check_does_not_see_factory_secrets(tmp_path, monkeypatch):
     script = (
         "#!/bin/sh\n"
         "printf 'GH=%s\\nGITHUB=%s\\nSUB=%s\\nOR=%s\\nOAUTH=%s\\nSENTINEL=%s\\n' "
-        "\"$GH_TOKEN\" \"$GITHUB_TOKEN\" \"$FACTORY_SUBSCRIPTION_TOKEN\" "
-        "\"$FACTORY_OPENROUTER_KEY\" \"$CLAUDE_CODE_OAUTH_TOKEN\" \"$FACTORY_SENTINEL\" > seen\n"
+        '"$GH_TOKEN" "$GITHUB_TOKEN" "$FACTORY_SUBSCRIPTION_TOKEN" '
+        '"$FACTORY_OPENROUTER_KEY" "$CLAUDE_CODE_OAUTH_TOKEN" "$FACTORY_SENTINEL" > seen\n'
     )
     out, work = _wrote(tmp_path, script)
     assert ticket.verify(_args(tmp_path, out=str(out), work=str(work))) == 0
     seen = (work / "seen").read_text()
     assert seen == "GH=\nGITHUB=\nSUB=\nOR=\nOAUTH=\nSENTINEL=kept\n"
-    for secret in ("gh-secret", "actions-secret", "sub-secret", "or-secret", "oauth-secret"):
+    for secret in (
+        "gh-secret",
+        "actions-secret",
+        "sub-secret",
+        "or-secret",
+        "oauth-secret",
+    ):
         assert secret not in seen
 
 
@@ -459,19 +719,30 @@ def test_workflows_run_the_new_check_before_publish_without_secrets():
         text = (root / ".github" / "workflows" / name).read_text()
         build = text.index("python -m factory.ticket build")
         go = text.index("- name: Install Go for the new Project")
-        step = text.index("- name: Run the new Project check")
+        step = text.index("- name: Run the check")
         verify = text.index("python -m factory.ticket verify")
         publish = text.index("python -m factory.ticket publish")
         assert build < go < step < verify < publish
         go_step = text[go:step]
         assert "steps.project.outputs.bootstrap == 'true'" in go_step
-        assert "hashFiles(format('work/projects/{0}/go.mod', steps.project.outputs.name))" in go_step
+        assert (
+            "hashFiles(format('work/projects/{0}/go.mod', steps.project.outputs.name))"
+            in go_step
+        )
         assert "actions/setup-go@v7.0.0" in go_step
-        assert "go-version-file: work/projects/${{ steps.project.outputs.name }}/go.mod" in go_step
-        assert "cache-dependency-path: work/projects/${{ steps.project.outputs.name }}/go.sum" in go_step
+        assert (
+            "go-version-file: work/projects/${{ steps.project.outputs.name }}/go.mod"
+            in go_step
+        )
+        assert (
+            "cache-dependency-path: work/projects/${{ steps.project.outputs.name }}/go.sum"
+            in go_step
+        )
         check_step = text[step:verify]
-        assert "steps.project.outputs.bootstrap == 'true'" in check_step
-        assert "secrets." not in check_step and "preflight.outputs.token" not in check_step
+        assert "if:" not in check_step and "bootstrap" not in check_step
+        assert (
+            "secrets." not in check_step and "preflight.outputs.token" not in check_step
+        )
         assert 'GH_TOKEN: ""' in check_step and 'GITHUB_TOKEN: ""' in check_step
     implement = (root / ".github" / "workflows" / "implement.yml").read_text()
     assert "if: failure() && steps.claim.outcome == 'success'" in implement
@@ -482,7 +753,9 @@ def test_build_prompt_without_a_work_checkout_names_the_ticket_file(tmp_path):
     out = tmp_path / "out"
     out.mkdir()
     (out / "ticket.md").write_text("# bench\n")
-    (out / "context.json").write_text(json.dumps({"project": "harness", "bootstrap": False}))
+    (out / "context.json").write_text(
+        json.dumps({"project": "harness", "bootstrap": False})
+    )
     prompt = ticket.build_prompt(out)
     assert str((out / "ticket.md").resolve()) in prompt
     assert ".factory/ticket.md" not in prompt
@@ -505,7 +778,10 @@ def test_build_points_the_agent_at_the_work_checkout_not_the_factory_checkout(tm
         seen["cwd"] = kw["cwd"]
         return Result(True, "streamed it", "success", 0.2)
 
-    assert ticket.build(_args(tmp_path, out=str(out), work=str(work)), run_agent=agent) == 0
+    assert (
+        ticket.build(_args(tmp_path, out=str(out), work=str(work)), run_agent=agent)
+        == 0
+    )
     prompt = seen["prompt"]
     assert seen["cwd"] == str(work.resolve())
     assert "`.factory/ticket.md`" in prompt and "`.factory/review.md`" in prompt
@@ -535,15 +811,38 @@ def _commit(path: Path, files: dict) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(text)
     subprocess.run(["git", "add", "-A"], cwd=path, check=True)
-    subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
-                    "commit", "-q", "-m", "init"], cwd=path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ],
+        cwd=path,
+        check=True,
+    )
 
 
 def _publish_out(out: Path, summary: str) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    (out / "context.json").write_text(json.dumps({
-        "repo": REPO, "issue": 4, "title": "Add a loop", "branch": "factory/issue-4",
-        "pr": None, "project": "harness", "bootstrap": False}))
+    (out / "context.json").write_text(
+        json.dumps(
+            {
+                "repo": REPO,
+                "issue": 4,
+                "title": "Add a loop",
+                "branch": "factory/issue-4",
+                "pr": None,
+                "project": "harness",
+                "bootstrap": False,
+            }
+        )
+    )
     (out / "ticket.md").write_text("# t\n")
     (out / "summary.md").write_text(summary)
 
@@ -558,7 +857,9 @@ def test_an_unchanged_work_tree_posts_the_agent_summary(tmp_path, capsys):
     _commit(work, {".gitignore": ignore, "README.md": "work\n"})
     _publish_out(out, "I edited the other checkout.\n")
     ticket.stage_ticket(out, work)
-    ignored = subprocess.run(["git", "check-ignore", "-q", ".factory/ticket.md"], cwd=work)
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", ".factory/ticket.md"], cwd=work, check=False
+    )
     assert ignored.returncode == 0
     gh = FakeGitHub(issue=_issue(labels=("in-progress",)))
     args = _args(tmp_path, out=str(out), work=str(work))
@@ -567,8 +868,17 @@ def test_an_unchanged_work_tree_posts_the_agent_summary(tmp_path, capsys):
     assert (out / "unchanged.md").read_text().strip() == str(raised.value)
     assert gh.posted == []
     assert "changes outside" not in (out / "unchanged.md").read_text()
-    code = ticket.main(["publish", "--out", str(out), "--work", str(work),
-                        "--app-slug", "harness-factory"])
+    code = ticket.main(
+        [
+            "publish",
+            "--out",
+            str(out),
+            "--work",
+            str(work),
+            "--app-slug",
+            "harness-factory",
+        ]
+    )
     assert code == 1
     logged = capsys.readouterr().out
     assert "nothing to publish" in logged
@@ -582,7 +892,13 @@ def test_an_unchanged_work_tree_posts_the_agent_summary(tmp_path, capsys):
     assert "nothing to publish" in body
     assert "posted on the Ticket" in body
     assert "https://run" in body
-    log = subprocess.run(["git", "log", "--oneline"], cwd=work, capture_output=True, text=True, check=True)
+    log = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     assert "factory:" not in log.stdout
 
 
@@ -633,9 +949,14 @@ def test_publish_commits_when_the_work_tree_changed(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(ticket, "_git", fake_git)
     gh = FakeGitHub(issue=_issue())
     gh.bot_user_id = lambda slug: 42
-    gh.create_draft_pr = lambda repo, base, head, title, body: "https://github.com/travism26/harness-lab/pull/9"
+    gh.create_draft_pr = lambda repo, base, head, title, body: (
+        "https://github.com/travism26/harness-lab/pull/9"
+    )
     monkeypatch.setenv("GH_TOKEN", "token")
-    assert ticket.publish(_args(tmp_path, out=str(out), work=str(tmp_path / "work")), gh) == 0
+    assert (
+        ticket.publish(_args(tmp_path, out=str(out), work=str(tmp_path / "work")), gh)
+        == 0
+    )
     assert calls[0] == ("add", "-A")
     assert calls[1][0] == "status"
     assert any("commit" in c for c in calls)
@@ -656,15 +977,22 @@ def test_build_prompt_does_not_stage_files(tmp_path):
     assert list(work.iterdir()) == []
 
 
-def test_a_branch_without_the_gitignore_line_does_not_commit_the_staged_ticket(tmp_path):
+def test_a_branch_without_the_gitignore_line_does_not_commit_the_staged_ticket(
+    tmp_path,
+):
     work = tmp_path / "work"
     out = tmp_path / "out"
     _commit(work, {"README.md": "work\n"})
     _publish_out(out, "I edited gateway.go.\n")
     ticket.stage_ticket(out, work)
     ticket._exclude_staged(work)
-    ignored = subprocess.run(["git", "check-ignore", "-v", ".factory/ticket.md"], cwd=work,
-                             capture_output=True, text=True)
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-v", ".factory/ticket.md"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert ignored.returncode == 0
     assert "info/exclude" in ignored.stdout
     exclude = (work / ".git" / "info" / "exclude").read_text().splitlines()
@@ -673,12 +1001,76 @@ def test_a_branch_without_the_gitignore_line_does_not_commit_the_staged_ticket(t
     with pytest.raises(RuntimeError, match="nothing to publish") as raised:
         ticket.publish(_args(tmp_path, out=str(out), work=str(work)), gh)
     assert (out / "unchanged.md").read_text().strip() == str(raised.value)
-    log = subprocess.run(["git", "log", "--oneline"], cwd=work, capture_output=True, text=True, check=True)
+    log = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     assert "factory:" not in log.stdout
-    status = subprocess.run(["git", "status", "--porcelain"], cwd=work, capture_output=True, text=True, check=True)
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     assert status.stdout.strip() == ""
 
 
 def test_porcelain_path_takes_the_destination_of_a_rename():
     assert ticket._porcelain_path('R  "old file.go" -> "new file.go"') == "new file.go"
-    assert ticket._porcelain_path(' M "projects/ai-gateway/my file.go"') == "projects/ai-gateway/my file.go"
+    assert (
+        ticket._porcelain_path(' M "projects/ai-gateway/my file.go"')
+        == "projects/ai-gateway/my file.go"
+    )
+
+
+def test_review_and_rework_check_out_the_factory_from_the_default_branch():
+    """base.sha is frozen when the PR opens, so an open PR would run stale scripts."""
+    root = Path(__file__).resolve().parents[2]
+    for name in ("review.yml", "rework.yml"):
+        text = (root / ".github" / "workflows" / name).read_text()
+        start = text.index("- name: Check out the factory")
+        step = text[start : text.index("\n\n", start)]
+        assert "ref: ${{ github.event.repository.default_branch }}" in step
+        assert "persist-credentials: false" in step
+        for line in text.splitlines():
+            if line.strip().startswith("ref:"):
+                assert "base.sha" not in line
+
+
+def test_release_labels_the_ticket_failed(tmp_path):
+    gh = FakeGitHub(issue=_issue(labels=("in-progress",)))
+    ticket.release(_args(tmp_path), gh)
+    assert gh.added == ["factory-failed"]
+
+
+def test_claim_removes_a_stale_failed_label(tmp_path):
+    _root(tmp_path)
+    gh = FakeGitHub(
+        issue=_issue(labels=("ready-for-factory", "factory-failed", "project:harness"))
+    )
+    ticket.claim(_args(tmp_path), gh)
+    assert gh.removed == ["ready-for-factory", "factory-failed"]
+
+
+def test_revise_removes_a_stale_failed_label(tmp_path):
+    _root(tmp_path)
+    pr = _pr()
+    pr["labels"] = pr["labels"] + [{"name": "factory-failed"}]
+    pr["headRefOid"] = "ba2ea98635fd261912159e8bc8f4f54f1f5411d0"
+    comment = f"{MARKER}\n## Factory review: BLOCKED\n\nx\n"
+    gh = FakeGitHub(issue=_issue(), pr=pr, comments=[{"body": comment}])
+    ticket.revise(_args(tmp_path), gh)
+    assert gh.removed == ["factory-failed"]
+
+
+def test_fail_pr_labels_the_pr_once(tmp_path):
+    gh = FakeGitHub(pr=_pr())
+    ticket.fail_pr(_args(tmp_path), gh)
+    assert gh.added == ["factory-failed"]
+    gh = FakeGitHub(pr={**_pr(), "labels": [{"name": "factory-failed"}]})
+    ticket.fail_pr(_args(tmp_path), gh)
+    assert gh.added == []

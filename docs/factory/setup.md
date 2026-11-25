@@ -157,6 +157,36 @@ the App token mints, Claude Code answers on the configured login, and the App po
 
 The factory is ready. The first real Ticket gets `ready-for-factory`.
 
+## Turning on the gate
+
+Every Review sets a commit status named `factory/review` on the head it read: `success` for a
+PASS Verdict, `failure` for BLOCKED, and `error` with a short reason when the Review ends
+without a Verdict (capped, crashed, no Verdict, or the head moved on). A Review that timed out
+shows as crashed: GitHub does not say what a timed-out job's result is. The `status`
+job in `.github/workflows/review.yml` sets it with the workflow's own token, so the App needs no
+Statuses permission ([ADR 0012](../adr/0012-review-verdict-is-a-commit-status-with-a-recorded-override.md)).
+
+A pull request from a fork gets no status: Review does not run for forks, so the `status` job is
+skipped with it. Once the gate is on, such a PR can only merge with an Override.
+
+Until you turn the gate on, the status shows the Verdict and stops nothing. The later owner
+step is a ruleset on `main` that requires `factory/review` and the `factory tests` check
+(`.github/workflows/ci.yml`), with no bypass actors. It is not created by any workflow. Do it
+once Review runs on every head and you have checked its Verdicts against your own.
+
+### The Override
+
+If a Review is BLOCKED, missing or stuck, or the PR comes from a fork, the owner can turn the
+status green. Comment on the pull request, with the first line exactly `Override: <reason>`:
+`Override:` is case-sensitive, at the start of the first line, and the reason must not be empty.
+Only a comment by the repository owner counts; an edit does nothing.
+
+The workflow `.github/workflows/override.yml` then sets `factory/review` to `success` and adds the
+`review-override` label. The reason stays in your comment, which the status links to. It applies
+to the head at the time of the comment: a later push gets a fresh status from Review. Known
+limit: a Review still running when the Override lands can overwrite it. Comment again. The label is added with a token holding `issues: write` only, so confirm it
+lands on a pull request in the first live Override.
+
 ## If something goes wrong
 
 | What you see | What it means | What to do |
@@ -167,9 +197,9 @@ The factory is ready. The first real Ticket gets `ready-for-factory`.
 | The token step fails with a key error | The secret is not the whole `.pem` file | Paste the whole file, both `-----` lines included |
 | The **Ask Claude Code** step fails | The login's secret is wrong or expired, or the OpenRouter key is out of credit | Redo Step 3, or check the key on OpenRouter |
 | **Post the answer** fails with `are the labels synced?` | Step 5 was skipped | Run Step 5 |
-| **Daily run cap reached** | The workflow has started `FACTORY_DAILY_RUN_CAP` runs today (UTC) | Wait for tomorrow or raise the variable |
+| **Daily run cap reached** | The workflow has started `FACTORY_DAILY_RUN_CAP` runs today (UTC); for Review, `FACTORY_REVIEW_DAILY_RUN_CAP` (default 40), and the PR gets a comment saying so | Wait for tomorrow or raise the variable the message names |
 
-To stop the factory for a while, set `FACTORY_DAILY_RUN_CAP` to `0`. To cut it off completely,
+To stop the factory for a while, set `FACTORY_DAILY_RUN_CAP` and `FACTORY_REVIEW_DAILY_RUN_CAP` to `0`. To cut it off completely,
 remove `harness-lab` from the App's installation, or delete this repo's private key from the App's
 settings.
 

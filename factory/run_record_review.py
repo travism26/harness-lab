@@ -13,25 +13,37 @@ The one exception is a pull request that closed before `apply` ran: it posts no
 report, so the verdict comes from <out>/findings.json, parsed strictly and reduced
 to PASS or BLOCKED.
 """
+
 from dataclasses import replace
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 from factory import review_pr
 from factory.github import GitHub, GitHubError, label_names
-from factory.record import (MAX_FILE, Outcomes, RunContext, bot_comments, build_record,
-                            failure_reason, leave_record, read_numbers)
+from factory.record import (
+    MAX_FILE,
+    Outcomes,
+    RunContext,
+    bot_comments,
+    build_record,
+    failure_reason,
+    leave_record,
+    read_numbers,
+)
 from factory.ticket import PROJECT_PREFIX
 
 # The sentence `render_report` writes under "Reviewed ..." for each outcome that moves
 # no labels. Tests run `apply` and this step together, so a change there shows here.
-_SENTENCES = (("The PR is labelled", "human-owned"), ("The PR has moved on", "stale"),
-              ("This head is already in a rework round", "same-round"),
-              ("Spec passed. Required CI failed", "ci-blocked"))
+_SENTENCES = (
+    ("The PR is labelled", "human-owned"),
+    ("The PR has moved on", "stale"),
+    ("This head is already in a rework round", "same-round"),
+    ("Spec passed. Required CI failed", "ci-blocked"),
+)
 
 
-def reports(comments: List[dict], app_slug: str,
-            unrecorded: bool = True) -> List[Tuple[dict, review_pr.GateMark]]:
+def reports(
+    comments: list[dict], app_slug: str, unrecorded: bool = True
+) -> list[tuple[dict, review_pr.GateMark]]:
     """The review reports the bot posted, each with its gate line. By default only those
     that hold no record yet."""
     found = []
@@ -44,17 +56,22 @@ def reports(comments: List[dict], app_slug: str,
     return found
 
 
-def find_report(comments: List[dict], app_slug: str, head_sha: str,
-                unrecorded: bool = True) -> Optional[dict]:
+def find_report(
+    comments: list[dict], app_slug: str, head_sha: str, unrecorded: bool = True
+) -> dict | None:
     """The newest report the bot posted for this head."""
-    found = [c for c, meta in reports(comments, app_slug, unrecorded) if meta.head == head_sha]
+    found = [
+        c
+        for c, meta in reports(comments, app_slug, unrecorded)
+        if meta.head == head_sha
+    ]
     return max(found, key=lambda c: c["id"]) if found else None
 
 
-def gate_of(body: str) -> Optional[str]:
+def gate_of(body: str) -> str | None:
     meta = review_pr.parse_gate(body)
     if meta and meta.charged:
-        if review_pr.HUMAN_LABEL in meta.add:
+        if review_pr.is_stopped(meta.add):
             return "human"
         return "rework" if review_pr.REWORK_LABEL in meta.add else None
     lines = body.split("\n")
@@ -67,7 +84,7 @@ def gate_of(body: str) -> Optional[str]:
     return None
 
 
-def _findings_verdict(out: Path) -> Optional[str]:
+def _findings_verdict(out: Path) -> str | None:
     try:
         path = out / "findings.json"
         if path.stat().st_size > MAX_FILE:
@@ -78,13 +95,16 @@ def _findings_verdict(out: Path) -> Optional[str]:
     return "BLOCKED" if findings.blocker else "PASS"
 
 
-def project_of(gh: GitHub, repo: str, ticket: Optional[int]) -> Optional[str]:
+def project_of(gh: GitHub, repo: str, ticket: int | None) -> str | None:
     """The Project the linked Ticket names with its one `project:<name>` label, or None."""
     if not ticket:
         return None
     try:
-        names = [n[len(PROJECT_PREFIX):] for n in label_names(gh.issue(repo, ticket))
-                 if n.startswith(PROJECT_PREFIX)]
+        names = [
+            n[len(PROJECT_PREFIX) :]
+            for n in label_names(gh.issue(repo, ticket))
+            if n.startswith(PROJECT_PREFIX)
+        ]
     except GitHubError as e:
         print(f"::warning title=Run record::could not read the Ticket: {e}")
         return None
@@ -107,13 +127,18 @@ def write_review(args, gh: GitHub) -> int:
 
     target = verdict = gate = None
     outcome, reason = "fail", None
-    outcomes = Outcomes(args.job_status, args.agent_outcome, publish=args.publish_outcome)
+    outcomes = Outcomes(
+        args.job_status, args.agent_outcome, publish=args.publish_outcome
+    )
     if args.agent_outcome == "success":
         try:
-            target = find_report(gh.pr_comments(args.repo, pr_number), args.app_slug,
-                                 args.head_sha)
+            target = find_report(
+                gh.pr_comments(args.repo, pr_number), args.app_slug, args.head_sha
+            )
         except GitHubError as e:
-            print(f"::warning title=Run record::could not read the pull request's comments: {e}")
+            print(
+                f"::warning title=Run record::could not read the pull request's comments: {e}"
+            )
         if target:
             outcome = "ok"
             verdict = review_pr.review_verdict(target["body"])
@@ -122,19 +147,35 @@ def write_review(args, gh: GitHub) -> int:
             outcome, gate = "ok", "closed"
             verdict = _findings_verdict(out)
             if verdict is None:
-                print("::warning title=Run record::the review's verdict could not be read")
+                print(
+                    "::warning title=Run record::the review's verdict could not be read"
+                )
         else:
             reason = failure_reason(outcomes, numbers, review=True)
     else:
         reason = failure_reason(outcomes, numbers, review=True)
 
-    ctx = replace(RunContext.from_args(args, ticket), project=project_of(gh, args.repo, ticket))
-    record = build_record("review", ctx, numbers, outcome, reason, pr=pr_number,
-                          head_sha=args.head_sha, round_=round_, verdict=verdict, gate=gate)
+    ctx = replace(
+        RunContext.from_args(args, ticket), project=project_of(gh, args.repo, ticket)
+    )
+    record = build_record(
+        "review",
+        ctx,
+        numbers,
+        outcome,
+        reason,
+        pr=pr_number,
+        head_sha=args.head_sha,
+        round_=round_,
+        verdict=verdict,
+        gate=gate,
+    )
     if outcome == "ok":
         said = f" {record['verdict']}" if record["verdict"] else ""
-        text = (f"Review finished after this pull request closed:{said}. "
-                f"Nothing was changed. [run]({args.run_url})")
+        text = (
+            f"Review finished after this pull request closed:{said}. "
+            f"Nothing was changed. [run]({args.run_url})"
+        )
     else:
         text = f"Review failed: `{record['reason']}`. [run]({args.run_url})"
     leave_record(gh, args.repo, pr_number, out, record, text, target)

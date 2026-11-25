@@ -1,0 +1,8 @@
+[
+  {
+    "user": {
+      "login": "travism26-factory[bot]"
+    },
+    "body": "<!-- factory:review -->\n<!-- factory:gate head=3333333333333333333333333333333333333333 charged=0 source=review -->\n## Factory review: PASS\n\nReviewed `333333333333` against Ticket #9.\n\n### Spec: PASS\n\nok\n\n### Standards: PASS\n\nok\n\nA Spec blocker or a failing required CI run on a factory draft sends a PR to rework. The merge is a human's.\n"
+  }
+]

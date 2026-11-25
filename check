@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# The Lab check: the factory's tests, then ruff and mypy over factory/ and
+# tests/, in the workspace's locked environment (the same uv.lock CI uses).
+# Exits non-zero on failure.
+set -euo pipefail
+cd "$(dirname "$0")"
+uv run --locked pytest tests/factory
+uv run --locked ruff check factory tests
+uv run --locked ruff format --check factory tests
+uv run --locked mypy factory tests

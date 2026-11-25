@@ -5,7 +5,6 @@ import pytest
 
 from factory.ci_projects import main, projects_to_check
 
-
 ALL = ["agent-identity", "harness"]
 
 
@@ -32,7 +31,10 @@ def test_projects_to_check(changed, expected):
 def _repo(tmp_path):
     def git(*args):
         return subprocess.run(
-            ["git", "-C", str(tmp_path), *args], check=True, capture_output=True, text=True
+            ["git", "-C", str(tmp_path), *args],
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout.strip()
 
     git("init", "-q")

@@ -8,7 +8,12 @@ def test_owner_work_may_use_the_subscription():
 
 
 def test_the_factory_app_counts_as_the_owner_in_both_spellings():
-    assert refusal("subscription", ["harness-factory[bot]", "app/harness-factory"], OWNER, SLUG) is None
+    assert (
+        refusal(
+            "subscription", ["harness-factory[bot]", "app/harness-factory"], OWNER, SLUG
+        )
+        is None
+    )
 
 
 def test_someone_elses_work_refuses_the_subscription():

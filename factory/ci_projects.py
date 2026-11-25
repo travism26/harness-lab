@@ -21,29 +21,42 @@ import argparse
 import json
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, List, Optional
 
 SHARED_PREFIXES = ("factory/", ".github/")
 SHARED_FILES = ("pyproject.toml", "uv.lock")
 
 
-def all_projects(root: Path) -> List[str]:
-    return sorted(p.parent.name for p in (root / "projects").glob("*/check") if p.is_file())
+def all_projects(root: Path) -> list[str]:
+    return sorted(
+        p.parent.name for p in (root / "projects").glob("*/check") if p.is_file()
+    )
 
 
-def projects_to_check(changed: Iterable[str], projects: List[str]) -> List[str]:
-    chosen = set()
-    for path in changed:
-        if path.startswith(SHARED_PREFIXES) or path in SHARED_FILES:
-            return sorted(projects)
+def changed_projects(paths: Iterable[str]) -> tuple[list[str], bool]:
+    """The Project folders the paths fall in (sorted names) and whether any path lies outside
+    `projects/<name>/`, so the change reaches the shared code."""
+    names: set[str] = set()
+    outside = False
+    for path in paths:
         parts = path.split("/")
-        if len(parts) > 2 and parts[0] == "projects" and parts[1] in projects:
-            chosen.add(parts[1])
-    return sorted(chosen)
+        if len(parts) > 2 and parts[0] == "projects":
+            names.add(parts[1])
+        else:
+            outside = True
+    return sorted(names), outside
 
 
-def changed_files(root: Path, base: str) -> List[str]:
+def projects_to_check(changed: Iterable[str], projects: list[str]) -> list[str]:
+    changed = list(changed)
+    if any(p.startswith(SHARED_PREFIXES) or p in SHARED_FILES for p in changed):
+        return sorted(projects)
+    names, _ = changed_projects(changed)
+    return [name for name in names if name in projects]
+
+
+def changed_files(root: Path, base: str) -> list[str]:
     out = subprocess.run(
         ["git", "-C", str(root), "diff", "--name-only", base, "HEAD"],
         check=True,
@@ -53,10 +66,14 @@ def changed_files(root: Path, base: str) -> List[str]:
     return [line for line in out.splitlines() if line]
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--base", required=True, help="sha to diff HEAD against; empty for all")
-    parser.add_argument("--root", default=".", help="repo root (default: current directory)")
+    parser.add_argument(
+        "--base", required=True, help="sha to diff HEAD against; empty for all"
+    )
+    parser.add_argument(
+        "--root", default=".", help="repo root (default: current directory)"
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.root)

@@ -16,6 +16,10 @@ _Avoid_: App, module, package
 The one command a Project provides that says whether its code is sound. It is not the Factory check, which proves the factory's credentials work.
 _Avoid_: Factory check, test script, verify
 
+**Lab check**:
+The one command that says whether the Lab's own code outside any Project is sound.
+_Avoid_: root test script, lint script, CI script
+
 **Factory**:
 The GitHub Actions setup that turns labelled issues into draft PRs against this repo, with a review step. It builds the lab's projects, not the harness.
 _Avoid_: Pipeline, CI bot, automation
@@ -32,6 +36,10 @@ _Avoid_: Retry, iteration
 The factory's read of a pull request against its Ticket and the Lab's standards. It ends in a Verdict.
 _Avoid_: Code review, judge, second read
 
+**Finding**:
+Something a Review reports about a pull request. A Finding either blocks the Verdict or does not.
+_Avoid_: Issue, comment, nit
+
 **Verdict**:
 The result of a Review for one head commit: PASS or BLOCKED.
 _Avoid_: Result, approval, score
@@ -40,9 +48,25 @@ _Avoid_: Result, approval, score
 The owner's recorded decision to merge a head whose Verdict is not PASS, with the reason written down.
 _Avoid_: Bypass, force merge
 
+**Retro**:
+A periodic read of recent merged work that proposes new checks and standards for the owner to accept or close.
+_Avoid_: Postmortem, audit
+
 **Factory run**:
 One attempt of the factory's Implement, Rework, Review or Research workflow that started its agent. A refused Ticket, the CI gate and the Factory check are not Factory runs.
 _Avoid_: Run, job, session
+
+**Door**:
+Whether merging a change can be cleanly undone: two-way if reverting the merge restores the old state, one-way if not. The agent proposes it; a change that does not state one counts as one-way.
+_Avoid_: Reversibility, rollback
+
+**Blast radius**:
+How much of the Lab a change can affect: one Project, several Projects, or the shared code. The factory computes it from the changed paths.
+_Avoid_: Impact, scope
+
+**Merge danger**:
+The Door and the Blast radius of a change, shown together in a factory PR body.
+_Avoid_: Risk, danger level
 
 **Run record**:
 The one small record a Factory run leaves: what ran, on which Ticket or pull request, how it ended and what it cost. It holds facts and numbers, never text from the model.

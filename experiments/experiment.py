@@ -293,13 +293,13 @@ def validate_text(
 
     sections = _split_sections(text)
     bodies: dict[str, list[str]] = {}
-    for heading, body in sections:
+    for heading, section_body in sections:
         if heading not in REQUIRED_HEADINGS:
             errors.append(f"unknown heading '## {heading}'")
         elif heading in bodies:
             errors.append(f"heading '## {heading}' appears more than once")
         else:
-            bodies[heading] = body
+            bodies[heading] = section_body
     for heading in REQUIRED_HEADINGS:
         if heading not in bodies:
             errors.append(f"missing required heading '## {heading}'")

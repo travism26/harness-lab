@@ -1,5 +1,6 @@
 """What the Run record tests share: one fake GitHub, the arguments of the last step, and the
 helpers that build an output directory the way the workflows' earlier steps do."""
+
 import argparse
 import json
 from pathlib import Path
@@ -31,8 +32,16 @@ class FakeGitHub:
     """The calls the last steps, `ticket.release` and `review_pr.apply` make. It records what
     is posted and attributes every comment it is given to the bot."""
 
-    def __init__(self, comments=(), labels=(), head=SHA, state="OPEN", body="Closes #7",
-                 ticket_labels=(), plant=None):
+    def __init__(
+        self,
+        comments=(),
+        labels=(),
+        head=SHA,
+        state="OPEN",
+        body="Closes #7",
+        ticket_labels=(),
+        plant=None,
+    ):
         self.thread = [dict(c) for c in comments]
         self.labels, self.head, self.state, self.body = list(labels), head, state, body
         self.ticket_labels = list(ticket_labels)
@@ -47,8 +56,21 @@ class FakeGitHub:
         return {"number": number, "labels": [{"name": n} for n in self.ticket_labels]}
 
     def pr(self, repo, number):
-        return {"number": number, "state": self.state, "body": self.body,
-                "headRefOid": self.head, "labels": [{"name": n} for n in self.labels]}
+        return {
+            "number": number,
+            "state": self.state,
+            "body": self.body,
+            "headRefOid": self.head,
+            "labels": [{"name": n} for n in self.labels],
+        }
+
+    def pull_api(self, repo, number):
+        """The REST shape: lower-case state, the head under `head.sha`."""
+        return {
+            "number": number,
+            "state": self.state.lower(),
+            "head": {"sha": self.head},
+        }
 
     def pr_comments(self, repo, number):
         self.reads += 1
@@ -87,8 +109,13 @@ def built(tmp_path, message, success=True, subtype="success"):
     def agent(prompt, **kw):
         return Result(success, "MODEL TEXT", subtype, 0.1, message)
 
-    args = argparse.Namespace(out=str(out), work=str(work), login="subscription",
-                              model="sonnet", max_budget_usd=5.0)
+    args = argparse.Namespace(
+        out=str(out),
+        work=str(work),
+        login="subscription",
+        model="sonnet",
+        max_budget_usd=5.0,
+    )
     try:
         ticket.build(args, run_agent=agent)
     except RuntimeError:
@@ -106,11 +133,28 @@ def failed_out(tmp_path, message=None, subtype="success", success=True, files=()
 
 def step_args(workflow, out, **overrides):
     """What the workflow's last step passes to `run_record write`."""
-    base = dict(workflow=workflow, out=str(out), repo=REPO, run_id="777", attempt="1", issue=4,
-                pr=None, pr_labels=None, head_sha="", project="harness", login="subscription",
-                model="sonnet", budget="5", claude_code_version="2.1.319", app_slug=SLUG,
-                run_url=RUN_URL, job_status="success", agent_outcome="success",
-                verify_outcome="skipped", publish_outcome="success")
+    base = {
+        "workflow": workflow,
+        "out": str(out),
+        "repo": REPO,
+        "run_id": "777",
+        "attempt": "1",
+        "issue": 4,
+        "pr": None,
+        "pr_labels": None,
+        "head_sha": "",
+        "project": "harness",
+        "login": "subscription",
+        "model": "sonnet",
+        "budget": "5",
+        "claude_code_version": "2.1.319",
+        "app_slug": SLUG,
+        "run_url": RUN_URL,
+        "job_status": "success",
+        "agent_outcome": "success",
+        "verify_outcome": "skipped",
+        "publish_outcome": "success",
+    }
     base.update(overrides)
     return argparse.Namespace(**base)
 

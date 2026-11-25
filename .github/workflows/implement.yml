@@ -125,13 +125,13 @@ jobs:
           go-version-file: work/projects/${{ steps.project.outputs.name }}/go.mod
           cache-dependency-path: work/projects/${{ steps.project.outputs.name }}/go.sum
 
-      # Secret-free. The script was just written by the agent, so this step gets
-      # neither the App token nor the Claude login. A missing or failing check
-      # fails the job: Publish does not run, and the failure step below drops
-      # in-progress.
-      - name: Run the new Project check
+      # Secret-free. The script may have been written by the agent, so this step
+      # gets neither the App token nor the Claude login. A failing check does not
+      # fail the job: Publish still opens the draft, the result goes in the Run
+      # record, and CI's red run starts a Rework round. Only a bootstrap with no
+      # check fails here.
+      - name: Run the check
         id: verify
-        if: steps.project.outputs.bootstrap == 'true'
         env:
           GH_TOKEN: ""
           GITHUB_TOKEN: ""

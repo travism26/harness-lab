@@ -35,8 +35,9 @@ calls = [b for b in content if b.get("type") == "tool_use"]
 if not calls:
     return RunResult(FINAL_ANSWER, answer=_text(content))
 ...
-results.append({"type": "tool_result", "tool_use_id": call.get("id"),
-                "content": outcome.output})
+results.append(
+    {"type": "tool_result", "tool_use_id": call.get("id"), "content": outcome.output}
+)
 ```
 
 Model shortcuts (`projects/harness/src/harness_lab/client.py`):

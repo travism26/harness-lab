@@ -1,7 +1,6 @@
 """Keeps `.claude/skills/workflow/` in step with the board in `docs/skill-workflows.md`."""
 
 import json
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,7 +44,7 @@ def test_skill_names_the_command_and_the_skip_rule():
 def board_skips() -> dict[str, list[str]]:
     """Each `###` scenario heading in section 3 mapped to the items of its `- Skip:` line."""
     section = BOARD.read_text().split("## 3. Scenarios", 1)[1].split("\n## ", 1)[0]
-    skips = {}
+    skips: dict[str, list[str]] = {}
     for block in section.split("\n### ")[1:]:
         name, _, body = block.partition("\n")
         skips[name.strip()] = []
@@ -65,7 +64,9 @@ def test_keys_are_unique_and_named_in_the_skill():
 
 
 def test_board_skip_items_reach_the_table():
-    entries = {entry["name"]: entry for entry in json.loads(TABLE.read_text())["scenarios"]}
+    entries = {
+        entry["name"]: entry for entry in json.loads(TABLE.read_text())["scenarios"]
+    }
     assert all(isinstance(e.get("skip"), list) for e in entries.values())
     skips = board_skips()
     assert any(skips.values()), "no Skip lines parsed from the board"

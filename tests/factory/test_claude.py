@@ -18,8 +18,14 @@ def test_subscription_env_has_only_the_oauth_token():
     env = claude.agent_env("subscription", STEP_ENV)
     assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-subscription"
     assert env["PATH"] == "/usr/bin"
-    for gone in ("GH_TOKEN", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "FACTORY_SUBSCRIPTION_TOKEN",
-                 "FACTORY_OPENROUTER_KEY", "ANTHROPIC_BASE_URL"):
+    for gone in (
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "FACTORY_SUBSCRIPTION_TOKEN",
+        "FACTORY_OPENROUTER_KEY",
+        "ANTHROPIC_BASE_URL",
+    ):
         assert gone not in env
     assert "sk-or-openrouter" not in env.values()
 
@@ -34,8 +40,13 @@ def test_openrouter_env_follows_openrouters_claude_code_guide():
     assert "sk-ant-oat-subscription" not in env.values()
 
 
-@pytest.mark.parametrize("login,var", [("subscription", "FACTORY_SUBSCRIPTION_TOKEN"),
-                                       ("openrouter", "FACTORY_OPENROUTER_KEY")])
+@pytest.mark.parametrize(
+    "login,var",
+    [
+        ("subscription", "FACTORY_SUBSCRIPTION_TOKEN"),
+        ("openrouter", "FACTORY_OPENROUTER_KEY"),
+    ],
+)
 def test_a_missing_secret_is_a_config_error(login, var):
     env = {k: v for k, v in STEP_ENV.items() if k != var}
     with pytest.raises(claude.ConfigError):
@@ -43,7 +54,9 @@ def test_a_missing_secret_is_a_config_error(login, var):
 
 
 def test_command_caps_the_budget_and_binds_denied_tools():
-    cmd = claude.command("sonnet", 2, ["Read"], ["Bash", "Read(//proc/**)"], may_edit=False)
+    cmd = claude.command(
+        "sonnet", 2, ["Read"], ["Bash", "Read(//proc/**)"], may_edit=False
+    )
     assert cmd[cmd.index("--max-budget-usd") + 1] == "2"
     assert cmd[cmd.index("--disallowedTools") + 1] == "Bash,Read(//proc/**)"
     assert "--permission-mode" not in cmd
@@ -56,8 +69,11 @@ def test_command_refuses_bad_model_or_budget(model, budget):
 
 
 def test_result_message_takes_the_last_result_line():
-    lines = ["not json", json.dumps({"type": "assistant"}),
-             json.dumps({"type": "result", "subtype": "success", "result": "done"})]
+    lines = [
+        "not json",
+        json.dumps({"type": "assistant"}),
+        json.dumps({"type": "result", "subtype": "success", "result": "done"}),
+    ]
     assert claude.result_message("\n".join(lines))["result"] == "done"
 
 

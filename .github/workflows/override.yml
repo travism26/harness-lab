@@ -1,0 +1,43 @@
+# The owner's Override (docs/adr/0012-*.md, docs/factory/setup.md "Turning on the gate").
+#
+# The owner comments `Override: <reason>` on a pull request; this sets the status
+# `factory/review` to success on the PR's current head and labels the PR `review-override`.
+# It runs no agent and holds no Claude login, App key or secret: only the workflow's own
+# token. It checks out the default branch, never PR code, and works the same for a fork PR.
+# The reason stays in the comment; it is never copied into the status.
+
+name: Override
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  override:
+    if: >-
+      github.event.issue.pull_request
+      && github.event.sender.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+      issues: write # the label
+      contents: read # the checkout
+    steps:
+      - name: Check out the factory (default branch)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Apply the Override
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: ${{ github.event.comment.body }}
+          COMMENT_URL: ${{ github.event.comment.html_url }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: uv run --no-dev python -m factory.override

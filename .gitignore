@@ -13,3 +13,5 @@ bench-runs/
 
 # Ticket staged for the factory agent (factory/ticket.py). Publish does not commit it.
 /.factory/
+.ruff_cache/
+.mypy_cache/
