@@ -9,7 +9,7 @@
     {"name": "wontfix", "color": "ffffff", "description": "This will not be worked on"},
     {"name": "in-progress", "color": "fbca04", "description": "The factory is building or reworking this ticket"},
     {"name": "rework", "color": "e99695", "description": "Review or CI found a blocker; a rework round fixes what it named"},
-    {"name": "factory-failed", "color": "b60205", "description": "Factory-applied: the last Implement or Rework run on this ticket or PR failed; the next start removes it"},
+    {"name": "factory-failed", "color": "b60205", "description": "Factory-applied: last Implement or Rework run failed; the next start removes it"},
     {"name": "rework:1", "color": "f9d0c4", "description": "The factory blocked this PR once (review or CI)"},
     {"name": "rework:2", "color": "f9d0c4", "description": "The factory blocked this PR twice; the next blocker goes to a human"},
     {"name": "project:harness", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/harness/)"},
@@ -33,6 +33,6 @@
     {"name": "ready-for-research", "color": "5319e7", "description": "Owner-applied: the factory answers this research-request ticket"},
     {"name": "factory-check", "color": "bfdadc", "description": "Owner-applied: the factory answers with a short live check"},
     {"name": "standards-findings", "color": "c5def5", "description": "The rolling issue that collects merged PRs' non-blocking Standards Findings"},
-    {"name": "retro", "color": "c5def5", "description": "A Retro: proposals for new checks and standards, drafted from a local retro report (docs/factory/README.md)"}
+    {"name": "retro", "color": "c5def5", "description": "A Retro: proposals for new checks and standards, from a local retro report (docs/factory/README.md)"}
   ]
 }

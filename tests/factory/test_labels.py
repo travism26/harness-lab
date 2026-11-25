@@ -109,3 +109,13 @@ def test_no_workflow_or_factory_code_names_the_issue_label():
         if "ready-for-human" in line and not line.startswith("LEGACY_STOPPED_LABEL = ")
     ]
     assert not hits
+
+
+def test_every_label_description_is_at_most_githubs_100_character_limit():
+    """GitHub rejects a label description longer than 100 characters (HTTP 422)."""
+    too_long = [
+        f"{label.name} ({len(label.description)})"
+        for label in load_labels()
+        if len(label.description) > 100
+    ]
+    assert not too_long
