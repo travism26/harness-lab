@@ -3,7 +3,7 @@
 The inputs are issues the caller already has. Nothing here calls GitHub.
 """
 
-from factory.picker import Blocker, Candidate, pick
+from factory.picker import Blocker, Candidate, decide, pick
 
 
 def _issue(
@@ -155,3 +155,80 @@ def test_a_closed_issue_wearing_the_lock_does_not_hold_it():
     child = _child(11, 10)
     closed = _issue(3, labels=("factory:in-progress",), state="CLOSED")
     assert pick([spec, child, closed]).issue == 11
+
+
+def _view(number, state, labels, parent=None, sub_issues=(), blockers=()):
+    """One `gh issue view` payload. `blockers` is `(number, state)`."""
+    return {
+        "number": number,
+        "state": state,
+        "labels": [{"name": name} for name in labels],
+        "parent": {"number": parent} if parent else None,
+        "subIssues": {"nodes": [{"number": n} for n in sub_issues]},
+        "blockedBy": {
+            "nodes": [{"number": n, "state": blocker} for n, blocker in blockers]
+        },
+    }
+
+
+class _Board:
+    """Issues the caller already has. `decide` reads them; nothing calls GitHub."""
+
+    def __init__(self, issues):
+        self.issues = {item["number"]: item for item in issues}
+
+    def open_issues_labelled(self, repo, label):
+        found = []
+        for number, item in self.issues.items():
+            names = [row["name"] for row in item["labels"]]
+            if item["state"] == "OPEN" and label in names:
+                found.append(number)
+        return found
+
+    def issue_fields(self, repo, number, fields):
+        return self.issues[number]
+
+
+def _family():
+    """Approved Spec 10, closed Ticket A (11), and B (12) blocked by A."""
+    spec = _view(
+        10,
+        "OPEN",
+        ("owner:implement", "builder:spec-ready"),
+        sub_issues=(11, 12),
+    )
+    ticket_a = _view(11, "CLOSED", ("ready-for-agent",), parent=10)
+    ticket_b = _view(
+        12,
+        "OPEN",
+        ("ready-for-agent",),
+        parent=10,
+        blockers=((11, "CLOSED"),),
+    )
+    return spec, ticket_a, ticket_b
+
+
+def _closed(board):
+    return decide(
+        board,
+        "o/r",
+        event="issues",
+        action="closed",
+        label="",
+        issue=11,
+        spec="",
+        issue_labels=("ready-for-agent",),
+    )
+
+
+def test_closing_without_a_lock_starts_the_unblocked_ticket_unless_the_lock_is_held():
+    """A closed with no lock label. B was blocked by A and is ready-for-agent."""
+    opened = _closed(_Board(_family()))
+    assert opened["start"] == 12
+    assert opened["reason"] == "selected"
+    assert opened["drop_lock"] is False
+
+    held = _closed(_Board([*_family(), _view(3, "OPEN", ("factory:in-progress",))]))
+    assert held["start"] is None
+    assert held["reason"] == "lock held"
+    assert held["drop_lock"] is False

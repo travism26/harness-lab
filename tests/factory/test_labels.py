@@ -219,6 +219,21 @@ def test_clear_labels_colon_is_encoded_and_old_names_stay():
     assert 'index("rework")' in text or "index('rework')" in text
 
 
+def test_picker_closed_does_not_require_a_lock_label():
+    """Any closed issue, not a pull request, runs the plan."""
+    text = _workflow("picker.yml")
+    head = text.split("permissions:", 1)[0]
+    assert "pull_request:" not in head
+    condition = text.split("if: >-", 1)[1].split("runs-on:", 1)[0]
+    closed = condition.split("github.event.action == 'closed'", 1)[1]
+    assert "!github.event.issue.pull_request" in closed
+    assert "factory:in-progress" not in closed
+    assert "'in-progress'" not in closed
+    assert "factory:start" not in closed
+    assert "owner:implement" in condition
+    assert "github.event.sender.login == github.repository_owner" in condition
+
+
 def test_factory_start_token_is_the_app_and_picker_skips_preflight():
     picker = _workflow("picker.yml")
     retry = _workflow("retry.yml")

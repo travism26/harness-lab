@@ -228,16 +228,20 @@ def decide(
 ) -> dict:
     """The plan for one picker trigger. A refusal comment is posted by `plan`."""
     if event == "issues" and action == "closed":
-        if not _has(issue_labels, LOCK_LABELS):
-            return _plan(Choice(None, "lock already off"))
+        # A green settle already dropped the lock. The close still plans, so a
+        # Ticket this one blocked can start. Drop a lock only when this issue
+        # still wears one: that is the only close that needs the App token
+        # without also starting a Ticket.
+        holds_lock = _has(issue_labels, LOCK_LABELS)
         choice = pick(load_open(gh, repo))
         # The closed Ticket is not an open candidate. Say why on it only when
-        # nothing starts; a start comments on the Ticket that is starting.
-        comment_issue = issue if choice.issue is None else None
+        # nothing starts and it still held the lock; a start comments on the
+        # Ticket that is starting.
+        comment_issue = issue if choice.issue is None and holds_lock else None
         return _plan(
             choice,
-            drop_lock=True,
-            drop_issue=issue,
+            drop_lock=holds_lock,
+            drop_issue=issue if holds_lock else None,
             comment_issue=comment_issue,
         )
     if event == "workflow_dispatch":

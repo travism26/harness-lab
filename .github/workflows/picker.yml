@@ -1,4 +1,5 @@
-# Starts one eligible Ticket after the owner approves a Spec or a hand Ticket.
+# Starts one eligible Ticket after the owner approves a Spec or a hand Ticket,
+# and when any issue closes, so a Ticket that close unblocked can start.
 #
 # The factory App adds `factory:start`. This file reads with the workflow token
 # and mints the App token only when that label will be added, or when a closed
@@ -32,10 +33,7 @@ jobs:
           && github.event.label.name == 'ready-for-agent'
           && !github.event.issue.pull_request)
       || (github.event.action == 'closed'
-          && !github.event.issue.pull_request
-          && (contains(github.event.issue.labels.*.name, 'factory:in-progress')
-              || contains(github.event.issue.labels.*.name, 'in-progress')
-              || contains(github.event.issue.labels.*.name, 'factory:start')))
+          && !github.event.issue.pull_request)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
