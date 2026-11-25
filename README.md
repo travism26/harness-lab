@@ -25,7 +25,7 @@ flowchart TD
   C -->|pass| G[Settle comments on the Ticket, releases the lock, starts the next Ticket]
   C -->|factory:stopped| H[Owner fixes and merges, or comments Override:]:::owner
   I -->|draft waits| M[Owner merges]:::owner
-  M --> U[Close unblocks Tickets that depended on it]
+  M --> U[Merge closes the Ticket; the picker starts any Ticket it unblocked]
 ```
 
 The owner does three things:

@@ -124,9 +124,10 @@ fails with a message naming what is missing. It never goes green without doing a
    and the CI gate skip the PR from then on. Review still reads each push and posts its report,
    and changes no labels.
 7. When Review has passed the current head and CI is green, the draft waits. The owner reads it,
-   marks it ready and merges it. The merge closes the Ticket. The lock is already off, and the
-   gate has already started the next eligible Ticket if there was one, so the merge does not
-   have to wait.
+   marks it ready and merges it. Merging closes the Ticket. The lock is already off, and the
+   gate has already started the next Ticket that was eligible then. Closing the Ticket runs the
+   picker (`.github/workflows/picker.yml`), which starts any Ticket that close unblocked, when
+   the lock is free.
 
 ## Starting a Project
 
@@ -485,7 +486,7 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 |---|---|
 | A comment says the factory did not start the Ticket | Read the reason. For "one Ticket at a time", finish or close the other Ticket. For "switch rule", switch to `openrouter`. The next lock release can start this Ticket again. |
 | A comment says the factory run failed | Open the run. A new Project whose `check` was missing looks like this; the comment quotes why. A `check` that merely failed does not: the draft is published, and the Run record says `check: fail`. The Ticket has lost `factory:in-progress` and carries `factory:failed`. Comment `Retry:` to ask again. |
-| A factory PR is closed without merging | Closing the PR removes `factory:rework`. The lock stays on the Ticket until the Ticket closes. Closing a Ticket that still holds the lock drops it and starts the next eligible Ticket. |
+| A factory PR is closed without merging | Closing the PR removes `factory:rework`. The lock stays on the Ticket until the Ticket closes. Closing the Ticket runs the picker. A lock still on that Ticket is dropped. The picker starts any Ticket the close unblocked when the lock is free. |
 | A factory draft's CI is red and no rework starts | Open the CI gate run. It ignores a PR that is not a draft, not opened by the factory App, or not on `factory/issue-<N>`, and it stops at the daily cap. A `timed_out` or `cancelled` CI run is not a failure. |
 | A comment says the factory did not start the research request | Read the reason, fix the request or wait for the other Ticket, then re-apply `owner:research`. |
 | A comment says the note failed its check | No PR was opened and `factory:in-progress` is gone. The comment lists what the check found. Change the request if that helps, then re-apply `owner:research`. |
