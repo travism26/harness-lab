@@ -1,6 +1,6 @@
 # The factory's rework round (docs/factory/README.md).
 #
-# Review, or .github/workflows/ci-gate.yml, labels a blocked factory PR `rework` with the App's
+# Review, or .github/workflows/ci-gate.yml, labels a blocked factory PR `factory:rework` with the App's
 # token, and that label event starts this workflow (a label added with
 # GITHUB_TOKEN would start nothing). The agent fixes what the review named on
 # the PR's branch, including a CI failure in that comment. The push starts
@@ -24,10 +24,11 @@ concurrency:
   # rounds. Keep this condition identical to the job's `if:` below.
   group: >-
     ${{
-      (github.event.label.name == 'rework'
+      ((github.event.label.name == 'factory:rework' || github.event.label.name == 'rework')
         && github.event.pull_request.head.repo.full_name == github.repository
         && startsWith(github.event.pull_request.head.ref, 'factory/')
         && (github.event.sender.type == 'Bot' || github.event.sender.login == github.repository_owner)
+        && !contains(github.event.pull_request.labels.*.name, 'factory:stopped')
         && !contains(github.event.pull_request.labels.*.name, 'factory-stopped'))
       && format('rework-{0}', github.event.pull_request.number)
       || format('rework-ignored-{0}', github.run_id)
@@ -40,13 +41,14 @@ env:
 
 jobs:
   rework:
-    # The `rework` label, added by the factory App (or the owner by hand), on
-    # a factory PR of this repository that no human has taken over.
+    # `factory:rework` (or `rework`, until sync), added by the factory App or the
+    # owner, on a factory PR of this repository that is not stopped.
     if: >-
-      github.event.label.name == 'rework'
+      (github.event.label.name == 'factory:rework' || github.event.label.name == 'rework')
       && github.event.pull_request.head.repo.full_name == github.repository
       && startsWith(github.event.pull_request.head.ref, 'factory/')
       && (github.event.sender.type == 'Bot' || github.event.sender.login == github.repository_owner)
+      && !contains(github.event.pull_request.labels.*.name, 'factory:stopped')
       && !contains(github.event.pull_request.labels.*.name, 'factory-stopped')
     runs-on: ubuntu-latest
     timeout-minutes: 60

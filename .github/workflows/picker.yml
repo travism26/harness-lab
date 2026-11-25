@@ -1,0 +1,82 @@
+# Starts one eligible Ticket after the owner approves a Spec or a hand Ticket.
+#
+# The factory App adds `factory:start`. This file reads with the workflow token
+# and mints the App token only when that label will be added, or when a closed
+# Ticket still holds the lock. A no-op never mints a token, so it does not spend
+# Implement's daily cap. A GITHUB_TOKEN label add would start nothing, which is
+# why the add step does not use github.token.
+
+name: Picker
+
+on:
+  issues:
+    types: [labeled, closed]
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: Spec or hand Ticket number
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  pick:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.action == 'labeled'
+          && github.event.label.name == 'owner:implement'
+          && github.event.sender.login == github.repository_owner
+          && !github.event.issue.pull_request)
+      || (github.event.action == 'labeled'
+          && github.event.label.name == 'ready-for-agent'
+          && !github.event.issue.pull_request)
+      || (github.event.action == 'closed'
+          && !github.event.issue.pull_request
+          && (contains(github.event.issue.labels.*.name, 'factory:in-progress')
+              || contains(github.event.issue.labels.*.name, 'in-progress')
+              || contains(github.event.issue.labels.*.name, 'factory:start')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the factory (default branch)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Decide which Ticket starts
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          ISSUE: ${{ github.event.issue.number }}
+          SPEC: ${{ inputs.spec }}
+          ISSUE_LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
+        run: >-
+          uv run --no-dev python -m factory.picker plan
+          --repo "$REPO" --out plan-out/plan.json
+
+      - name: Mint the factory App token
+        id: app
+        if: steps.plan.outputs.start != '' || steps.plan.outputs.drop == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_KEY }}
+
+      - name: Add factory:start
+        if: steps.plan.outputs.start != '' || steps.plan.outputs.drop == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: >-
+          uv run --no-dev python -m factory.picker apply
+          --repo "$REPO" --out plan-out/plan.json

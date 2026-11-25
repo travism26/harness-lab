@@ -6,7 +6,7 @@ title: "Research: "
 
 <!--
 A Research request (docs/factory/README.md, "Research path"). Keep the five headings as they are:
-the factory reads them. Nothing starts until the repository owner applies `ready-for-research`.
+the factory reads them. Nothing starts until the repository owner applies `owner:research`.
 
 Public sources only. This issue is public, and the answer is published in a public pull request.
 Do not paste or link private notes, email, or employer or customer material, and never a secret.

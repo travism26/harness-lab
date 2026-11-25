@@ -55,12 +55,16 @@ from factory.github import (
 )
 from factory.switch_rule import LOGINS, is_factory_app, refusal
 
-REWORK_LABEL = "rework"
-STOPPED_LABEL = "factory-stopped"
+REWORK_LABEL = "factory:rework"
+LEGACY_REWORK_LABEL = "rework"
+REWORK_LABELS = (REWORK_LABEL, LEGACY_REWORK_LABEL)
+STOPPED_LABEL = "factory:stopped"
 # Before 2026-11-24 the factory put the issue label on a PR it had stopped; open PRs may still carry it.
 LEGACY_STOPPED_LABEL = "ready-for-human"
-STOPPED_LABELS = (STOPPED_LABEL, LEGACY_STOPPED_LABEL)
-IN_PROGRESS_LABEL = "in-progress"
+# `factory-stopped` is the stop label from before this rename.
+STOPPED_LABELS = (STOPPED_LABEL, LEGACY_STOPPED_LABEL, "factory-stopped")
+IN_PROGRESS_LABEL = "factory:in-progress"
+IN_PROGRESS_LABELS = (IN_PROGRESS_LABEL, "in-progress")
 # The design's brake: stop after two rework rounds per ticket.
 MAX_REWORK = 2
 # Everything that could change a file, run a command or reach the network.
@@ -93,7 +97,7 @@ _GATE_RE = re.compile(
     r" -->"
 )
 
-_COUNTER_RE = re.compile(r"^rework:(\d+)$")
+_COUNTER_RE = re.compile(r"^(?:rework:|factory:rework-)(\d+)$")
 # GitHub's closing keywords, then #N or owner/repo#N.
 _CLOSING_RE = re.compile(
     r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?[ \t]+(?:([\w.-]+/[\w.-]+))?#(\d+)\b",
@@ -266,7 +270,7 @@ def linked_ticket(body: str, repo: str) -> int | None:
 
 
 def rework_round(labels: list[str]) -> int:
-    """How many times review has blocked this PR, from its rework:N label."""
+    """How many times review has blocked this PR, from its rework counter."""
     rounds = [int(m.group(1)) for m in map(_COUNTER_RE.match, labels) if m]
     return max(rounds, default=0)
 
@@ -416,23 +420,26 @@ def is_stopped(labels: Iterable[str]) -> bool:
     return any(label in STOPPED_LABELS for label in labels)
 
 
+def _triggers(labels: list[str]) -> tuple[str, ...]:
+    return tuple(label for label in REWORK_LABELS if label in labels)
+
+
 def label_moves(labels: list[str], blocker: bool) -> Moves:
     labels = list(labels)
+    triggers = _triggers(labels)
     if is_stopped(labels):
         return Moves("human-owned")
     if not blocker:
-        return Moves("pass", remove=(REWORK_LABEL,) if REWORK_LABEL in labels else ())
+        return Moves("pass", remove=triggers)
     done = rework_round(labels)
     if done >= MAX_REWORK:
-        return Moves(
-            "human",
-            add=(STOPPED_LABEL,),
-            remove=(REWORK_LABEL,) if REWORK_LABEL in labels else (),
-        )
-    remove = tuple(label for label in labels if _COUNTER_RE.match(label))
-    if REWORK_LABEL in labels:
-        remove += (REWORK_LABEL,)
-    return Moves("rework", add=(REWORK_LABEL, f"rework:{done + 1}"), remove=remove)
+        return Moves("human", add=(STOPPED_LABEL,), remove=triggers)
+    remove = tuple(label for label in labels if _COUNTER_RE.match(label)) + triggers
+    return Moves(
+        "rework",
+        add=(REWORK_LABEL, f"factory:rework-{done + 1}"),
+        remove=remove,
+    )
 
 
 def review_gate(
@@ -859,11 +866,12 @@ def move_labels(gh: GitHub, repo: str, number: int, add: tuple, remove: tuple) -
 
 
 def drop_in_progress(gh: GitHub, repo: str, issue: int) -> bool:
-    """Remove `in-progress` from a Ticket. Returns whether it was there."""
+    """Remove the lock from a Ticket, whichever spelling it wears. Returns whether it was there."""
     item = gh.issue(repo, issue)
-    if IN_PROGRESS_LABEL not in label_names(item):
+    present = tuple(label for label in IN_PROGRESS_LABELS if label in label_names(item))
+    if not present:
         return False
-    gh.remove_labels(repo, issue, (IN_PROGRESS_LABEL,))
+    gh.remove_labels(repo, issue, present)
     return True
 
 

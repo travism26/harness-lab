@@ -51,7 +51,7 @@ class FakeGitHub:
         body=None,
         state="OPEN",
         author="travism26",
-        labels=("ready-for-research",),
+        labels=("owner:research",),
         in_progress=(),
         title="Widget research",
     ):
@@ -250,7 +250,7 @@ def test_the_note_template_holds_the_required_headings_once_in_order():
 def test_claim_starts_the_request(tmp_path):
     gh = FakeGitHub()
     assert research.claim(args(tmp_path, max_budget_usd=3.0), gh) == 0
-    assert gh.removed == ["ready-for-research"] and gh.added == ["in-progress"]
+    assert gh.removed == ["owner:research"] and gh.added == ["factory:in-progress"]
     ((number, body),) = gh.posted
     assert number == 4 and body.startswith(research.STARTED_PREFIX)
     assert not body.startswith(ticket.STARTED_PREFIX)
@@ -274,7 +274,7 @@ def test_claim_takes_the_requests_lower_cap(tmp_path):
         (FakeGitHub(state="CLOSED"), "the Ticket is closed"),
         (
             FakeGitHub(in_progress=[7]),
-            "one Ticket at a time: #7 is still `in-progress`",
+            "one Ticket at a time: #7 is still `factory:in-progress`",
         ),
         (FakeGitHub(author="stranger"), "switch rule"),
         (FakeGitHub(body=request(question="")), "the request's `## Question` is empty"),
@@ -286,8 +286,8 @@ def test_claim_refuses_and_says_why(tmp_path, gh, reason):
     assert reason in str(raised.value)
     ((_number, body),) = gh.posted
     assert body.startswith("The factory did not start this research request: ")
-    assert reason in body and "`ready-for-research` has been removed" in body
-    assert gh.removed == ["ready-for-research"] and gh.added == []
+    assert reason in body and "`owner:research` has been removed" in body
+    assert gh.removed == ["owner:research"] and gh.added == []
 
 
 def test_a_research_claim_is_not_a_build_ticket_to_the_metrics():
@@ -582,10 +582,7 @@ def test_release_says_so_and_drops_in_progress(tmp_path):
     gh = FakeGitHub(labels=("in-progress",))
     assert research.release(args(tmp_path, run_url=RUN_URL), gh) == 0
     ((_number, body),) = gh.posted
-    assert (
-        body.startswith(ticket.failed_prefix(RUN_URL))
-        and "`ready-for-research`" in body
-    )
+    assert body.startswith(ticket.failed_prefix(RUN_URL)) and "`owner:research`" in body
     assert "no pull request was opened" not in body
     assert gh.removed == ["in-progress"]
 
@@ -609,7 +606,7 @@ def test_release_lists_the_checks_problems_and_defuses_a_comment_closer(tmp_path
 OPENED = f"{ticket.OPENED_PREFIX}https://github.com/{REPO}/pull/9\n"
 FAILED = (
     f"{ticket.failed_prefix(RUN_URL)}. `in-progress` has been removed; "
-    "re-apply `ready-for-research` to try again.\n"
+    "re-apply `owner:research` to try again.\n"
 )
 
 
@@ -674,7 +671,7 @@ def jobs():
 def test_only_the_owners_label_on_an_issue_starts_the_workflow():
     text, _, _, _ = jobs()
     for clause in (
-        "github.event.label.name == 'ready-for-research'",
+        "github.event.label.name == 'owner:research'",
         "github.event.sender.login == github.repository_owner",
         "!github.event.issue.pull_request",
     ):
@@ -725,5 +722,5 @@ def test_the_workflow_leaves_a_research_run_record_with_the_budget_knob():
 
 
 def test_the_start_label_is_registered_as_owner_applied():
-    rows = [label for label in load_labels() if label.name == "ready-for-research"]
+    rows = [label for label in load_labels() if label.name == "owner:research"]
     assert len(rows) == 1 and rows[0].description.startswith("Owner-applied")

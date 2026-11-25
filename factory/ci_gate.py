@@ -46,7 +46,7 @@ from factory.github import (
 from factory.review_pr import (
     MARKER,
     MAX_REWORK,
-    REWORK_LABEL,
+    REWORK_LABELS,
     STOPPED_LABEL,
     Moves,
     charge_won,
@@ -130,6 +130,8 @@ class Decision:
     action: str  # ignore | rework | human | join | settle | finish
     reason: str
     comment: str = ""
+    # "ticket" posts on the Ticket. "pull_request" posts on the pull request.
+    comment_on: str = "pull_request"
     add: tuple[str, ...] = ()
     remove: tuple[str, ...] = ()
     clear_in_progress: bool = False
@@ -305,13 +307,23 @@ def _decide_success(event: GateEvent) -> Decision:
         return Decision("ignore", "review has not passed this head")
     # A green re-run of a head that already entered rework must not drop the
     # one-at-a-time lock while that round is still open.
-    if head_charged(event.comments, event.head_sha) and REWORK_LABEL in event.labels:
+    if head_charged(event.comments, event.head_sha) and any(
+        label in REWORK_LABELS for label in event.labels
+    ):
         return Decision("ignore", "a rework round for this head is still open")
     issue = linked_ticket(event.body, event.repo)
-    if "in-progress" not in event.issue_labels:
+    # Both spellings: `factory:in-progress` after sync, and `in-progress` until then.
+    if not any(
+        label in ("factory:in-progress", "in-progress") for label in event.issue_labels
+    ):
         return Decision("ignore", "in-progress is already off")
     return Decision(
-        "settle", "review passed and CI is green", clear_in_progress=True, issue=issue
+        "settle",
+        "review passed and CI is green",
+        comment=f"The lock is off. [Run]({event.run_url})\n",
+        comment_on="ticket",
+        clear_in_progress=True,
+        issue=issue,
     )
 
 
@@ -348,8 +360,9 @@ def _duplicate(event: GateEvent, meta) -> Decision:
     labels = list(event.labels)
     missing = tuple(label for label in meta.add if label not in labels)
     remove: tuple[str, ...] = ()
-    if is_stopped(meta.add) and REWORK_LABEL in labels:
-        remove = (REWORK_LABEL,)
+    triggers = tuple(label for label in REWORK_LABELS if label in labels)
+    if is_stopped(meta.add) and triggers:
+        remove = triggers
     if not missing and not remove:
         return Decision("ignore", "duplicate ci run")
     return Decision(
@@ -593,7 +606,12 @@ def apply(args, gh: GitHub | None = None) -> int:
                 "::warning title=Secret scrubbed::The CI gate's files held a secret value; "
                 "it was redacted"
             )
-        comment_id = gh.comment(event.repo, event.pr, path)
+        target = (
+            decision.issue
+            if decision.comment_on == "ticket" and decision.issue is not None
+            else event.pr
+        )
+        comment_id = gh.comment(event.repo, target, path)
     if decision.nonce and not charge_won(
         gh.pr_comments(event.repo, event.pr), event.head_sha, decision.nonce
     ):
@@ -607,6 +625,9 @@ def apply(args, gh: GitHub | None = None) -> int:
     move_labels(gh, event.repo, event.pr, decision.add, decision.remove)
     if decision.clear_in_progress and decision.issue:
         drop_in_progress(gh, event.repo, decision.issue)
+        from factory.picker import queue_next
+
+        queue_next(gh, event.repo, event.run_url)
     print(f"CI gate {decision.action}: {decision.reason}")
     return 0
 

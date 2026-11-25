@@ -114,7 +114,7 @@ Matt owns intake and the tracker. Lauren owns design and proof. The Lab's check,
 
 ### Diagram 2B: Hybrid B: factory lane (unattended, in CI)
 
-1. `[X]` Ticket labelled `ready-for-factory`
+1. `[X]` Ticket started by `factory:start` after `owner:implement`
 2. `[X]` factory agent: only skills committed in the repo
 3. `[X]` `projects/<name>/check`
 4. `[L]` `/verify-<project>`: committed under the Project

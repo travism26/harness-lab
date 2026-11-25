@@ -645,6 +645,37 @@ def test_a_bot_comment_that_only_quotes_the_started_text_adds_no_row(tmp_path, c
     assert _rows(out) == []
 
 
+def test_new_names_count_like_the_old(tmp_path, capsys):
+    created = "2026-11-13T10:02:00Z"
+    removed = "2026-11-13T10:00:30Z"
+    old = _facts(
+        tmp_path / "old",
+        created=created,
+        events=[_label("unlabeled", "ready-for-factory", BOT, removed)],
+        pr_events=[
+            _label("labeled", "rework:2", BOT, "2026-11-13T10:08:00Z"),
+            _label("labeled", "ready-for-human", BOT, "2026-11-13T10:20:00Z"),
+        ],
+    )
+    new = _facts(
+        tmp_path / "new",
+        created=created,
+        events=[_label("unlabeled", "factory:start", BOT, removed)],
+        pr_events=[
+            _label("labeled", "factory:rework-2", BOT, "2026-11-13T10:08:00Z"),
+            _label("labeled", "factory:stopped", BOT, "2026-11-13T10:20:00Z"),
+        ],
+    )
+    old_row, _ = _cells(capsys, old)
+    new_row, _ = _cells(capsys, new)
+    assert old_row["Rework rounds"] == "2"
+    assert old_row["Start label to draft"] == "1m 30s"
+    assert old_row["Human escalation"] == "yes"
+    assert new_row["Rework rounds"] == old_row["Rework rounds"]
+    assert new_row["Start label to draft"] == old_row["Start label to draft"]
+    assert new_row["Human escalation"] == old_row["Human escalation"]
+
+
 def test_a_ticket_with_both_the_started_comment_and_a_record_appears_once(
     tmp_path, capsys
 ):

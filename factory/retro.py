@@ -26,7 +26,8 @@ from factory.record import TOKEN_RE
 from factory.review_pr import SPEC_KINDS, review_verdict
 from factory.switch_rule import default_app_slug
 
-LABEL = "retro"
+LABEL = "owner:retro"
+LEGACY_LABEL = "retro"
 DUE_AT = 10
 FIXTURES_REPO = "travism26/harness-lab"
 
@@ -72,7 +73,15 @@ class LiveSource:
         self.gh, self.repo = gh, repo
 
     def last_retro(self) -> str | None:
-        return self.gh.newest_issue_created(self.repo, LABEL)
+        found = []
+        for label in (LABEL, LEGACY_LABEL):
+            try:
+                created = self.gh.newest_issue_created(self.repo, label)
+            except GitHubError:
+                created = None
+            if created:
+                found.append(created)
+        return max(found) if found else None
 
     def merged_prs(self) -> list[dict]:
         return self.gh.merged_prs(self.repo)
@@ -84,7 +93,9 @@ class LiveSource:
         return self.gh.pull_commits(self.repo, pr)
 
     def standards_issue(self) -> dict | None:
-        issues = self.gh.open_issues_labelled(self.repo, collect_findings.LABEL)
+        issues = collect_findings._labelled(
+            self.gh, self.repo, (collect_findings.LABEL, collect_findings.LEGACY_LABEL)
+        )
         if not issues:
             return None
         number = min(issues)

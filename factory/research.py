@@ -49,12 +49,13 @@ from factory.ticket import (
     BASE_BRANCH,
     OPENED_PREFIX,
     PROGRESS_LABEL,
+    PROGRESS_LABELS,
     _git,
-    blocking_tickets,
     failed_prefix,
+    issues_holding_the_lock,
 )
 
-START_LABEL = "ready-for-research"
+START_LABEL = "owner:research"
 BRANCH_PREFIX = "research/"
 NOTES_DIR = "docs/research/notes"
 BUDGET_VAR = "FACTORY_RESEARCH_BUDGET_USD"
@@ -204,9 +205,7 @@ def claim(args, gh: GitHub | None = None) -> int:
         reason = refusal(args.login, [author(issue)], owner, args.app_slug)
         reason = f"switch rule: {reason}" if reason else None
     if not reason:
-        others = blocking_tickets(
-            gh.open_issues_labelled(args.repo, PROGRESS_LABEL), args.issue
-        )
+        others = issues_holding_the_lock(gh, args.repo, args.issue)
         if others:
             reason = (
                 f"one Ticket at a time: {', '.join(f'#{n}' for n in others)} is still "
@@ -408,8 +407,10 @@ def publish(args, gh: GitHub | None = None) -> int:
         write_comment(out, "opened.md", f"{OPENED_PREFIX}{url}\n"),
     )
     # The run is over: no Rework round follows, and the CI gate only releases `factory/` branches.
-    if PROGRESS_LABEL in label_names(gh.issue(args.repo, args.issue)):
-        gh.remove_labels(args.repo, args.issue, (PROGRESS_LABEL,))
+    names = label_names(gh.issue(args.repo, args.issue))
+    present = tuple(label for label in PROGRESS_LABELS if label in names)
+    if present:
+        gh.remove_labels(args.repo, args.issue, present)
     print(f"Opened {url}")
     return 0
 
@@ -433,8 +434,9 @@ def release(args, gh: GitHub | None = None) -> int:
             + "\n"
         )
     gh.comment(args.repo, args.issue, write_comment(out, "failed.md", body))
-    if PROGRESS_LABEL in label_names(issue):
-        gh.remove_labels(args.repo, args.issue, (PROGRESS_LABEL,))
+    present = tuple(label for label in PROGRESS_LABELS if label in label_names(issue))
+    if present:
+        gh.remove_labels(args.repo, args.issue, present)
     return 0
 
 

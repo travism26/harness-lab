@@ -22,7 +22,8 @@ from factory.github import GitHub, GitHubError, neutralize, write_comment
 from factory.review_pr import STANDARDS_KINDS, parse_gate
 from factory.switch_rule import default_app_slug, is_factory_app
 
-LABEL = "standards-findings"
+LABEL = "factory:standards"
+LEGACY_LABEL = "standards-findings"
 # The workflow posts with its own GITHUB_TOKEN, so this is who wrote the marker comments.
 WORKFLOW_BOT = "github-actions[bot]"
 ISSUE_TITLE = "Standards findings from merged pull requests"
@@ -106,6 +107,16 @@ def section(pr: int, title: str, findings: Sequence[Finding]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _labelled(gh: Any, repo: str, labels: tuple[str, ...]) -> list[int]:
+    found: list[int] = []
+    for label in labels:
+        try:
+            found.extend(gh.open_issues_labelled(repo, label))
+        except GitHubError:
+            continue
+    return list(dict.fromkeys(found))
+
+
 def collect(gh: Any, repo: str, pr: int, head: str, app_slug: str) -> str:
     """Append the pull request's Standards Findings once. Returns what was done."""
     review = review_for_head(gh.pr_comments(repo, pr), head, f"{app_slug}[bot]")
@@ -115,7 +126,7 @@ def collect(gh: Any, repo: str, pr: int, head: str, app_slug: str) -> str:
     title = gh.pr(repo, pr).get("title") or ""
     text = section(pr, title, findings)
     with TemporaryDirectory() as tmp:
-        issues = gh.open_issues_labelled(repo, LABEL)
+        issues = _labelled(gh, repo, (LABEL, LEGACY_LABEL))
         if issues:
             issue = min(issues)
             seen = marker(pr)

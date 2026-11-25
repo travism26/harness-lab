@@ -6,6 +6,34 @@ The twist is that the lab mostly runs itself. AI agents find ideas, plan them an
 
 The story behind it: [Two Grok Bots, One Software Factory: How My Lab Finds and Builds Its Own Work](https://dev.to/rickjms/two-grok-bots-one-software-factory-how-my-lab-finds-and-builds-its-own-work-2n0h).
 
+## Flow at a glance
+
+```mermaid
+flowchart TD
+  classDef owner fill:#f4d35e,stroke:#333,color:#111
+  S[Scout files a Goal] --> B[Builder claims, grills, specs]
+  B --> R[builder:spec-ready]
+  R --> A[Owner adds owner:implement]:::owner
+  A --> T[Builder cuts Tickets with ready-for-agent]
+  T --> F[App adds factory:start to the lowest eligible Ticket]
+  F --> I[Implement]
+  I -->|fails| Z[factory:failed]
+  Z --> Q[Owner comments Retry:]:::owner
+  Q --> F
+  I -->|draft| C[CI and Review on every push]
+  C -->|rework, at most 2| C
+  C -->|pass| G[Settle comments on the Ticket, releases the lock, starts the next Ticket]
+  C -->|factory:stopped| H[Owner fixes and merges, or comments Override:]:::owner
+  I -->|draft waits| M[Owner merges]:::owner
+  M --> U[Close unblocks Tickets that depended on it]
+```
+
+The owner does three things:
+
+1. Add `owner:implement` to a Spec, or to a hand-written Ticket.
+2. Merge the draft. That closes the Ticket. On `factory:stopped`, fix and merge, or comment `Override:`.
+3. Comment `Retry:` when Implement has added `factory:failed`.
+
 ## What we're experimenting with
 
 - **A software factory on GitHub Actions.** A labelled GitHub issue (a Ticket) becomes a **draft PR** built by Claude Code. An independent read-only agent reviews it for Spec and Standards. Up to two automatic rework rounds follow, and a human merges. See [the factory](docs/factory/README.md).

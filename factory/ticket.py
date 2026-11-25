@@ -74,13 +74,17 @@ from factory.github import (
     pr_block_span,
     write_comment,
 )
-from factory.review_pr import REWORK_LABEL, is_stopped, linked_ticket, review_input
+from factory.review_pr import REWORK_LABELS, is_stopped, linked_ticket, review_input
 from factory.switch_rule import LOGINS, refusal
 from factory.sync_labels import load_labels
 
-START_LABEL = "ready-for-factory"
-PROGRESS_LABEL = "in-progress"
-FAILED_LABEL = "factory-failed"
+START_LABEL = "factory:start"
+PROGRESS_LABEL = "factory:in-progress"
+# Readers accept the name from before the rename. Writers use the new one.
+PROGRESS_LABELS = (PROGRESS_LABEL, "in-progress")
+FAILED_LABEL = "factory:failed"
+FAILED_LABELS = (FAILED_LABEL, "factory-failed")
+LOCK_LABELS = (PROGRESS_LABEL, "in-progress", START_LABEL)
 PROJECT_PREFIX = "project:"
 PROJECTS_DIR = "projects"
 BRANCH_PREFIX = "factory/"
@@ -104,6 +108,17 @@ def branch_for(issue: int) -> str:
 def blocking_tickets(in_progress: list[int], issue: int) -> list[int]:
     """One Ticket at a time: the other open Tickets the factory is working on."""
     return sorted(n for n in in_progress if n != issue)
+
+
+def issues_holding_the_lock(gh: GitHub, repo: str, issue: int) -> list[int]:
+    """Open issues wearing the progress label or `factory:start`. A missing name is none."""
+    found: set[int] = set()
+    for label in LOCK_LABELS:
+        try:
+            found.update(gh.open_issues_labelled(repo, label))
+        except GitHubError:
+            continue
+    return blocking_tickets(sorted(found), issue)
 
 
 def _registered(root: Path) -> set[str]:
@@ -387,13 +402,11 @@ def claim(args, gh: GitHub | None = None) -> int:
         reason = refusal(args.login, [author(issue)], owner, args.app_slug)
         reason = f"switch rule: {reason}" if reason else None
     if not reason:
-        others = blocking_tickets(
-            gh.open_issues_labelled(args.repo, PROGRESS_LABEL), args.issue
-        )
+        others = issues_holding_the_lock(gh, args.repo, args.issue)
         if others:
             reason = (
                 f"one Ticket at a time: {', '.join(f'#{n}' for n in others)} is still "
-                f"`{PROGRESS_LABEL}`. Re-apply `{START_LABEL}` here when it is done"
+                f"`{PROGRESS_LABEL}`. It can start when the lock is free"
             )
     project, bootstrap = None, False
     if not reason:
@@ -411,13 +424,16 @@ def claim(args, gh: GitHub | None = None) -> int:
             gh.remove_labels(args.repo, args.issue, (START_LABEL,))
         raise Refused(reason)
 
-    stale = (FAILED_LABEL,) if FAILED_LABEL in label_names(issue) else ()
-    gh.remove_labels(args.repo, args.issue, (START_LABEL, *stale))
+    names = label_names(issue)
+    removing = tuple(label for label in (START_LABEL, *FAILED_LABELS) if label in names)
+    if removing:
+        gh.remove_labels(args.repo, args.issue, removing)
     gh.add_labels(args.repo, args.issue, (PROGRESS_LABEL,))
+    approval = gh.approval(args.repo, args.issue) if hasattr(gh, "approval") else None
     gh.comment(
         args.repo,
         args.issue,
-        write_comment(out, "started.md", f"{STARTED_PREFIX} [Run]({args.run_url})\n"),
+        write_comment(out, "started.md", started_comment(args.run_url, approval)),
     )
     _write_ticket(out, issue)
     _save(
@@ -442,7 +458,11 @@ def revise(args, gh: GitHub | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     pr = gh.pr(args.repo, args.pr)
     labels = label_names(pr)
-    if pr.get("state") != "OPEN" or is_stopped(labels) or REWORK_LABEL not in labels:
+    if (
+        pr.get("state") != "OPEN"
+        or is_stopped(labels)
+        or not any(label in REWORK_LABELS for label in labels)
+    ):
         raise RuntimeError(
             f"PR {args.repo}#{args.pr} is not waiting for rework "
             f"(state {pr.get('state')}, labels {labels})"
@@ -459,8 +479,9 @@ def revise(args, gh: GitHub | None = None) -> int:
     reason = refusal(args.login, [author(issue), author(pr)], owner, args.app_slug)
     if reason:
         raise RuntimeError(f"switch rule: {reason}")
-    if FAILED_LABEL in labels:
-        gh.remove_labels(args.repo, args.pr, (FAILED_LABEL,))
+    stale = tuple(label for label in FAILED_LABELS if label in labels)
+    if stale:
+        gh.remove_labels(args.repo, args.pr, stale)
     try:
         project, bootstrap = project_of(issue, Path(args.root))
     except Refused as e:
@@ -777,6 +798,18 @@ def failed_prefix(run_url: str) -> str:
     return f"The factory run for this Ticket failed: [run]({run_url})"
 
 
+def started_comment(run_url: str, approval: dict | None) -> str:
+    """The claim comment. A child names the Spec; a hand Ticket says this issue."""
+    if not approval or not approval.get("login"):
+        return f"{STARTED_PREFIX} [Run]({run_url})\n"
+    where = f"#{approval['spec']}" if approval.get("spec") else "this issue"
+    return (
+        f"{STARTED_PREFIX} Approved on {where} by {approval['login']} "
+        f"at {approval['approved_at']}. The blockers were clear. "
+        f"[Run]({run_url})\n"
+    )
+
+
 def _porcelain_path(line: str) -> str:
     path = line[3:] if len(line) > 3 else line
     if " -> " in path:
@@ -902,7 +935,7 @@ def publish(args, gh: GitHub | None = None) -> int:
 def _failure_comment(out: Path, run_url: str) -> str:
     body = (
         f"{failed_prefix(run_url)}. "
-        f"`{PROGRESS_LABEL}` has been removed; re-apply `{START_LABEL}` to try again.\n"
+        f"`{PROGRESS_LABEL}` has been removed. Comment `Retry:` to try again.\n"
     )
     missing = out / CHECK_MISSING_FILE
     if missing.is_file():
@@ -925,17 +958,24 @@ def release(args, gh: GitHub | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     body = _failure_comment(out, args.run_url)
     gh.comment(args.repo, args.issue, write_comment(out, "failed.md", body))
-    if PROGRESS_LABEL in label_names(issue):
-        gh.remove_labels(args.repo, args.issue, (PROGRESS_LABEL,))
-    if FAILED_LABEL not in label_names(issue):
+    names = label_names(issue)
+    present = tuple(label for label in PROGRESS_LABELS if label in names)
+    if present:
+        gh.remove_labels(args.repo, args.issue, present)
+    if not any(label in FAILED_LABELS for label in names):
         gh.add_labels(args.repo, args.issue, (FAILED_LABEL,))
+    from factory.picker import queue_next
+
+    queue_next(gh, args.repo, args.run_url)
     return 0
 
 
 def fail_pr(args, gh: GitHub | None = None) -> int:
     """Mark a PR whose Rework run failed, so the label list shows it."""
     gh = gh or GitHub()
-    if FAILED_LABEL not in label_names(gh.pr(args.repo, args.pr)):
+    if not any(
+        label in FAILED_LABELS for label in label_names(gh.pr(args.repo, args.pr))
+    ):
         gh.add_labels(args.repo, args.pr, (FAILED_LABEL,))
     return 0
 

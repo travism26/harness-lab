@@ -61,7 +61,7 @@ class FakeGitHub:
         return {"number": number, "title": self.title}
 
     def open_issues_labelled(self, repo: str, label: str) -> list[int]:
-        assert label == cf.LABEL
+        assert label in (cf.LABEL, cf.LEGACY_LABEL)
         return sorted(self.issues)
 
     def create_issue(
@@ -186,7 +186,7 @@ def test_a_merge_without_standards_findings_creates_nothing():
 def test_the_rolling_issue_is_created_and_extended_without_ready_for_agent():
     gh = FakeGitHub([comment(1, review(HEAD, [STANDARD]))])
     cf.collect(gh, REPO, 42, HEAD, SLUG)
-    assert gh.created == [(cf.ISSUE_TITLE, ("standards-findings",))]
+    assert gh.created == [(cf.ISSUE_TITLE, (cf.LABEL,))]
     gh.thread = [comment(1, review(HEAD, [SMELL]))]
     cf.collect(gh, REPO, 43, HEAD, SLUG)  # a second PR's number reads another thread
     assert gh.label_calls == []

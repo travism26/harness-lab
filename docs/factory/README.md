@@ -12,7 +12,11 @@ fails with a message naming what is missing. It never goes green without doing a
 
 ## How a Ticket moves
 
-1. The owner writes a Ticket (a GitHub issue) and applies `ready-for-factory`. A Ticket with no
+1. The owner adds `owner:implement` to a Spec, or to a hand-written Ticket that has no
+   `builder:spec-ready` label and no sub-issues. The factory App adds `factory:start` to one
+   eligible Ticket: open, `ready-for-agent` when it is a child of a Spec, no open blocker, not
+   `factory:failed`, and not already started. The lowest issue number wins, across every approved
+   Spec. The factory does not build the Spec. A Ticket with no
    `project:` label is factory-root work, scored by the Lab check (`./check`).
    A Project Ticket is unchanged: it also carries one `project:<name>` label. The label names the
    Project (`projects/<name>/`). The name is a safe slug: lowercase letters, digits and single
@@ -20,11 +24,13 @@ fails with a message naming what is missing. It never goes green without doing a
    fixed command, is how its work is tested, in whatever language the Project uses. A Ticket with
    more than one `project:` label, an unsafe name, a name that is not registered and has no
    executable `check`, or a `check` that is not executable, is refused before any agent runs: the
-   factory comments why on the Ticket and removes `ready-for-factory`. A name that is already a
+   factory comments why on the Ticket and removes `factory:start`. A name that is already a
    row in `factory/labels.json` and has no `check` yet is how a Project starts. See
    [Starting a Project](#starting-a-project).
-2. **Implement** (`.github/workflows/implement.yml`) claims it. It removes `ready-for-factory`, adds
-   `in-progress` and comments with a link to the run. Claude Code builds the change in a fresh
+2. **Implement** (`.github/workflows/implement.yml`) claims it, and only when
+   `{repository_owner}-factory[bot]` added `factory:start`. It removes `factory:start`, adds
+   `factory:in-progress`, and comments with the Spec (or "this issue"), who approved it, when, and
+   a link to the run. Claude Code builds the change in a fresh
    checkout under `work/`. The factory's own scripts stay in the checkout at the workspace root,
    which is a second copy of the repository, and publish commits only `work/`. Before the agent
    starts, the Ticket is copied to `work/.factory/ticket.md` (a rework round also copies the
@@ -85,8 +91,8 @@ fails with a message naming what is missing. It never goes green without doing a
    any other branch, or a PR the owner opened by hand is ignored.
    - A **failure** posts one comment with the review marker. The comment names each failed job and
      a short tail of its log, with secret values removed, and says the rework round must make the
-     check pass. It then applies the same labels Review uses (`rework` and `rework:1`, then
-     `rework:2`, then `factory-stopped`), with the App token, so **Rework** starts. `revise` reads
+     check pass. It then applies the same labels Review uses (`factory:rework` and `factory:rework-1`, then
+     `factory:rework-2`, then `factory:stopped`), with the App token, so **Rework** starts. `revise` reads
      that comment. Its `--run-url` is the rework run; the CI run's URL is in the comment.
    - If Review has already charged this head, the failure joins that round and the counter stays.
      If CI charged first, Review's Spec blocker joins the same way. One head, one round.
@@ -96,29 +102,31 @@ fails with a message naming what is missing. It never goes green without doing a
      (two minutes for a failure with no comment or no CI run; twenty minutes at the outside)
      and Rework continues. If no CI run exists for the head and Review
      is already ready, or CI has failed and the comment never arrives (the gate ignores a non-draft,
-     a fork, or `factory-stopped`), Rework gives it two minutes and then continues. A repeated
+     a fork, or `factory:stopped`), Rework gives it two minutes and then continues. A repeated
      delivery of the same CI run does not open another round. If two charges land together, the
      later comment is rewritten so it does not claim the round.
    - A **green** CI run does nothing by itself. The gate runs again when Review finishes. If CI
      for that head is already green and the new Review comment is PASS, and the head is not
-     already in an open rework round, the gate removes `in-progress` from the Ticket. It does
-     not post a separate comment for that. It does this even if the pull request is no
+     already in an open rework round, the gate comments on the Ticket that the lock is off,
+     removes `factory:in-progress`, and starts the next eligible Ticket if there is one. It does
+     this even if the pull request is no
      longer a draft: the factory's work on that head is done either way. The pull request stays a
      draft unless a human has already marked it ready. A human merges it. No other step asks the
      owner to act. The gate's preflight checks the App and the daily cap. It does not require the
      Claude Code login, because it runs no agent.
-5. If the Spec axis finds a blocker, Review labels the PR `rework` and `rework:1`, unless this
-   head was already charged by CI. Review does not remove `in-progress`; the CI gate does that.
+5. If the Spec axis finds a blocker, Review labels the PR `factory:rework` and `factory:rework-1`, unless this
+   head was already charged by CI. Review does not remove `factory:in-progress`; the CI gate does that.
    The label starts **Rework** (`.github/workflows/rework.yml`).
    Claude Code fixes what the review named, including a CI failure in the comment, and pushes.
    The push starts Review and CI again.
-6. A second blocker, from Review or from CI, labels the PR `rework:2` and starts a second rework
-   round. The blocker after that labels the PR `factory-stopped`, and the factory stops: Rework
+6. A second blocker, from Review or from CI, labels the PR `factory:rework-2` and starts a second rework
+   round. The blocker after that labels the PR `factory:stopped`, and the factory stops: Rework
    and the CI gate skip the PR from then on. Review still reads each push and posts its report,
    and changes no labels.
 7. When Review has passed the current head and CI is green, the draft waits. The owner reads it,
-   marks it ready and merges it. The merge closes the Ticket. `in-progress` is already gone, so
-   the next Ticket can start without waiting for that merge.
+   marks it ready and merges it. The merge closes the Ticket. The lock is already off, and the
+   gate has already started the next eligible Ticket if there was one, so the merge does not
+   have to wait.
 
 ## Starting a Project
 
@@ -141,7 +149,7 @@ What the owner does once:
 1. Add a `project:<name>` row to `factory/labels.json`. The name is a safe slug, such as `ai-gateway`.
 2. Merge that edit, then run `uv run python -m factory.sync_labels --apply` so GitHub has the label.
    Run it without `--apply` first to see the dry run.
-3. Label the Ticket `project:<name>` and `ready-for-factory`.
+3. Add `owner:implement` to the Ticket, with `project:<name>`. A hand Ticket has no sub-issues.
 
 From there it is automatic. The agent's prompt tells it to create `projects/<name>/`, including an
 executable `check` that satisfies `CODING_STANDARDS.md`, and that it may edit `GLOSSARY-MAP.md` and,
@@ -151,14 +159,15 @@ the new `go.mod` exists, the same way [CI](#ci) does (the same setup-go action, 
 cache path), and then runs `projects/<name>/check`. That step has no App token and no Claude login.
 A missing check or a check that is not executable fails the job, and its comment says why. A check
 that exits non-zero is recorded as `fail` and the draft is still published. When the job fails,
-Publish does not run. Implement's existing failure step drops `in-progress`, and the Ticket can be
-labelled again. On a Go Project the agent does not have Go during its own turn, because
+Publish does not run. Implement's existing failure step drops `factory:in-progress`, adds
+`factory:failed`, and the owner comments `Retry:` to ask again. On a Go Project the agent does not
+have Go during its own turn, because
 `go.mod` appears during that turn. The factory installs Go afterwards and runs the check once. A
 Python Project has `uv` for the whole turn, since Implement installs `uv` before the agent starts.
 
 Rework of that pull request uses the same rule. The label row is on the base, so a round can start
 before the check has merged, and the check runs from the pull request's branch. A failure leaves
-the `rework` label and gains `factory-failed`, as any failed rework does.
+the `factory:rework` label and gains `factory:failed`, as any failed rework does.
 
 Once `projects/<name>/check` is an executable file on the default branch, later Tickets for that
 Project are ordinary. The prompt tells the agent to run the check, and the factory runs it once more after the
@@ -179,15 +188,15 @@ job holds a GitHub write token.
 1. The owner opens a Research request from the issue template
    (`.github/ISSUE_TEMPLATE/research-request.md`). Its headings are `Question`, `Scope`,
    `Public starting points`, `Cost cap (USD)` and `Out of scope`. The owner then applies
-   `ready-for-research`. The workflow starts only when `github.event.sender.login` is the
-   repository owner, the label is `ready-for-research`, and the item is an issue, not a pull
+   `owner:research`. The workflow starts only when `github.event.sender.login` is the
+   repository owner, the label is `owner:research`, and the item is an issue, not a pull
    request. Opening the issue starts nothing.
 2. **claim** holds the App token and runs no agent. It runs the preflight and refuses for the
-   reasons Implement does: a closed Ticket, the switch rule, or another Ticket `in-progress`. It
+   reasons Implement does: a closed Ticket, the switch rule, or another Ticket holding the lock. It
    also refuses a request with a missing heading, an empty `Question`, `Scope` or `Out of scope`,
    a starting point that is not `https://`, a credential-shaped string, or a cost cap above the
    knob. A refusal is a comment on the Ticket, and the label is removed. Otherwise claim replaces
-   `ready-for-research` with `in-progress`.
+   `owner:research` with `factory:in-progress`.
 3. **research** runs the agent. The job gets the Claude Code login through `factory/claude.py`
    and nothing else. Its tools are Read, Grep, Glob, WebFetch and WebSearch. It has no shell and
    no write tool: the lists are Review's (`factory/review_pr.py`), with the two web tools moved
@@ -200,17 +209,17 @@ job holds a GitHub write token.
    something, spend at or under the cap, and no credential-shaped string. Only a note that passes
    reaches the next step. That step commits the one file `docs/research/notes/issue-<N>.md` to
    the branch `research/issue-<N>`, opens a **draft** PR whose body closes the Ticket, comments on
-   the Ticket with the link, and removes `in-progress`.
+   the Ticket with the link, and removes `factory:in-progress`.
 5. Review runs on the draft, as it does on every PR from a branch of this repo. The CI gate
    ignores the branch, and Rework starts only on `factory/*`, so a Spec blocker leaves its labels
    and report on the PR and no rework round starts. No agent merges the PR. The owner reads it and
    merges or closes it. Closing the PR and deleting the branch undoes the run.
 
 **When it stops.** If the agent fails, the note fails its check, or the push fails, the run is
-red and no PR is opened. The factory comments on the Ticket and removes `in-progress`. For a
+red and no PR is opened. The factory comments on the Ticket and removes `factory:in-progress`. For a
 failed check the comment lists the check's problems, which name sections and line numbers and
 never quote the note. There is no rework round on this path. The owner changes the request and
-applies `ready-for-research` again. Retry by relabelling, not by re-running the failed job: each
+applies `owner:research` again. Retry by relabelling, not by re-running the failed job: each
 run attempt names its own artifacts.
 
 **Budget.** The agent runs with `--max-budget-usd` from `FACTORY_RESEARCH_BUDGET_USD` (default
@@ -218,7 +227,7 @@ run attempt names its own artifacts.
 agent runs. A run that hits the cap fails red and publishes nothing.
 
 **One at a time.** The workflow shares Implement's `factory-ticket` concurrency group and the
-`in-progress` lock, so a research run and a build never overlap on the Claude Code login. The
+`factory:in-progress` lock, so a research run and a build never overlap on the Claude Code login. The
 research path holds the lock only while its run lasts.
 
 **Public sources, no secrets.** A request and a note hold public material only: no private notes,
@@ -241,7 +250,7 @@ metrics report lists build Tickets only, so a Research request has no row there.
 
 **Not run yet.** No research run has happened on GitHub. The checker and the steps are proven on
 fixtures and fakes. Before the first run the owner merges the PR that adds the workflow and runs
-`uv run python -m factory.sync_labels --apply`, so GitHub has `ready-for-research`. The docs say
+`uv run python -m factory.sync_labels --apply`, so GitHub has `owner:research`. The docs say
 the web tools need no shell; the first live run is what confirms it. Whether WebSearch works on
 the `openrouter` login is not known.
 
@@ -253,8 +262,8 @@ Each brake, from the lab-wide [decision records](../adr/) (0003, 0004, 0005, 000
 |---|---|
 | Draft PRs only | `factory/ticket.py` `publish` opens every PR with `--draft`. Nothing in the factory marks a PR ready or merges it. |
 | A review step on every PR | `review.yml` runs on `opened`, `synchronize`, `reopened` and `ready_for_review` for every PR from a branch of this repo, draft or not, the owner's own PRs included. Fork PRs are the exception: see public-repo safety below. |
-| Stop after two rework rounds per Ticket | `factory/review_pr.py`: `MAX_REWORK = 2`. The counter lives in the `rework:N` label. Review and the CI gate share it, one charge per head. The blocker after `rework:2` adds `factory-stopped`. |
-| One Ticket at a time | `implement.yml` runs in one concurrency group, `factory-ticket`, which is never cancelled. `factory/ticket.py` `claim` refuses a Ticket while another open Ticket is labelled `in-progress`. The refusal is posted on the Ticket and `ready-for-factory` is removed. |
+| Stop after two rework rounds per Ticket | `factory/review_pr.py`: `MAX_REWORK = 2`. The counter lives in `factory:rework-N` (readers also accept `rework:N`). Review and the CI gate share it, one charge per head. The blocker after the second round adds `factory:stopped`. |
+| One Ticket at a time | `implement.yml` runs in one concurrency group, `factory-ticket`, which is never cancelled. `factory/ticket.py` `claim` refuses a Ticket while another open issue wears `factory:in-progress`, `in-progress`, or `factory:start`. The refusal is posted on the Ticket and `factory:start` is removed. |
 | A human merges | The App has no permission to merge or approve, and no step asks it to. |
 
 Further limits:
@@ -275,10 +284,12 @@ Further limits:
 
 From [ADR 0005](../adr/0005-label-only-factory-start-and-no-secrets-for-forks.md):
 
-- **The factory starts only on a label the owner applies.** `implement.yml` and `factory-check.yml`
-  run only when `github.event.sender.login` is the repository owner. Opening an issue starts
-  nothing. `rework.yml` runs only on a `rework` label added by the factory App or the owner, and
-  only on a `factory/*` branch. The CI gate adds that label with the App token, and only on a
+- **The factory starts when the App adds `factory:start`.** `implement.yml` runs only when that
+  sender's login is `{repository_owner}-factory[bot]`. The owner adds `owner:implement` on a Spec
+  or a hand Ticket; the owner adding `factory:start` does nothing. Opening an issue starts
+  nothing. `factory-check.yml` runs when the owner adds `owner:check`. `rework.yml` runs on
+  `factory:rework` (and on `rework` until sync) added by the factory App or the owner, and only
+  on a `factory/*` branch. The CI gate adds that label with the App token, and only on a
   `factory/issue-<N>` draft the App opened.
 - **Fork PRs never get secrets.** Every workflow that holds a secret skips PRs whose head is not this
   repository. `ci.yml` runs fork PRs' tests on plain `pull_request`, which holds no secrets. Fork PRs
@@ -388,13 +399,13 @@ A failed run's `reason` comes from the jobs the command already fetches: a faile
 | First-pass review | The `verdict` of the first Review record for the pull request. The total is the share of PASS over Tickets that opened a draft. |
 | Cost (estimate) | The sum of `cost_usd` across the Ticket's records, with the login, always an estimate. |
 | Agent time | The sum of `duration_ms` across the Ticket's records. |
-| Rework rounds | The highest `rework:N` label the bot added, read from the Ticket's and the pull request's timelines. A label added by anyone else, such as a hand re-add of `rework`, does not count. The total is the sum. |
+| Rework rounds | The highest rework counter the bot added (`factory:rework-N`, or historical `rework:N`), read from the Ticket's and the pull request's timelines. A label added by anyone else does not count. The total is the sum. |
 | Owner commits | Commits on the pull request not authored by the bot. The total is the sum. |
-| Human escalation | The bot added `factory-stopped`. |
+| Human escalation | The bot added `factory:stopped` (historical `factory-stopped` or `ready-for-human` still count). |
 | CI on first push | The first run of the CI workflow on `factory/issue-<N>` concluded `success`. Review runs and the CI gate are not CI. A branch with no CI run shows `none`, an unfinished first run `pending`; neither is a success. |
-| Start label to draft | From the bot removing the start label (`ready-for-factory`, or `ready-for-agent` before 2026-11-08), taking the last removal at or before the pull request's creation, to that creation. The total is the median. |
+| Start label to draft | From the bot removing the start label (`factory:start`, historical `ready-for-factory`, or `ready-for-agent` before 2026-11-08), taking the last removal at or before the pull request's creation, to that creation. The total is the median. |
 | Merge | `merged`, `closed` (unmerged) or `open`. The total is merged over merged plus closed; an open pull request counts toward neither. |
-| Untouched merge | Merged with no owner commit and never labelled `factory-stopped` by anyone, the bot or a person. Human escalation stays the bot's alone. |
+| Untouched merge | Merged with no owner commit and never labelled `factory:stopped` (or the historical stop labels) by anyone, the bot or a person. Human escalation stays the bot's alone. |
 | Post-merge reverts | Subjects of commits on `main` that start with `Revert` and name the merged pull request as `#<N>`. The total is the sum. |
 
 Every rate in the columns from Rework rounds on is over factory Tickets that opened a draft, except Merge. A Ticket with no draft shows `-`. Labels, pull requests, commits and CI runs are read per draft through `gh`, because the CI gate can charge a rework round or hand a pull request to a human and it is not a Factory run. Commit subjects on `main` are read through the commits API for the `--repo` repository, not a local clone, which may be stale.
@@ -425,28 +436,30 @@ Ticket moves](#how-a-ticket-moves).
 
 | Label | Who adds it | Meaning |
 |---|---|---|
-| `ready-for-factory` | Owner | Start the factory on this Ticket |
-| `ready-for-research` | Owner | Start the factory's research path on this Research request. See [Research path](#research-path) |
-| `in-progress` | Factory | The factory is building or reworking this Ticket. Removed when Review has passed the current head and CI is green, so a finished draft does not hold the one-at-a-time lock. Also removed when the Ticket closes (`.github/workflows/clear-labels.yml`). A Ticket closed mid-run frees the one-at-a-time lock while the run goes on. |
-| `factory-failed` | Factory | The last Implement run on this Ticket, or Rework run on this PR, failed. The next start of that Ticket or PR removes it. |
-| `rework`, `rework:1`, `rework:2` | Factory (Review or CI gate) | A Spec blocker or a failed required CI run; the counter is the rework round, one charge per head |
-| `standards-findings` | Factory | The one open issue that collects merged PRs' non-blocking Standards Findings, one comment per PR (`.github/workflows/collect-findings.yml`). Nothing acts on it. |
-| `review-override` | Factory (Override workflow) | The owner overrode the `factory/review` status on this PR. The reason stays in the owner's comment |
-| `factory-stopped` | Factory (Review or CI gate) | Two rework rounds were not enough; the factory has stopped. A PR label only; before 2026-11-24 the factory used `ready-for-human` here, and metrics still read it |
-| `project:<name>` (for example `project:harness`) | Owner | The Project the Ticket builds. Every folder under `projects/` has a row in `factory/labels.json` (`harness`, `agent-identity`, `ai-gateway`, `agents`, `go-sandbox`, `spring-sandbox`, `ts-sandbox`); a test fails when one lacks it. A Project with an executable `check` is accepted whatever the file says; add a row only for a folder that has a `check`. See [Starting a Project](#starting-a-project) |
-| `ready-for-builder` | Scout | A Goal issue ready for the Builder to plan. It does not start the factory |
-| `builder:claimed` | Builder | The Builder has claimed this Goal issue and is planning it |
-| `spec:ready-for-review` | Builder | The spec is validated and waits for owner review. It does not start the factory |
-| `ready-for-implementation` | Owner | On a spec issue: the Builder writes the Tickets and labels them `ready-for-agent` |
+| `owner:implement` | Owner | On a Spec, approves its Tickets. On a hand Ticket, approves that issue. Does not itself start Implement |
+| `factory:start` | Factory App | The only per-Ticket start. Implement runs only when `{repository_owner}-factory[bot]` adds it. Claim removes it |
+| `owner:research` | Owner | Start the factory's research path on this Research request. See [Research path](#research-path) |
+| `factory:in-progress` | Factory | The one-at-a-time lock. Removed when Review has passed and CI is green, after a comment on the Ticket, and when the Ticket closes. Until sync, readers also treat `in-progress` as this lock |
+| `factory:failed` | Factory | The last Implement run on this Ticket, or Rework run on this PR, failed. The next successful claim removes it. The owner comments `Retry:` to ask again |
+| `factory:rework`, `factory:rework-1`, `factory:rework-2` | Factory (Review or CI gate); the owner may re-add `factory:rework` | A Spec blocker or a failed required CI run. The counter stays after close. Until sync, readers also accept `rework` and `rework:N` |
+| `factory:standards` | Factory | The rolling issue of merged PRs' non-blocking Standards Findings (`.github/workflows/collect-findings.yml`). Nothing acts on it |
+| `factory:override` | Factory (Override workflow) | The owner commented `Override:`. The reason stays in that comment |
+| `factory:stopped` | Factory (Review or CI gate) | Two rework rounds were not enough. Review still reads the PR and changes no labels. Metrics also counts historical `factory-stopped` and `ready-for-human` |
+| `project:<name>` (for example `project:harness`) | Owner, or the Builder when it cuts the Ticket | The Project the Ticket builds. Every folder under `projects/` has a row in `factory/labels.json` (`harness`, `agent-identity`, `ai-gateway`, `agents`, `go-sandbox`, `spring-sandbox`, `ts-sandbox`); a test fails when one lacks it. See [Starting a Project](#starting-a-project) |
+| `scout:ready` | Scout or owner | A Goal ready for the Builder. It does not start the factory |
+| `builder:claimed` | Builder | The Builder has claimed this Goal |
+| `builder:spec-ready` | Builder | The Spec is ready for the owner. It does not start the factory. With sub-issues, it marks a Spec so the factory never builds that issue |
 | `wayfinder:map`, `wayfinder:research`, `wayfinder:grilling`, `wayfinder:prototype`, `wayfinder:task` | Owner or a skill | Wayfinder issue kinds. They do not start the factory |
-| `factory-check` | Owner | Run the live check |
-| `retro` | Owner | The proposals issue a Retro produces. The newest one dates the next Retro. See [Running a retro](#running-a-retro) |
-| `ready-for-agent` | Owner or a skill | Triage only: fully specified. It does not start the factory, so a Ticket can carry it and still be built on the laptop |
-| `needs-triage`, `needs-info`, `wontfix` | Owner | Triage, see [triage-labels.md](../agents/triage-labels.md) |
+| `owner:check` | Owner | Run the live check. The check removes it |
+| `owner:retro` | Owner | The proposals issue a Retro produces. The newest one dates the next Retro. See [Running a retro](#running-a-retro) |
+| `ready-for-agent` | Owner, a skill, or the Builder on Tickets it cuts | Triage: fully specified. It does not start the factory. It does make a child of an approved Spec eligible |
+| `needs-triage`, `needs-info`, `ready-for-human`, `wontfix` | Owner | Triage, see [triage-labels.md](../agents/triage-labels.md). `ready-for-factory` is not in this set. Metrics still reads historical removals of it |
 
-To change a label, edit `factory/labels.json` and run
-`uv run python -m factory.sync_labels --apply`. Run it without `--apply` first to see the dry run.
-It never deletes a label. The owner runs it after merge, dry run first; the factory never runs it.
+To change a label, edit `factory/labels.json` and, from a checkout of `main`, run
+`uv run python -m factory.sync_labels`, then `uv run python -m factory.sync_labels --apply`.
+A rename is `gh label edit <old> --name <new>`. Sync never deletes a label. It does not also
+create a name it is renaming. Run it from `main` after this change merges, before the next
+factory label event, and not from a pull request branch. The factory never runs it.
 
 ## Knobs
 
@@ -470,22 +483,22 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 
 | What you see | What to do |
 |---|---|
-| A comment says the factory did not start the Ticket | Read the reason. For "one Ticket at a time", finish or close the other Ticket. For "switch rule", switch to `openrouter`. Then re-apply `ready-for-factory`. |
-| A comment says the factory run failed | Open the run. A new Project whose `check` was missing looks like this; the comment quotes why. A `check` that merely failed does not: the draft is published, and the Run record says `check: fail`. The Ticket has lost `in-progress` and carries `factory-failed`, so it can be retried; the next start removes the label. |
-| A factory PR is closed without merging | Closing the PR removes `rework`. `in-progress` stays on the Ticket until the Ticket closes (closing it removes `in-progress`); if you keep the Ticket open, remove `in-progress` by hand, or one-at-a-time keeps every other Ticket waiting. |
+| A comment says the factory did not start the Ticket | Read the reason. For "one Ticket at a time", finish or close the other Ticket. For "switch rule", switch to `openrouter`. The next lock release can start this Ticket again. |
+| A comment says the factory run failed | Open the run. A new Project whose `check` was missing looks like this; the comment quotes why. A `check` that merely failed does not: the draft is published, and the Run record says `check: fail`. The Ticket has lost `factory:in-progress` and carries `factory:failed`. Comment `Retry:` to ask again. |
+| A factory PR is closed without merging | Closing the PR removes `factory:rework`. The lock stays on the Ticket until the Ticket closes. Closing a Ticket that still holds the lock drops it and starts the next eligible Ticket. |
 | A factory draft's CI is red and no rework starts | Open the CI gate run. It ignores a PR that is not a draft, not opened by the factory App, or not on `factory/issue-<N>`, and it stops at the daily cap. A `timed_out` or `cancelled` CI run is not a failure. |
-| A comment says the factory did not start the research request | Read the reason, fix the request or wait for the other Ticket, then re-apply `ready-for-research`. |
-| A comment says the note failed its check | No PR was opened and `in-progress` is gone. The comment lists what the check found. Change the request if that helps, then re-apply `ready-for-research`. |
-| A PR is labelled `factory-stopped` | Finish it by hand, or close it. Review still reads your pushes and posts a report with no label changes; Rework and the CI gate stay off. |
-| A factory PR has `factory-failed` (a Rework run failed) | The run left no comment and the PR keeps `rework`. Open the run. Fix it by hand and push, or re-add `rework` to retry; the next round removes `factory-failed`. |
+| A comment says the factory did not start the research request | Read the reason, fix the request or wait for the other Ticket, then re-apply `owner:research`. |
+| A comment says the note failed its check | No PR was opened and `factory:in-progress` is gone. The comment lists what the check found. Change the request if that helps, then re-apply `owner:research`. |
+| A PR is labelled `factory:stopped` | Finish it by hand, or close it. Review still reads your pushes and posts a report with no label changes; Rework and the CI gate stay off. |
+| A factory PR has `factory:failed` (a Rework run failed) | The run left no comment and the PR keeps `factory:rework`. Open the run. Fix it by hand and push, or re-add `factory:rework` to retry; the next round removes `factory:failed`. A failed Rework does not start the next Ticket. |
 
 ## Running a retro
 
 A Retro reads the pull requests merged since the last Retro and proposes new checks and standards. The script reads and prints; the thinking is a local agent session, and nothing is applied until the owner accepts a proposal.
 
-1. `uv run python -m factory.retro --repo travism26/harness-lab` prints one Markdown report. `--since DATE` sets the start; by default it is the creation date of the newest issue labelled `retro`, else every merged pull request. `--fixtures DIR` reads `pr-<N>/` (`pr.json`, `pr-comments.json`, `pr-commits.json`), `retro-issues.json` and `standards-findings.json` instead of GitHub (`tests/factory/fixtures/retro/`). It makes no model call and writes nothing to GitHub.
-2. The report states the merged count since the last Retro and `Retro due: yes` at ten or more. Then it lists: merges whose last Review on the merged head was BLOCKED; merges carrying an Override from the repo owner, with the reason; the blocking Spec findings of that Review; owner commits before merge on factory pull requests; and the open `standards-findings` issue (body and comments). A source that does not exist yet prints `none`. It ends with an empty "Post-merge hand-fixes" section: the owner fills it in by hand, because the script does not detect them.
-3. The owner starts a local agent session, gives it the report and has it draft one issue labelled `retro`. The proposals issue lists each proposal as a check or a standard, with the pull requests behind it. The owner accepts a proposal by building it (a check as a test or a gate, a standard as a line in `CODING_STANDARDS.md`) or closes it.
+1. `uv run python -m factory.retro --repo travism26/harness-lab` prints one Markdown report. `--since DATE` sets the start; by default it is the creation date of the newest issue labelled `owner:retro`, else every merged pull request. `--fixtures DIR` reads `pr-<N>/` (`pr.json`, `pr-comments.json`, `pr-commits.json`), `retro-issues.json` and `standards-findings.json` instead of GitHub (`tests/factory/fixtures/retro/`). It makes no model call and writes nothing to GitHub.
+2. The report states the merged count since the last Retro and `Retro due: yes` at ten or more. Then it lists: merges whose last Review on the merged head was BLOCKED; merges carrying an Override from the repo owner, with the reason; the blocking Spec findings of that Review; owner commits before merge on factory pull requests; and the open `factory:standards` issue (body and comments). A source that does not exist yet prints `none`. It ends with an empty "Post-merge hand-fixes" section: the owner fills it in by hand, because the script does not detect them.
+3. The owner starts a local agent session, gives it the report and has it draft one issue labelled `owner:retro`. The proposals issue lists each proposal as a check or a standard, with the pull requests behind it. The owner accepts a proposal by building it (a check as a test or a gate, a standard as a line in `CODING_STANDARDS.md`) or closes it.
 4. Each accepted proposal adds one line to [Rules from hand-fixes](#rules-from-hand-fixes), which stays human-read.
 
 Rules of the report: model text (findings, Override reasons, the standards issue) passes through `neutralize` in `factory/collect_findings.py`, so it cannot form a hidden factory marker, mention anyone or close an issue, and any token-shaped string in the output becomes `[redacted]`. A reason from anyone but the repo owner is not an Override.

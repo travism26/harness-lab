@@ -1,9 +1,9 @@
 # The factory's build step (docs/factory/README.md).
 #
-# Turns a Ticket into a draft PR when the repository owner labels it
-# `ready-for-factory`. Nothing else starts it: not opening an issue, not a label
-# from anyone else (docs/adr/0005). One Ticket at a time: `claim` refuses while
-# another open Ticket is `in-progress`.
+# Turns a Ticket into a draft PR when the factory App adds `factory:start`.
+# The owner adding that label does nothing, and so does anyone else: the sender
+# login must be `{repository_owner}-factory[bot]` (docs/adr/0005). One Ticket at
+# a time: `claim` refuses while another open Ticket holds the lock.
 #
 # As in review.yml, the steps holding the App token run no agent, and the
 # agent step holds no GitHub token. The agent edits a separate checkout under
@@ -23,8 +23,8 @@ concurrency:
   # identical to the job's `if:` below.
   group: >-
     ${{
-      (github.event.label.name == 'ready-for-factory'
-        && github.event.sender.login == github.repository_owner
+      (github.event.label.name == 'factory:start'
+        && github.event.sender.login == format('{0}-factory[bot]', github.repository_owner)
         && !github.event.issue.pull_request)
       && 'factory-ticket'
       || format('implement-ignored-{0}', github.run_id)
@@ -37,10 +37,10 @@ env:
 
 jobs:
   implement:
-    # Only the owner's `ready-for-factory` label on an issue (not a PR).
+    # Only the factory App's `factory:start` on an issue (not a pull request).
     if: >-
-      github.event.label.name == 'ready-for-factory'
-      && github.event.sender.login == github.repository_owner
+      github.event.label.name == 'factory:start'
+      && github.event.sender.login == format('{0}-factory[bot]', github.repository_owner)
       && !github.event.issue.pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 60

@@ -29,7 +29,7 @@ The second OpenRouter key, for local runs and the daily groceries job, never goe
 
 The factory acts on GitHub as one GitHub App, the same one claude-code-adw uses. Its comments
 and labels show as `<app-name>[bot]`. Events it causes start other workflows. Events caused by the
-built-in `GITHUB_TOKEN` never do, and Review's `rework` label has to start Rework.
+built-in `GITHUB_TOKEN` never do, and Review's `factory:rework` label has to start Rework.
 
 If the App does not exist yet, create it with Steps 1 and 2 of claude-code-adw's
 [GitHub App setup](https://github.com/travism26/claude-code-adw/blob/main/docs/factory/github-app-setup.md),
@@ -142,20 +142,20 @@ the App token mints, Claude Code answers on the configured login, and the App po
    gh issue create --title "Factory check" --body "Live check from the setup guide. Close when done."
    ```
 
-2. Apply the test label to it: `gh issue edit <N> --add-label factory-check`.
+2. Apply the test label to it: `gh issue edit <N> --add-label owner:check`.
 3. Open the **Actions** tab. A **Factory check** run starts. Within a minute or two:
    - the run is green;
    - the issue has a comment from `<app-name>[bot]` that says Claude Code replied `factory ok` on
      the `subscription` login;
-   - the `factory-check` label is gone, removed by `<app-name>[bot]`.
+   - the `owner:check` label is gone, removed by `<app-name>[bot]`.
 4. Optional: check the OpenRouter login too.
    1. Run `gh variable set FACTORY_CLAUDE_LOGIN --body openrouter`.
-   2. Apply `factory-check` again. The comment should name the `openrouter` login, and
+   2. Apply `owner:check` again. The comment should name the `openrouter` login, and
       <https://openrouter.ai/activity> should show the request on `harness-lab-github`.
    3. Run `gh variable delete FACTORY_CLAUDE_LOGIN` to go back to the subscription token.
 5. Close the issue.
 
-The factory is ready. The first real Ticket gets `ready-for-factory`.
+The factory is ready. The first build is `owner:implement` on a Spec or a hand Ticket.
 
 ## Turning on the gate
 
@@ -182,7 +182,7 @@ status green. Comment on the pull request, with the first line exactly `Override
 Only a comment by the repository owner counts; an edit does nothing.
 
 The workflow `.github/workflows/override.yml` then sets `factory/review` to `success` and adds the
-`review-override` label. The reason stays in your comment, which the status links to. It applies
+`factory:override` label. The reason stays in your comment, which the status links to. It applies
 to the head at the time of the comment: a later push gets a fresh status from Review. Known
 limit: a Review still running when the Override lands can overwrite it. Comment again. The label is added with a token holding `issues: write` only, so confirm it
 lands on a pull request in the first live Override.
