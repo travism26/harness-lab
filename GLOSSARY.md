@@ -125,7 +125,7 @@ The build model, the review model, the factory build prompt, and the harness com
 _Avoid_: Config, profile, agent
 
 **Bench case**:
-One past Ticket recorded as a start commit, the Ticket text from that run, the check command, and the check files whose bytes must still match the start commit.
+One past Ticket recorded as a start commit, the Ticket text from that run, the check command, and the check files whose bytes must still match the start commit. A planted-defect Bench case also records a patch that is applied in place of the build and breaks a sentence the Ticket states; it expects the Verdict BLOCKED, and its twin, the same patch without the breach, expects PASS.
 _Avoid_: Example, fixture, task, Pin
 
 **Bench run**:

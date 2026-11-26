@@ -1,0 +1,105 @@
+diff --git a/projects/harness/src/harness_lab/tools.py b/projects/harness/src/harness_lab/tools.py
+new file mode 100644
+index 0000000..c98f410
+--- /dev/null
++++ b/projects/harness/src/harness_lab/tools.py
+@@ -0,0 +1,41 @@
++"""The harness's tools. Episode 1 has one: read_file, confined to the workspace."""
++
++from pathlib import Path
++
++# projects/harness/workspace/, the only folder the tools may read.
++WORKSPACE = Path(__file__).resolve().parents[2] / "workspace"
++
++# The tool definition, in Anthropic's tool format.
++READ_FILE_TOOL = {
++    "name": "read_file",
++    "description": "Read a text file from the workspace folder and return its contents.",
++    "input_schema": {
++        "type": "object",
++        "properties": {
++            "path": {
++                "type": "string",
++                "description": "Path of the file, relative to the workspace folder.",
++            }
++        },
++        "required": ["path"],
++    },
++}
++
++TOOLS = [READ_FILE_TOOL]
++
++
++def read_file(path: str, workspace: Path = WORKSPACE) -> str:
++    """Return the file's text, or a message saying why it was refused or failed."""
++    root = workspace.resolve()
++    try:
++        target = (root / path).resolve()
++    except (OSError, ValueError, RuntimeError) as err:
++        return f"Error: cannot resolve path {path!r}: {err}"
++    if not target.is_relative_to(root):
++        return f"Error: {path!r} is outside the workspace and was refused."
++    if not target.is_file():
++        return f"Error: file not found: {path!r}"
++    try:
++        return target.read_text(encoding="utf-8")
++    except (OSError, UnicodeDecodeError) as err:
++        return f"Error: cannot read {path!r}: {err}"
+diff --git a/projects/harness/tests/test_tools.py b/projects/harness/tests/test_tools.py
+new file mode 100644
+index 0000000..68a93d2
+--- /dev/null
++++ b/projects/harness/tests/test_tools.py
+@@ -0,0 +1,44 @@
++from harness_lab.tools import READ_FILE_TOOL, WORKSPACE, read_file
++
++
++def test_reads_a_file_in_the_workspace(tmp_path):
++    (tmp_path / "a.txt").write_text("hello")
++    assert read_file("a.txt", tmp_path) == "hello"
++
++
++def test_committed_sample_file_is_readable():
++    assert read_file("hello.txt").startswith("This is a sample")
++    assert (WORKSPACE / "hello.txt").is_file()
++
++
++def test_missing_file(tmp_path):
++    assert "not found" in read_file("nope.txt", tmp_path)
++
++
++def test_dotdot_escape_refused(tmp_path):
++    ws = tmp_path / "ws"
++    ws.mkdir()
++    (tmp_path / "secret.txt").write_text("secret")
++    result = read_file("../secret.txt", ws)
++    assert "outside the workspace" in result
++    assert "secret" not in result.replace("secret.txt", "")
++
++
++def test_absolute_path_refused(tmp_path):
++    ws = tmp_path / "ws"
++    ws.mkdir()
++    (tmp_path / "secret.txt").write_text("secret")
++    assert "outside the workspace" in read_file(str(tmp_path / "secret.txt"), ws)
++
++
++def test_symlink_escape_refused(tmp_path):
++    ws = tmp_path / "ws"
++    ws.mkdir()
++    (tmp_path / "secret.txt").write_text("secret")
++    (ws / "link.txt").symlink_to(tmp_path / "secret.txt")
++    assert "outside the workspace" in read_file("link.txt", ws)
++
++
++def test_tool_definition_shape():
++    assert READ_FILE_TOOL["name"] == "read_file"
++    assert READ_FILE_TOOL["input_schema"]["required"] == ["path"]
+diff --git a/projects/harness/workspace/hello.txt b/projects/harness/workspace/hello.txt
+new file mode 100644
+index 0000000..76ce235
+--- /dev/null
++++ b/projects/harness/workspace/hello.txt
+@@ -0,0 +1,2 @@
++This is a sample file in the harness workspace.
++The read_file tool can read it.
