@@ -397,6 +397,16 @@ Two commands run them:
 
 `--replay` is unchanged and still runs only Tickets 8 and 9. CI runs neither command. The tests in `tests/factory/test_bench.py` score planted cases with a stand-in Review, and check that each committed patch still applies at its start commit. The live run has not been made yet.
 
+### The Bench's review model
+
+`--review-model` picks the model the Bench's Review runs on: `haiku`, `sonnet` or `opus`, default `sonnet`. Any other name exits non-zero before any clone. It works with `--replay`, `--replay-planted` and a single Bench run. The build model stays sonnet.
+
+With `--replay` or `--replay-planted`, the review model is part of the Setup id: `claude-code-sonnet` for sonnet, and `claude-code-sonnet-review-<model>` for another model, so `--review-model opus` gives `claude-code-sonnet-review-opus`. A single Bench run keeps the `--setup-id` it was given. Every ledger row records `review_model`.
+
+The report prints `Review model <model>` under the Setup line, and each case's line ends with `Review errors N`: how many of its Reviews ended in `error`. A Review stopped by the review cap is one of them.
+
+The flag changes the Bench only. Live Review reads `FACTORY_REVIEW_MODEL`, and `docs/research/review-judge-calibration.md` ("Switching rule and runs") holds the rule for changing that variable, the two owner commands and the results table.
+
 ## Run records
 
 A Run record is the one small JSON object a Factory run leaves behind: what ran (workflow, run id, attempt), on which Ticket and pull request, with which login, model alias and budget cap, how it ended (`outcome` `ok` or `fail`, and for a failure a `reason` from a fixed list), and what it cost (dollars, turns, the four token counts, duration). It holds facts and numbers, never text from the model. The dollars are the CLI's own list-price estimate on every login, so the record marks them `client-estimate`.
