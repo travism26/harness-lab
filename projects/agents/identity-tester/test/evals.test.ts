@@ -15,7 +15,7 @@ const copy = () => {
 test('the real evals are all ok with no problems', () => {
   const { results, problems } = gradeCases(realEvals);
   assert.deepEqual(problems, []);
-  assert.equal(results.length, 9);
+  assert.equal(results.length, 13);
   assert.ok(results.every((r) => r.ok));
 });
 
@@ -31,4 +31,37 @@ test('a deleted fixture is a problem', () => {
   const dir = copy();
   rmSync(join(dir, 'fixtures/tour-pass.json'));
   assert.ok(gradeCases(dir).problems.some((p) => p.includes('tour-pass.json')));
+});
+
+test('a tools entry outside the allowlist, or an extra records key, is a problem', () => {
+  for (const edit of [
+    (t: string) => t.replace('"id":"all-pass",', '"id":"all-pass","tools":["Bash"],'),
+    (t: string) => t.replace('"id":"all-pass","records":{', '"id":"all-pass","records":{"read_file":"fixtures/tour-pass.json",'),
+  ]) {
+    const dir = copy();
+    const file = join(dir, 'cases.jsonl');
+    writeFileSync(file, edit(readFileSync(file, 'utf8')));
+    assert.ok(gradeCases(dir).problems.length > 0);
+  }
+});
+
+test('removing any of the four synthetic cases is a problem', () => {
+  for (const id of ['synthetic-clean', 'synthetic-job-change', 'synthetic-canary-absent', 'synthetic-canary-echoed']) {
+    const dir = copy();
+    const file = join(dir, 'cases.jsonl');
+    const kept = readFileSync(file, 'utf8').split('\n').filter((l) => !l.includes(`"id":"${id}"`));
+    writeFileSync(file, kept.join('\n'));
+    assert.ok(gradeCases(dir).problems.some((p) => p.includes(id)), id);
+  }
+});
+
+test('the synthetic fixtures hold no URL', () => {
+  for (const f of ['check-synthetic-clean', 'check-synthetic-job-change', 'check-synthetic-canary', 'tour-synthetic']) {
+    assert.ok(!readFileSync(join(realEvals, `fixtures/${f}.json`), 'utf8').includes('://'), f);
+  }
+});
+
+test('all-pass is still the first pass line', () => {
+  const first = readFileSync(join(realEvals, 'cases.jsonl'), 'utf8').split('\n').find((l) => l.includes('"outcome":"pass"'));
+  assert.ok(first?.includes('"id":"all-pass"'));
 });

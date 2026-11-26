@@ -33,6 +33,7 @@ export function classifyRun(input: {
   return gradeReport(records, result.structured_output);
 }
 
+// forbidden_text is a failed run (2), like every outcome that is not pass or fail.
 export function exitCodeFor(outcome: Outcome): 0 | 1 | 2 {
   if (outcome === 'pass') return 0;
   if (outcome === 'fail') return 1;

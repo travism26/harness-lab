@@ -1,0 +1,6 @@
+{
+  "tool": "run_tour",
+  "exit_code": 0,
+  "timed_out": false,
+  "output": "synthetic tour exited 0\n"
+}
