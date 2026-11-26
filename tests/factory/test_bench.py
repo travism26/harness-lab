@@ -1283,3 +1283,181 @@ def test_committed_planted_patches_apply_at_their_start_commits(tmp_path):
         for rel, blob in case["check_files"].items():
             got = git("rev-parse", f"{start}:{rel}", cwd=SOURCE)
             assert got == blob
+
+
+def recording_agent(answer=PASS_ANSWER):
+    kwargs = []
+
+    def run(prompt, **kw):
+        kwargs.append(kw)
+        return claude.Result(True, answer, "success", 0.25)
+
+    run.kwargs = kwargs  # type: ignore[attr-defined]
+    return run
+
+
+def ledger_rows(tmp_path):
+    return [
+        json.loads(l)
+        for l in (tmp_path / "o" / "ledger.jsonl").read_text().splitlines()
+    ]
+
+
+def test_replay_review_model_opus_runs_review_and_names_the_setup(
+    bench_case, tmp_path, capsys
+):
+    cases = fake_cases(bench_case, tmp_path)
+    reviewer = recording_agent()
+    code = replay_main(
+        tmp_path,
+        cases,
+        standin(tmp_path, GOOD),
+        "--review-model",
+        "opus",
+        run_agent=reviewer,
+        step_env=KEY_ENV,
+        version_fn=lambda: "2.1.319",
+    )
+    assert code == 0
+    assert reviewer.kwargs and {kw["model"] for kw in reviewer.kwargs} == {"opus"}
+    rows = ledger_rows(tmp_path)
+    assert {r["review_model"] for r in rows} == {"opus"}
+    assert {r["setup_id"] for r in rows} == {"claude-code-sonnet-review-opus"}
+    assert {r["model"] for r in rows} == {"sonnet"}
+    lines = capsys.readouterr().out.splitlines()
+    i = lines.index("Setup claude-code-sonnet-review-opus")
+    assert lines[i + 1] == "Review model opus"
+
+
+def test_replay_planted_review_model_opus(bench_case, tmp_path, capsys):
+    d = write_planted_dir(bench_case, tmp_path)
+    reviewer = recording_agent(PASS_ANSWER)
+    planted_replay(
+        tmp_path,
+        d,
+        "--review-model",
+        "opus",
+        run_agent=reviewer,
+        step_env=KEY_ENV,
+        version_fn=lambda: "2.1.319",
+    )
+    assert {kw["model"] for kw in reviewer.kwargs} == {"opus"}
+    assert {r["setup_id"] for r in ledger_rows(tmp_path)} == {
+        "claude-code-sonnet-review-opus"
+    }
+    assert "Review model opus" in capsys.readouterr().out
+
+
+def test_unknown_review_model_exits_before_any_clone(bench_case, tmp_path, monkeypatch):
+    monkeypatch.setattr(bench, "scratch_clone", lambda *a: pytest.fail("cloned"))
+    cases = fake_cases(bench_case, tmp_path)
+    reviewer = recording_agent()
+    with pytest.raises(SystemExit) as stop:
+        replay_main(
+            tmp_path,
+            cases,
+            standin(tmp_path, GOOD),
+            "--review-model",
+            "gpt",
+            run_agent=reviewer,
+            step_env=KEY_ENV,
+            version_fn=lambda: "2.1.319",
+        )
+    assert stop.value.code not in (0, None)
+    assert reviewer.kwargs == []
+    assert not (tmp_path / "o").exists()
+
+
+def test_replay_without_the_flag_reviews_on_sonnet(bench_case, tmp_path, capsys):
+    cases = fake_cases(bench_case, tmp_path)
+    reviewer = recording_agent()
+    code = replay_main(
+        tmp_path,
+        cases,
+        standin(tmp_path, GOOD),
+        run_agent=reviewer,
+        step_env=KEY_ENV,
+        version_fn=lambda: "2.1.319",
+    )
+    assert code == 0
+    assert {kw["model"] for kw in reviewer.kwargs} == {"sonnet"}
+    rows = ledger_rows(tmp_path)
+    assert {r["review_model"] for r in rows} == {"sonnet"}
+    assert {r["setup_id"] for r in rows} == {"claude-code-sonnet"}
+    assert bench.baseline_setup(SOURCE)["review_model"] == "sonnet"
+    assert bench.baseline_setup(SOURCE)["setup_id"] == "claude-code-sonnet"
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[lines.index("Setup claude-code-sonnet") + 1] == "Review model sonnet"
+
+
+def test_replay_report_counts_review_errors(bench_case, tmp_path, capsys):
+    cases = fake_cases(bench_case, tmp_path)
+    ok = claude.Result(True, PASS_ANSWER, "success", 0.25)
+    bad = claude.Result(False, "", "error_max_budget_usd", 0.25)
+    results = iter([bad, ok, bad] + [ok] * 3)
+
+    def reviewer(prompt, **kw):
+        return next(results)
+
+    code = replay_main(
+        tmp_path,
+        cases,
+        standin(tmp_path, GOOD),
+        run_agent=reviewer,
+        step_env=KEY_ENV,
+        version_fn=lambda: "2.1.319",
+    )
+    assert code == 0
+    rows = ledger_rows(tmp_path)
+    assert [r["review"] for r in rows[:3]] == ["error", "PASS", "error"]
+    lines = capsys.readouterr().out.splitlines()
+    (eight,) = [l for l in lines if l.startswith("ticket-8:")]
+    (nine,) = [l for l in lines if l.startswith("ticket-9:")]
+    assert eight.endswith("; Review errors 2")
+    assert nine.endswith("; Review errors 0")
+
+
+def test_report_prints_review_model_and_errors_for_planted_and_old_rows():
+    err = {"outcome": "fail", "check": "pass", "review": "error"}
+    base = dict(err, build_cost_usd=0, review_cost_usd=0.25)
+    blocked = dict(base, review="BLOCKED", expect="BLOCKED", planted_named=True)
+    old = {
+        "outcome": "pass",
+        "check": "pass",
+        "review": "PASS",
+        "build_cost_usd": 1,
+        "review_cost_usd": 0,
+    }
+    lines = bench.report(
+        "s",
+        [("p", [blocked, blocked, dict(base, expect="BLOCKED")]), ("o", [old] * 3)],
+        review_model="haiku",
+    ).splitlines()
+    assert lines[lines.index("Setup s") + 1] == "Review model haiku"
+    assert lines[-2].endswith(
+        "; Review BLOCKED in 2 of 3 runs, named a planted file in 2; Review errors 1"
+    )
+    assert lines[-1].endswith("; Review errors 0")
+
+
+def test_tracer_review_model_flag_sets_the_row_and_keeps_the_setup_id(
+    bench_case, tmp_path
+):
+    case_file = tmp_path / "case.json"
+    case_file.write_text(json.dumps(bench_case))
+    reviewer = recording_agent()
+    code = bench.main(
+        tracer_argv(
+            tmp_path,
+            case_file,
+            "--harness-command",
+            standin(tmp_path, GOOD),
+            "--review-model",
+            "opus",
+        ),
+        run_agent=reviewer,
+    )
+    assert code == 0
+    assert {kw["model"] for kw in reviewer.kwargs} == {"opus"}
+    (row,) = ledger_rows(tmp_path)
+    assert row["review_model"] == "opus" and row["setup_id"] == "s"

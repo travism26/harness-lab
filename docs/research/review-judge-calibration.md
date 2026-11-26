@@ -186,6 +186,39 @@ The case passes at 3 of 3 repeats. Each case also needs a twin with the same pat
 - **What it tests:** the one miss in this sample that broke a stated sentence. The Review passed this exact diff on 2026-11-07, so the case starts with a known baseline of 0 of 1. It is the hardest of the three, because the breach shows only when the handler is read against the parser. A failure here says the Review reads too shallowly, more than that it is lenient.
 - **Open point:** the check command for factory-root code at `089fdbc` needs confirming. Both existing Bench cases use `projects/harness/check`.
 
+## Switching rule and runs
+
+Written on 2026-11-25, before any run, so the result cannot shape the rule. The Bench's Review can now run on another model (`--review-model`, `docs/factory/README.md`, "The Bench's review model"). Live Review stays on sonnet until the rule below says otherwise.
+
+**The rule.** Live Review switches to opus only if opus catches at least one planted case that sonnet misses, in 3 of 3 repeats, with no extra false block on the twins. Anything short stays on sonnet.
+
+- **Catches, in 3 of 3 repeats:** the planted case's line in the opus report says `passed 3 of 3`. Each of the three Bench runs was BLOCKED and named a planted file.
+- **Sonnet misses:** the same case's line in the sonnet report says fewer than 3 of 3.
+- **No extra false block:** a false block is a twin's Bench run that ends BLOCKED. On each of the three twins, opus has no more of them than sonnet.
+- **Review errors:** a Review that ends in `error` says nothing about the model, and a Review stopped by the review cap is one. A case with a Review error in either column does not count toward a switch.
+
+A tie stays on sonnet, and so does opus doing better on a case by less than 3 of 3.
+
+**The owner commands,** on the metered key, one after the other:
+
+1. `uv run python -m factory.bench --replay-planted --review-model sonnet`
+2. `uv run python -m factory.bench --replay-planted --review-model opus`
+
+Each makes 18 Bench runs and reserves $1 for each, so the two together spend at most about $36 of the month's cap. Both write to the same ledger; the rows differ in `review_model`, and in `setup_id` (`claude-code-sonnet` and `claude-code-sonnet-review-opus`). Each cell below comes from that command's report: `passed N of 3` and `Review errors N` on the case's line.
+
+**Results.** Empty until the owner has run both commands.
+
+| Case | sonnet: passed of 3 | opus: passed of 3 | sonnet: Review errors | opus: Review errors |
+|---|---|---|---|---|
+| `planted-8` | | | | |
+| `planted-8-twin` | | | | |
+| `planted-9` | | | | |
+| `planted-9-twin` | | | | |
+| `planted-18` | | | | |
+| `planted-18-twin` | | | | |
+
+**What a switch is.** The owner sets the repository variable `FACTORY_REVIEW_MODEL` to `opus`. No file in this repo changes, and the Bench's own default stays sonnet.
+
 ## What I could not tell
 
 - **Whether the owner would have merged the code before a rework.** For 14 of the 28 blocking findings the owner only ever saw the reworked version. Those findings carry no agreement signal in either direction.

@@ -479,6 +479,7 @@ def bench_run(
             "issue": case.get("issue"),
             "project": case.get("project"),
             "model": setup["model"],
+            "review_model": setup["review_model"],
             "budget": limits.build_cap_usd,
             "build_cost_usd": build_cost,
             "review_cost_usd": review_cost,
@@ -524,16 +525,22 @@ def baseline_arguments(build_cap_usd: float, model: str = "sonnet") -> list[str]
     )
 
 
-def baseline_setup(source_root: Path, repeat: int = 1) -> dict:
+def baseline_setup(
+    source_root: Path, repeat: int = 1, review_model: str = "sonnet"
+) -> dict:
     cmd = (
         f"env PYTHONPATH={shlex.quote(str(source_root))} {shlex.quote(sys.executable)} "
         f"{shlex.quote(str(source_root / 'factory' / 'bench.py'))} --baseline-standin"
     )
     return {
-        "setup_id": BASELINE_ID,
+        "setup_id": (
+            BASELINE_ID
+            if review_model == "sonnet"
+            else f"{BASELINE_ID}-review-{review_model}"
+        ),
         "harness_command": cmd,
         "model": "sonnet",
-        "review_model": "sonnet",
+        "review_model": review_model,
         "repeat": repeat,
     }
 
@@ -806,12 +813,17 @@ def _median(values: list[float]) -> float:
 
 
 def report(
-    setup_id: str, results: list[tuple[str, list[dict]]], repeats: int = REPEATS
+    setup_id: str,
+    results: list[tuple[str, list[dict]]],
+    repeats: int = REPEATS,
+    review_model: str = "sonnet",
 ) -> str:
-    """The report. It makes no ranking."""
+    """The report, with the Review model and each case's Review errors. It makes
+    no ranking."""
     lines = [NOT_COMPARABLE, "Owner steps before a comparable run:"]
     lines += [f"  {i}. {step}" for i, step in enumerate(OWNER_STEPS, 1)]
     lines.append(f"Setup {setup_id}")
+    lines.append(f"Review model {review_model}")
     for name, rows in results:
         if not rows:
             lines.append(f"{name}: no runs")
@@ -835,7 +847,8 @@ def report(
                 f"; Review BLOCKED in {blocked} of {len(rows)} runs, "
                 f"named a planted file in {named}"
             )
-        lines.append(line)
+        errors = sum(1 for r in rows if r.get("review") == "error")
+        lines.append(f"{line}; Review errors {errors}")
     by_name = dict(results)
     for name, rows in results:
         twin = by_name.get(f"{name}-twin")
@@ -877,7 +890,7 @@ def main_replay(
     except Refused as e:
         print(f"bench: refused: {e}", file=sys.stderr)
         return 2
-    setup = baseline_setup(source_root)
+    setup = baseline_setup(source_root, review_model=args.review_model)
     if harness_command:  # injected by tests; not a command-line option
         setup["harness_command"] = harness_command
     try:
@@ -902,7 +915,7 @@ def main_replay(
         step_env,
         keep_env=(KEY_VAR,),
     )
-    print(report(setup["setup_id"], results))
+    print(report(setup["setup_id"], results, review_model=setup["review_model"]))
     if refusal:
         print(f"bench: the ledger refuses: {refusal}", file=sys.stderr)
         return 1
@@ -969,6 +982,12 @@ def main(
         "--review-answer-file",
         help="a recorded Review answer; the command calls no model",
     )
+    p.add_argument(
+        "--review-model",
+        default="sonnet",
+        choices=claude.MODELS,
+        help="the model the Bench's Review runs on; live Review is not changed",
+    )
     p.add_argument("--out", default="bench-runs")
     p.add_argument("--monthly-cap-usd", type=float, default=Limits.monthly_cap_usd)
     p.add_argument("--build-cap-usd", type=float, default=Limits.build_cap_usd)
@@ -1020,13 +1039,13 @@ def main(
             print(f"bench: cannot read {answer}: {e}", file=sys.stderr)
             return 2
         run_agent = recorded_review(text)
-    # One Bench run records model sonnet and repeat 1. The Setup id and the
-    # harness command are the arguments above.
+    # One Bench run records model sonnet and repeat 1. The Setup id, the
+    # harness command and the Review model are the arguments above.
     setup = {
         "setup_id": args.setup_id,
         "harness_command": args.harness_command,
         "model": "sonnet",
-        "review_model": "sonnet",
+        "review_model": args.review_model,
         "repeat": 1,
     }
     limits = Limits(args.monthly_cap_usd, args.build_cap_usd, args.review_cap_usd)
