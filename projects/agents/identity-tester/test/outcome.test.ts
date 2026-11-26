@@ -61,7 +61,7 @@ test('otherwise the report is graded', () => {
 test('exitCodeFor', () => {
   const all: Outcome[] = [
     'pass', 'fail', 'max_turns', 'max_budget', 'denied_tool', 'invalid_output', 'tool_not_run', 'tool_error',
-    'report_mismatch', 'error',
+    'report_mismatch', 'forbidden_text', 'error',
   ];
   for (const o of all) assert.equal(exitCodeFor(o), o === 'pass' ? 0 : o === 'fail' ? 1 : 2, o);
 });

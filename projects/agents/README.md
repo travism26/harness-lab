@@ -64,7 +64,7 @@ An agent may add fields. The API key never goes in a log line or a report. The r
 
 ## Evals
 
-Each agent keeps its own eval set in `evals/cases.jsonl`: one JSON object per line, with a unique `id`, what was recorded, and `expect`, the outcome a correct run reaches. Cases come from real output, and some of them are failures. `evals/grade.ts` grades them with plain code and exits non-zero when a case comes out wrong. The grader checks the outcome, not which tool calls led to it.
+Each agent keeps its own eval set in `evals/cases.jsonl`: one JSON object per line, with a unique `id`, what was recorded, and `expect`, the outcome a correct run reaches. Cases come from real output, and some of them are failures. `evals/grade.ts` grades them with plain code and exits non-zero when a case comes out wrong. The grader checks the outcome, not which tool calls led to it. A case may also list the `tools` the run used, which must be in the agent's allowlist. A green eval pack is a regression check on hand-written reports. It shows the grader still accepts good ones and refuses bad ones, and it does not show how a model behaves. CI never calls a model.
 
 ## The check
 

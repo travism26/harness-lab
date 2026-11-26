@@ -1,0 +1,6 @@
+{
+  "tool": "run_check",
+  "exit_code": 0,
+  "timed_out": false,
+  "output": "SYNTHETIC FIXTURE TEXT: hand-written record, not real output.\nok  example/internal/warden 0.010s\nok  example/internal/broker 0.012s\n"
+}
