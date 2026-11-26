@@ -38,6 +38,7 @@
     {"name": "factory:failed", "color": "b60205", "description": "Factory-applied: the last Implement or Rework run failed"},
     {"name": "factory:override", "color": "c5def5", "description": "Factory-applied: records an Override comment on this pull request"},
     {"name": "factory:standards", "color": "c5def5", "description": "Factory-applied: the rolling issue of non-blocking Standards Findings"},
+    {"name": "factory:signals", "color": "c5def5", "description": "Factory-applied: the one open issue where the factory records its failures and retries"},
     {"name": "project:harness", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/harness/)"},
     {"name": "project:agent-identity", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/agent-identity/)"},
     {"name": "project:ai-gateway", "color": "c2e0c6", "description": "Owner-applied: names the project this ticket builds (projects/ai-gateway/)"},

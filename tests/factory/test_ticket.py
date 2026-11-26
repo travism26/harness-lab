@@ -30,6 +30,10 @@ class FakeGitHub:
     def pr_comments(self, repo, number):
         return self._comments
 
+    def create_issue(self, repo, title, body_file, labels):
+        self.created = (title, tuple(labels))
+        return 900
+
     def pull_files(self, repo, number):
         return []
 

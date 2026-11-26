@@ -56,7 +56,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from factory import claude
+from factory import claude, signals
 from factory.ci_projects import changed_projects
 from factory.github import (
     DOOR_FILE,
@@ -964,6 +964,18 @@ def release(args, gh: GitHub | None = None) -> int:
         gh.remove_labels(args.repo, args.issue, present)
     if not any(label in FAILED_LABELS for label in names):
         gh.add_labels(args.repo, args.issue, (FAILED_LABEL,))
+    rid = signals.run_id(args.run_url)
+    signals.write(
+        gh,
+        args.repo,
+        {
+            "kind": signals.IMPLEMENT_FAILED,
+            "key": f"{signals.IMPLEMENT_FAILED}-{args.issue}-{rid or 'none'}",
+            "ticket": args.issue,
+            "run": args.run_url,
+            "text": "\n".join(body.splitlines()[1:]),
+        },
+    )
     from factory.picker import queue_next
 
     queue_next(gh, args.repo, args.run_url)
@@ -977,6 +989,18 @@ def fail_pr(args, gh: GitHub | None = None) -> int:
         label in FAILED_LABELS for label in label_names(gh.pr(args.repo, args.pr))
     ):
         gh.add_labels(args.repo, args.pr, (FAILED_LABEL,))
+    rid = os.environ.get("GITHUB_RUN_ID") or "none"
+    signals.write(
+        gh,
+        args.repo,
+        {
+            "kind": signals.REWORK_FAILED,
+            "key": f"{signals.REWORK_FAILED}-{args.pr}-{rid}",
+            "pr": args.pr,
+            "run": signals.env_run_url(),
+            "text": signals.NONE,
+        },
+    )
     return 0
 
 
