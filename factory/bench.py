@@ -3,9 +3,10 @@
 
   uv run python -m factory.bench --replay
 
---replay runs the two committed Bench cases (factory/bench_cases/, Tickets 8 and
-9) three times each under the baseline Setup `claude-code-sonnet`, one Bench run
-at a time, and prints a report. It refuses before any clone when ANTHROPIC_API_KEY
+--replay runs the two committed Bench cases that build a Ticket
+(factory/bench_cases/ticket-8.json and factory/bench_cases/ticket-9.json) three
+times each under the baseline Setup `claude-code-sonnet`, one Bench run at a
+time, and prints a report. It refuses before any clone when ANTHROPIC_API_KEY
 is unset or `claude --version` is not 2.1.319, and installs nothing.
 
   uv run python -m factory.bench --case CASE.json --setup-id ID --harness-command CMD --review-answer-file tests/factory/review-answer.json
@@ -25,6 +26,28 @@ The Setup id and the harness command are the arguments. The month is UTC, read
 from the line's ts. A crashed stand-in records the case as fail and check as
 skipped, and does not call Review.
 
+A planted-defect case: CASE.json may also carry "patch" (a unified diff; a committed
+case gives it relative to the case file, and the --case tracer reads it as given), "expect" ("PASS", the default, or "BLOCKED"), "planted_files" (repo
+paths) and "stated_sentences" (sentences that occur verbatim in the Ticket). With a
+"patch" the run applies it with `git apply` in the scratch clone in place of the
+Setup's harness command, so no build is paid for and the reservation is the review cap
+alone. The case passes when the check passes, Review returns the expected Verdict, and,
+for BLOCKED, a blocking Finding names a planted file in its file path, description or
+resolution. A twin is a patch without the defect (expect PASS, no planted_files); it
+passes when the check passes and Review returns PASS. A patch that does not apply, or
+a check that is not green, fails the run and Review is not called. Each planted case
+`planted-N.json` in factory/bench_cases/ has a twin `planted-N-twin.json`.
+
+  uv run python -m factory.bench --replay-planted
+  uv run python -m factory.bench --check-planted
+
+--replay-planted runs the planted cases and their twins three times each, like
+--replay: the same refusals before any clone, and Review on the metered key
+(docs/adr/0011-bench-spends-on-a-metered-api-key.md). --check-planted applies each
+planted patch in a scratch clone and scores the check, one line per case. It calls no
+model, needs no key or Claude Code, takes no lock and writes no ledger line. It exits 0
+only when every patch applies and its check passes.
+
 The lock file is the open reservation: one run at a time, holding only the
 holder's pid. A live holder blocks the next start. A holder whose process is
 gone is released, and that reservation is not kept. The dollar check runs at
@@ -35,6 +58,7 @@ is written, even for a failed case, and non-zero when the ledger refuses.
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -42,7 +66,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -53,6 +77,7 @@ SCHEMA = 1
 LOGIN = "anthropic-api"
 COST_NOTE = "client-estimate"
 PASS = "PASS"
+BLOCKED = "BLOCKED"
 # Never in the stand-in's environment (docs/adr/0011-bench-spends-on-a-metered-api-key.md).
 _DROPPED = claude._DROPPED + ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY")
 
@@ -73,6 +98,10 @@ OWNER_STEPS = (
     f"Claude Code {CLAUDE_VERSION} on PATH",
     "a machine that cannot read a newer checkout of this repo",
 )
+
+
+class BadCase(ValueError):
+    """A Bench case file that cannot be run; the message is one line."""
 
 
 class Refused(RuntimeError):
@@ -264,11 +293,12 @@ def review_case(
     setup: dict,
     limits: Limits,
     run_agent: Callable,
-) -> tuple[str, float]:
-    """(verdict, cost). The verdict is PASS, BLOCKED (as review_pr names it) or error. An answer
+) -> tuple[str, float, list[review_pr.Finding]]:
+    """(verdict, cost, blocking Findings). The verdict is PASS, BLOCKED (as review_pr names it) or error. An answer
     that does not parse is run once more, as `review_pr.review_with_retry` does for the factory,
     and the cost is both runs'. A run that did not succeed, or that raised, is not retried; a
-    second answer that does not parse is an error."""
+    second answer that does not parse is an error. The blocking Findings are the
+    Review's blocking spec Findings; they are empty on error."""
     _git("add", "-A", cwd=clone)
     (run_dir / "diff.patch").write_text(
         _git("diff", "--cached", "--no-color", start, cwd=clone) + "\n"
@@ -308,13 +338,41 @@ def review_case(
     ) as e:
         # the agent's failure, or a malformed result line, is a Review error; keep the trace
         (run_dir / "review-error.txt").write_text(f"{type(e).__name__}: {e}\n")
-        return "error", limits.review_cap_usd
+        return "error", limits.review_cap_usd, []
     cost = sum(
         r.cost_usd if r.cost_usd is not None else limits.review_cap_usd for r in results
     )
     if findings is None:
-        return "error", cost
-    return ("BLOCKED" if findings.blocker else PASS), cost
+        return "error", cost, []
+    blocking = [f for f in findings.spec_findings if f.blocks]
+    return ("BLOCKED" if findings.blocker else PASS), cost, blocking
+
+
+def apply_patch(clone: Path, patch: Path, run_dir: Path) -> bool:
+    """Apply a case's patch in the scratch clone in place of the build. True when it
+    applied. Git's output goes to patch.log; a missing or unreadable patch is False."""
+    try:
+        p = subprocess.run(
+            ["git", "apply", "--whitespace=nowarn", str(Path(patch).resolve())],
+            cwd=clone,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        (run_dir / "patch.log").write_text(p.stdout + p.stderr)
+    except OSError as e:
+        try:
+            (run_dir / "patch.log").write_text(f"{e}\n")
+        except OSError:
+            pass
+        return False
+    return p.returncode == 0
+
+
+def names_planted(finding: review_pr.Finding, planted_files: list[str]) -> bool:
+    """A Finding names a planted file in its file path, description or resolution."""
+    text = [finding.file_path or "", finding.description, finding.resolution]
+    return any(path in field for path in planted_files for field in text)
 
 
 def run_standin(
@@ -350,7 +408,11 @@ def bench_run(
     now: datetime | None = None,
     keep_env: tuple[str, ...] = (),
 ) -> dict:
-    """One Bench run. Raises LedgerRefused before anything starts."""
+    """One Bench run. Raises LedgerRefused before anything starts. A case with a
+    patch has no build: the reservation is the review cap alone."""
+    patch = case.get("patch")
+    if patch:
+        limits = replace(limits, build_cap_usd=0.0)
     step_env = os.environ if step_env is None else step_env
     now = now or datetime.now(UTC)
     out.mkdir(parents=True, exist_ok=True)
@@ -376,25 +438,42 @@ def bench_run(
         )
 
         began = time.monotonic()
-        crashed, reported = run_standin(setup, clone, env, run_dir, result_path)
-        cost = reported.get("cost_usd")
-        build_cost = (
-            float(cost) if isinstance(cost, (int, float)) else limits.build_cap_usd
-        )
+        if patch:
+            crashed = not apply_patch(clone, Path(patch), run_dir)
+            reported: dict = {}
+            build_cost = 0.0
+        else:
+            crashed, reported = run_standin(setup, clone, env, run_dir, result_path)
+            cost = reported.get("cost_usd")
+            build_cost = (
+                float(cost) if isinstance(cost, (int, float)) else limits.build_cap_usd
+            )
 
         check = "skipped"
         verdict, review_cost = None, 0.0
+        blocking: list[review_pr.Finding] = []
         if not crashed:
             check = score_check(clone, case, env)
-            verdict, review_cost = review_case(
-                case, clone, run_dir, start, setup, limits, run_agent
-            )
+            if not patch or check == "pass":
+                verdict, review_cost, blocking = review_case(
+                    case, clone, run_dir, start, setup, limits, run_agent
+                )
+        expect = case.get("expect", PASS)
+        planted_named = None
+        if expect == BLOCKED and verdict in (PASS, BLOCKED):
+            planted = case.get("planted_files") or []
+            planted_named = any(names_planted(f, planted) for f in blocking)
+        passed = (
+            check == "pass"
+            and verdict == expect
+            and (expect == PASS or planted_named is True)
+        )
         row = {
             "schema": SCHEMA,
             "ts": now.isoformat(),
             "workflow": "bench",
             "pr": None,
-            "outcome": "pass" if check == "pass" and verdict == PASS else "fail",
+            "outcome": "pass" if passed else "fail",
             "login": LOGIN,
             "cost_note": COST_NOTE,
             "issue": case.get("issue"),
@@ -419,6 +498,9 @@ def bench_run(
             "repeat": setup.get("repeat", 1),
             "check": check,
             "review": verdict,
+            "expect": expect,
+            "patch": Path(patch).name if patch else None,
+            "planted_named": planted_named,
         }
         with (out / "ledger.jsonl").open("a") as f:
             f.write(json.dumps(row) + "\n")
@@ -595,7 +677,46 @@ def load_case(path: Path, source_root: Path) -> dict:
     case = json.loads(path.read_text())
     case["repo"] = str((source_root / case["repo"]).resolve())
     case["ticket"] = str((path.parent / case["ticket"]).resolve())
+    if case.get("patch"):
+        case["patch"] = str((path.parent / case["patch"]).resolve())
+    validate_case(case)
     return case
+
+
+def validate_case(case: dict) -> None:
+    """Raise BadCase, with a one-line reason, when a case's planted-defect fields
+    do not fit together. A case with none of them always validates."""
+    expect = case.get("expect", PASS)
+    if expect not in (PASS, BLOCKED):
+        raise BadCase(f"expect must be PASS or BLOCKED, not {expect!r}")
+    planted, stated = case.get("planted_files"), case.get("stated_sentences")
+    if expect == PASS:
+        if planted is not None or stated is not None:
+            raise BadCase(
+                "a case that expects PASS names no planted_files or stated_sentences"
+            )
+        return
+    if not case.get("patch"):
+        raise BadCase("a case that expects BLOCKED needs a patch")
+    if (
+        not isinstance(planted, list)
+        or not planted
+        or not all(isinstance(p, str) and p for p in planted)
+    ):
+        raise BadCase("planted_files must be a non-empty list of paths")
+    if (
+        not isinstance(stated, list)
+        or not stated
+        or not all(isinstance(t, str) and t for t in stated)
+    ):
+        raise BadCase("stated_sentences must be a non-empty list of sentences")
+    try:
+        ticket_text = Path(case["ticket"]).read_text()
+    except (OSError, KeyError) as e:
+        raise BadCase(f"cannot read the Ticket: {e}") from e
+    for sentence in stated:
+        if sentence not in ticket_text:
+            raise BadCase(f"stated sentence not in the Ticket: {sentence!r}")
 
 
 def committed_cases(cases_dir: Path = CASES_DIR) -> list[tuple[str, Path]]:
@@ -604,6 +725,44 @@ def committed_cases(cases_dir: Path = CASES_DIR) -> list[tuple[str, Path]]:
         ((p.stem, p) for p in cases_dir.glob("ticket-*.json")),
         key=lambda c: int(c[0].split("-")[1]),
     )
+
+
+def planted_cases(cases_dir: Path = CASES_DIR) -> list[tuple[str, Path]]:
+    """Each planted case directly followed by its twin, ordered by number.
+    Raises BadCase when a case has no twin or a twin has no case."""
+    found: dict[int, dict[str, Path]] = {}
+    for p in cases_dir.glob("planted-*.json"):
+        m = re.fullmatch(r"planted-(\d+)(-twin)?", p.stem)
+        if m:
+            found.setdefault(int(m.group(1)), {})["twin" if m.group(2) else "case"] = p
+    out: list[tuple[str, Path]] = []
+    for n in sorted(found):
+        pair = found[n]
+        if "case" not in pair:
+            raise BadCase(f"planted-{n}-twin has no planted-{n} case")
+        if "twin" not in pair:
+            raise BadCase(f"planted-{n} has no planted-{n}-twin")
+        out += [(pair["case"].stem, pair["case"]), (pair["twin"].stem, pair["twin"])]
+    return out
+
+
+def load_planted(cases_dir: Path, source_root: Path) -> list[tuple[str, dict]]:
+    """The planted cases and their twins, loaded, in `planted_cases` order. Raises
+    BadCase when a case has no patch, a planted case does not expect BLOCKED, a twin
+    does not expect PASS, or a twin differs from its case in the start commit, the
+    Ticket or the check."""
+    loaded = [(n, load_case(p, source_root)) for n, p in planted_cases(cases_dir)]
+    for name, case in loaded:
+        if not case.get("patch"):
+            raise BadCase(f"{name} has no patch")
+        want = PASS if name.endswith("-twin") else BLOCKED
+        if case.get("expect", PASS) != want:
+            raise BadCase(f"{name} must expect {want}")
+    for (name, case), (_, twin) in zip(loaded[::2], loaded[1::2]):
+        for key in ("start_commit", "ticket", "check_command", "check_files"):
+            if case.get(key) != twin.get(key):
+                raise BadCase(f"{name}-twin differs from {name} in {key}")
+    return loaded
 
 
 def replay(
@@ -665,10 +824,29 @@ def report(
             float(r["build_cost_usd"] or 0) + float(r["review_cost_usd"] or 0)
             for r in rows
         ]
-        lines.append(
+        line = (
             f"{name}: passed {passed} of {repeats}, unstable {'yes' if unstable else 'no'}, "
             f"cost min ${min(costs):.2f} median ${_median(costs):.2f} max ${max(costs):.2f}"
         )
+        if any(r.get("expect", PASS) == BLOCKED for r in rows):
+            blocked = sum(1 for r in rows if r.get("review") == BLOCKED)
+            named = sum(1 for r in rows if r.get("planted_named") is True)
+            line += (
+                f"; Review BLOCKED in {blocked} of {len(rows)} runs, "
+                f"named a planted file in {named}"
+            )
+        lines.append(line)
+    by_name = dict(results)
+    for name, rows in results:
+        twin = by_name.get(f"{name}-twin")
+        if rows and twin:
+            both = all(
+                sum(1 for r in rs if r["outcome"] == "pass") == repeats
+                for rs in (rows, twin)
+            )
+            lines.append(
+                f"{name} with its twin: {'holds' if both else 'does not hold'}"
+            )
     return "\n".join(lines)
 
 
@@ -688,9 +866,11 @@ def main_replay(
     version_fn: Callable[[], str | None],
     cases_dir: Path = CASES_DIR,
     harness_command: str | None = None,
+    planted: bool = False,
 ) -> int:
-    """Replay the committed cases three times each and print the report. A live
-    invocation refuses before any clone when the key or the version is wrong."""
+    """Replay the committed cases (or, with `planted`, the planted-defect cases and
+    their twins) three times each and print the report. A live invocation refuses
+    before any clone when the key or the version is wrong."""
     source_root = Path(__file__).resolve().parent.parent
     try:
         preflight(step_env, version_fn)
@@ -700,10 +880,17 @@ def main_replay(
     setup = baseline_setup(source_root)
     if harness_command:  # injected by tests; not a command-line option
         setup["harness_command"] = harness_command
-    cases = [
-        (name, load_case(path, source_root))
-        for name, path in committed_cases(cases_dir)
-    ]
+    try:
+        if planted:
+            cases = load_planted(cases_dir, source_root)
+        else:
+            cases = [
+                (name, load_case(path, source_root))
+                for name, path in committed_cases(cases_dir)
+            ]
+    except BadCase as e:
+        print(f"bench: bad case: {e}", file=sys.stderr)
+        return 2
     limits = Limits(args.monthly_cap_usd, args.build_cap_usd, args.review_cap_usd)
     results, refusal = replay(
         cases,
@@ -722,6 +909,30 @@ def main_replay(
     return 0
 
 
+def check_planted(
+    cases: list[tuple[str, dict]], source_root: Path, step_env: Mapping[str, str]
+) -> int:
+    """Apply each case's patch in a scratch clone and score the check. No Review, no
+    model call, no lock, no ledger line. Prints one line per case; 0 only when every
+    patch applied and its check passed."""
+    env = {k: v for k, v in step_env.items() if k not in _DROPPED}
+    ok = True
+    for name, case in cases:
+        clone = scratch_clone(case["repo"], case["start_commit"], source_root)
+        try:
+            with tempfile.TemporaryDirectory(prefix="bench-patch-") as tmp:
+                if not apply_patch(clone, Path(case["patch"]), Path(tmp)):
+                    print(f"{name}: patch does not apply")
+                    ok = False
+                    continue
+            check = score_check(clone, case, env)
+            print(f"{name}: patch applied, check {check}")
+            ok = ok and check == "pass"
+        finally:
+            shutil.rmtree(clone, ignore_errors=True)
+    return 0 if ok else 1
+
+
 def main(
     argv: list[str] | None = None,
     run_agent: Callable | None = None,
@@ -737,6 +948,18 @@ def main(
         "--replay",
         action="store_true",
         help="replay the committed Bench cases three times each and print the report",
+    )
+    p.add_argument(
+        "--replay-planted",
+        action="store_true",
+        help="replay the committed planted-defect Bench cases and their twins three "
+        "times each; the Review runs on the metered key",
+    )
+    p.add_argument(
+        "--check-planted",
+        action="store_true",
+        help="apply each planted patch in a scratch clone and score the check; "
+        "no Review, no model call, no ledger line",
     )
     p.add_argument("--baseline-standin", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--case", help="the Bench case's JSON file")
@@ -758,10 +981,30 @@ def main(
         return main_replay(
             args, run_agent, step_env, version_fn, cases_dir, harness_command
         )
-    if not (args.case and args.setup_id and args.harness_command):
-        p.error(
-            "--case, --setup-id and --harness-command are required without --replay"
+    if args.replay_planted:
+        return main_replay(
+            args, run_agent, step_env, version_fn, cases_dir, harness_command, True
         )
+    if args.check_planted:
+        source_root = Path(__file__).resolve().parent.parent
+        try:
+            return check_planted(
+                load_planted(cases_dir, source_root), source_root, step_env
+            )
+        except BadCase as e:
+            print(f"bench: bad case: {e}", file=sys.stderr)
+            return 2
+    missing = "--case, --setup-id and --harness-command are required without --replay"
+    if not (args.case and args.setup_id):
+        p.error(missing)
+    case = json.loads(Path(args.case).read_text())
+    try:
+        validate_case(case)
+    except BadCase as e:
+        print(f"bench: bad case: {e}", file=sys.stderr)
+        return 2
+    if not (case.get("patch") or args.harness_command):
+        p.error(missing)
     if run_agent is None:
         if not args.review_answer_file:
             print(
@@ -777,7 +1020,6 @@ def main(
             print(f"bench: cannot read {answer}: {e}", file=sys.stderr)
             return 2
         run_agent = recorded_review(text)
-    case = json.loads(Path(args.case).read_text())
     # One Bench run records model sonnet and repeat 1. The Setup id and the
     # harness command are the arguments above.
     setup = {

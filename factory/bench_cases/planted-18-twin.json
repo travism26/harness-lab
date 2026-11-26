@@ -1,0 +1,13 @@
+{
+  "repo": ".",
+  "start_commit": "089fdbcec4f4e3d4c59342d7c930fe43be3cf8a0",
+  "ticket": "ticket-18.md",
+  "check_command": "uv run --locked pytest tests/factory",
+  "check_files": {
+    "pyproject.toml": "1ad9e8663de29cfae34ff4d2686ffc24b11f1e67"
+  },
+  "issue": 18,
+  "project": null,
+  "patch": "planted-18-twin.patch",
+  "expect": "PASS"
+}

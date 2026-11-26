@@ -147,6 +147,8 @@ What follows from the table, all inferred:
 
 ## Three proposed planted-defect Bench cases
 
+**Built since** (Goal [#194](https://github.com/travism26/harness-lab/issues/194)): the three cases and their twins are `factory/bench_cases/planted-8.json`, `factory/bench_cases/planted-9.json` and `factory/bench_cases/planted-18.json`, each with a `-twin` file. `factory/bench.py` applies the patch and scores the run, and `docs/factory/README.md` ("Planted-defect Bench cases") gives the pass rule and the two commands. Case 3's open point is settled: its check command is `uv run --locked pytest tests/factory`. No live run has been made yet. The rest of this section is the proposal as written on 2026-11-15.
+
 Not built. Each is a past Ticket plus a patch that contains a breach of a sentence the Ticket states outright, with the check still green, so the Review is the only thing between the breach and a pass.
 
 **What they need that the Bench does not have** (`factory/bench.py`): a Bench case cannot supply a ready-made diff, and a Bench run passes only when the check passes and the Review says PASS. A planted case needs a patch applied in place of the build step, and an expected verdict of BLOCKED. The glossary defines a Bench case as "one past Ticket", so the term would need a line too.
