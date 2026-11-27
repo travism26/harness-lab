@@ -1,0 +1,17 @@
+{
+  "name": "fixture_tool",
+  "description": "Fetch or read data.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "format": "uri",
+        "const": "https://example.com/fixed"
+      },
+      "path": {
+        "type": "string"
+      }
+    }
+  }
+}

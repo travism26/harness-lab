@@ -1,5 +1,62 @@
 # Rules
 
+## instruction-description
+
+Reports a tool or skill description that holds an instruction aimed at the model. The match is a case-insensitive substring of one of six phrases (the apostrophe is ASCII):
+
+- `ignore the user's question`
+- `ignore previous instructions`
+- `ignore all previous`
+- `ignore the above`
+- `disregard the user`
+- `do not follow the user`
+
+Single words such as `ignore`, `instead` and `system` are not phrases.
+
+Where it looks:
+
+- A tool is an object with a string `name` and an object `inputSchema`. Tools are read at the top level of the file, in a top-level `tools` list or object, in `result.tools`, and in the `tools` list of each `mcpServers` entry. Nothing else is searched.
+- A tool's own string `description`, and any string `description` nested at any depth inside its `inputSchema` or `outputSchema`.
+- A skill file is a file named `SKILL.md`, or a `*.md` file under a `.claude/commands` directory, whose first line is exactly `---`. The Rule reads the frontmatter keys `description` and `when_to_use`, written on one line or as a `|` or `>` block. The markdown body is not read.
+- A file named `scenarios.json` is scanned for `secret-shaped` only.
+
+Locations: `tool:<name> description`, `tool:<name> schema`, `skill description`, `skill when_to_use`. When a tool name matches the credential expression, holds one of the phrases in any letter case, or holds a tab, CR or LF, the location says `tool` and omits the name.
+
+Line: for a tool, the first place in the file where a `"description"` key is followed by that exact text; line 1 if none is found. For a skill, the line holding the text. A tool seen by several recognizers is one Finding. The matched phrase is never printed.
+
+## hook-worktree-exec
+
+Reports a Claude Code hook command that runs a worktree path. The Auditor never runs the command.
+
+A handler is an object whose `type` is absent or `command` and whose `command` is a string. Handlers of type `http`, `mcp_tool`, `prompt` and `agent` do not match, but their file is still scanned for `secret-shaped`. Handlers are read from an event map: event name to a list, each item either a group holding a `hooks` list of handlers or a handler itself.
+
+- In any `.json` file that is not a plugin manifest, the event map is the top-level `hooks` object (the shape of `settings.json` and `hooks/hooks.json`). An `mcpServers` command is not a hook.
+- A plugin manifest is a `plugin.json` whose parent directory is `.claude-plugin`; the plugin root is that directory's parent. Its `hooks` may be a string path, an inline event map (a lone `hooks` wrapper is unwrapped), or a list mixing both.
+
+A handler matches when either test holds. A relative-path token is one with no `://` that starts with `./` or `../`, or contains a `/` and does not start with `/`.
+
+1. A whitespace-separated token of `command`, with surrounding `'` and `"` removed, contains `CLAUDE_PROJECT_DIR` or `CLAUDE_PLUGIN_ROOT` (the bare name, so `${CLAUDE_PROJECT_DIR}` and `$CLAUDE_PROJECT_DIR` both match), or is a relative-path token.
+2. `args` is a list, `command` with surrounding whitespace removed is one of `bash`, `sh`, `zsh`, `dash`, `powershell`, `pwsh`, `cmd` or `powershell.exe`, and a token of any string argument meets test 1.
+
+So `python3` or `node` with a worktree script as an argument is not this Rule. The tests are literal: a shell-form command such as `echo hi 2>/dev/null` matches, because `2>/dev/null` contains `/` and does not start with `/`.
+
+Plugin paths: a string path is resolved against the plugin root. When it resolves outside the root, or the file is missing, the path is named on stderr as a skip, the exit code does not change and the file is not opened. A target inside the root, and `<plugin root>/hooks/hooks.json` when it exists, are each scanned as files in their own right and their Findings carry their own path. A file reached twice is scanned once.
+
+Location: `hooks command`. Line: the first place in the file where a `"command"` key is followed by that exact command text; line 1 if none is found.
+
+## url-and-file
+
+Reports a tool whose input schema accepts an unconstrained URL and also a file. A Finding needs both on the same tool. There is one Finding for each unconstrained URL property.
+
+Where it looks: the tool's `inputSchema` only, using the tool recognition of `instruction-description`. `outputSchema` is not read. The Rule walks dict values recursively and never lists, so it does not interpret `anyOf` or `oneOf`; a property reachable only through a list is not seen. Wherever a key `properties` holds an object, each entry whose value is an object is a property, including a property nested under another property's `properties`.
+
+- An unconstrained URL property: its string `description` contains `any URL, no allowlist` in any letter case, or its `format` is `uri` or `uri-reference` and it has none of the keys `enum`, `const` or `pattern`.
+- A file property: its name is one of `path`, `file`, `filepath`, `filename`, `file_path` or `filePath`, or its string `description` contains `read file`, `write file` or `file path` in any letter case.
+
+Location: `tool:<name> property:<key>`. A tool name, or a property key, that matches the credential expression, holds one of the `instruction-description` phrases, or holds a tab, CR or LF is left out, giving `tool` or `property`.
+
+Line: the first place in the file where the property key is followed by `: {`; line 1 if none is found.
+
 ## secret-shaped
 
 Reports a line of a scanned file that matches the credential expression. The location is `secret`. The matched text is never printed.
@@ -7,3 +64,20 @@ Reports a line of a scanned file that matches the credential expression. The loc
 The expression is `CREDENTIAL_RE` at `factory/research_note.py` lines 25-29. This Project holds its own copy and does not import `factory`; a test checks the copy has not drifted.
 
 Findings are heuristic, and a clean scan is not a security guarantee.
+
+## Default discovery
+
+With no `PATH`, the Auditor discovers files from `ROOT` with a pruning directory walk. It scans:
+
+- every file under a directory named `.claude`;
+- every `plugin.json` whose parent directory is `.claude-plugin`;
+- every file named `.mcp.json`;
+- every file whose name matches `mcp*.json` or `*mcp*manifest*`. Matching is case-sensitive, and `mcp*.json` does not match `.mcp.json`, which is why that name is listed on its own.
+
+It does not enter: a directory named `.git` or `node_modules` at any depth; the top-level `work` and `run-out` directories; `projects/manifest-audit/fixtures` under `ROOT`; any directory other than `ROOT` that holds a `.git` entry (a nested checkout or git worktree is another tree); or a symlinked directory. A directory that cannot be read is skipped silently.
+
+A discovered file goes through the same per-file scan as an explicit one, except that a `.json` file that does not parse is a stderr skip, not exit 2. A plugin manifest's hooks target, and `hooks/hooks.json` in its plugin root, are followed as described under `hook-worktree-exec`.
+
+An explicit `PATH` is not discovery: a directory is walked in full with no name filter and no prune, so passing the checkout root reads files that discovery never opens.
+
+All four Rules report heuristic Findings, and a clean scan is not a security guarantee.

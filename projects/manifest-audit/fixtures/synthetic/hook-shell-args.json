@@ -1,0 +1,18 @@
+{
+  "note": "SYNTHETIC FIXTURE: a hook command that runs a worktree path.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/x.sh"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "fixture-plugin",
+  "description": "SYNTHETIC FIXTURE: an inline hook that runs a worktree path.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/x.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

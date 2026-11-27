@@ -1,0 +1,12 @@
+{
+  "name": "fixture_tool",
+  "description": "Fetch or read data.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      }
+    }
+  }
+}

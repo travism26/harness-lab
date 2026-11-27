@@ -11,7 +11,7 @@ import sys
 
 DASHES = "-" * 5
 KINDS = (
-    ("api-key", re.compile(re.escape("sk-ant-" + "api03-"))),
+    ("api-key", re.compile(re.escape("sk-" + "ant-" + "api03-"))),
     ("bearer", re.compile(r"Bearer\s+[A-Za-z0-9._~+/-]{20,}")),
     ("pem", re.compile(DASHES + "BEGIN [^-\n]*" + "PRIVATE" + " KEY[^-\n]*" + DASHES)),
 )
