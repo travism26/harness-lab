@@ -11,8 +11,10 @@ GitHub token:
            itself, and that run is not a bootstrap. One `project:<name>` label
            names the Project. An existing Project has an executable `check`. A
            registered safe name whose `check` is not on this checkout yet is a
-           bootstrap: the agent creates it. Then claim labels the Ticket
-           in-progress and writes it into --out.
+           bootstrap: the agent creates it. A Ticket whose body names a path
+           outside the edit list (factory/scope.py) is labelled
+           `factory:run-local` and does not start. Otherwise claim labels the
+           Ticket in-progress and writes it into --out.
   revise   (App token) the rework round's claim: reads the blocked PR, its
            Ticket and the factory review into --out. A CI failure is a review
            comment too, and every blocker for this head is included. A Ticket
@@ -31,10 +33,14 @@ GitHub token:
            publishes. A bootstrap with no check publishes nothing.
   publish  (App token) commits what the agent changed in --work, pushes the
            branch and, for a new Ticket, opens a draft PR that closes it. An
-           unchanged work checkout fails.
+           unchanged work checkout fails. A diff, or an unchanged summary, that
+           names a path outside the edit list writes scope.json and fails
+           before any push.
   release  (App token) on a failed run: says so on the Ticket and drops
            in-progress, so the next Ticket can start. When publish refused an
            unchanged work checkout, the comment includes the agent's summary.
+           When scope.json is present, the comment is the run-local prompt and
+           the label is `factory:run-local` instead of `factory:failed`.
 
 Usage:
   uv run python -m factory.ticket claim --repo O/R --issue N --out run-out --login L --app-slug S \\
@@ -56,7 +62,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from factory import claude, signals
+from factory import claude, scope, signals
 from factory.ci_projects import changed_projects
 from factory.github import (
     DOOR_FILE,
@@ -84,6 +90,9 @@ PROGRESS_LABEL = "factory:in-progress"
 PROGRESS_LABELS = (PROGRESS_LABEL, "in-progress")
 FAILED_LABEL = "factory:failed"
 FAILED_LABELS = (FAILED_LABEL, "factory-failed")
+# The picker skips this. The edit list did not grow; the Ticket is built locally.
+RUN_LOCAL_LABEL = "factory:run-local"
+SCOPE_FILE = "scope.json"
 LOCK_LABELS = (PROGRESS_LABEL, "in-progress", START_LABEL)
 PROJECT_PREFIX = "project:"
 PROJECTS_DIR = "projects"
@@ -226,6 +235,7 @@ pull request description."""
 
 # A Ticket with no `project:` label. The run is not a bootstrap, so verify runs
 # the Lab check, if there is one. The agent edits the factory itself.
+# factory/scope.py allows this same list and nothing more.
 _FACTORY_ROOT = (
     _CHECKOUT
     + """Before you change anything, read `CLAUDE.md`, `GLOSSARY-MAP.md` and the \
@@ -389,6 +399,50 @@ def _load(out: Path) -> dict:
     return json.loads((out / "context.json").read_text())
 
 
+def _parent_number(gh: GitHub, repo: str, number: int, body: str) -> int | None:
+    """The parent Spec. The issue's parent when GitHub has one, else `Spec #N` in the body."""
+    finder = getattr(gh, "_parent_number", None)
+    found = None
+    if finder is not None:
+        try:
+            found = finder(repo, number)
+        except GitHubError:
+            found = None
+    if isinstance(found, int):
+        return found
+    match = re.search(r"(?i)\bSpec #(\d+)\b", body or "")
+    return int(match.group(1)) if match else None
+
+
+def _mark_run_local(gh: GitHub, repo: str, number: int, issue: dict) -> None:
+    names = label_names(issue)
+    removing = tuple(
+        label for label in (START_LABEL, *PROGRESS_LABELS) if label in names
+    )
+    if removing:
+        gh.remove_labels(repo, number, removing)
+    if RUN_LOCAL_LABEL not in names:
+        gh.add_labels(repo, number, (RUN_LOCAL_LABEL,))
+
+
+def _run_local_body(
+    gh: GitHub, repo: str, number: int, issue: dict, paths: list[str]
+) -> str:
+    return scope.run_local_comment(
+        number=number,
+        title=issue.get("title") or "",
+        repo=repo,
+        parent=_parent_number(gh, repo, number, issue.get("body") or ""),
+        paths=paths,
+    )
+
+
+def _outside_body(issue: dict, project: str | None, bootstrap: bool) -> list[str]:
+    return scope.outside_paths(
+        scope.paths_named(issue.get("body") or ""), project, bootstrap
+    )
+
+
 def claim(args, gh: GitHub | None = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
@@ -414,6 +468,21 @@ def claim(args, gh: GitHub | None = None) -> int:
             project, bootstrap = project_of(issue, Path(args.root))
         except Refused as e:
             reason = str(e)
+    outside = _outside_body(issue, project, bootstrap) if not reason else []
+    if outside:
+        gh.comment(
+            args.repo,
+            args.issue,
+            write_comment(
+                out,
+                "run-local.md",
+                _run_local_body(gh, args.repo, args.issue, issue, outside),
+            ),
+        )
+        _mark_run_local(gh, args.repo, args.issue, issue)
+        raise Refused(
+            "this Ticket needs edits outside the allowed list: " + ", ".join(outside)
+        )
     if reason:
         body = (
             f"The factory did not start this Ticket: {reason}.\n\n"
@@ -491,6 +560,22 @@ def revise(args, gh: GitHub | None = None) -> int:
         )
         gh.comment(args.repo, number, write_comment(out, "refused.md", body))
         raise RuntimeError(f"Ticket #{number}: {e}") from e
+    outside = _outside_body(issue, project, bootstrap)
+    if outside:
+        gh.comment(
+            args.repo,
+            number,
+            write_comment(
+                out,
+                "run-local.md",
+                _run_local_body(gh, args.repo, number, issue, outside),
+            ),
+        )
+        _mark_run_local(gh, args.repo, number, issue)
+        raise RuntimeError(
+            f"Ticket #{number} needs edits outside the allowed list: "
+            + ", ".join(outside)
+        )
     review = review_input(
         gh.pr_comments(args.repo, args.pr), pr.get("headRefOid") or ""
     )
@@ -873,21 +958,56 @@ def _unchanged_report(out: Path, detail: str) -> str:
     return message
 
 
+def _record_scope(out: Path, gh: GitHub, ctx: dict, paths: list[str]) -> None:
+    body = ""
+    ticket_md = out / "ticket.md"
+    if ticket_md.is_file():
+        body = ticket_md.read_text()
+    parent = _parent_number(gh, ctx["repo"], int(ctx["issue"]), body)
+    (out / SCOPE_FILE).write_text(
+        json.dumps(
+            {
+                "repo": ctx["repo"],
+                "number": ctx["issue"],
+                "title": ctx.get("title") or "",
+                "parent": parent,
+                "paths": paths,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
 def publish(args, gh: GitHub | None = None) -> int:
     gh = gh or GitHub()
     out = Path(args.out)
     ctx = _load(out)
     work = args.work
+    project, bootstrap = ctx.get("project"), bool(ctx.get("bootstrap"))
     _exclude_staged(Path(work))
     _git(work, "add", "-A")
-    if not _git(work, "status", "--porcelain").strip():
+    porcelain = _git(work, "status", "--porcelain").strip()
+    staged = [
+        p for p in _git(work, "diff", "--cached", *STAGED_PATHS_ARGS).splitlines() if p
+    ]
+    outside = scope.outside_paths(staged, project, bootstrap)
+    if not porcelain:
+        if not outside:
+            outside = scope.outside_paths(
+                scope.paths_named(_summary_text(out)), project, bootstrap
+            )
+        if outside:
+            _record_scope(out, gh, ctx, outside)
         detail = _edits_outside_work(work, out)
         message = _unchanged_report(out, detail)
         (out / UNCHANGED_FILE).write_text(message + "\n")
         raise RuntimeError(message)
-    staged = [
-        p for p in _git(work, "diff", "--cached", *STAGED_PATHS_ARGS).splitlines() if p
-    ]
+    if outside:
+        _record_scope(out, gh, ctx, outside)
+        raise RuntimeError(
+            "the agent edited paths outside the allowed list: " + ", ".join(outside)
+        )
     bot = f"{args.app_slug}[bot]"
     email = f"{gh.bot_user_id(args.app_slug)}+{bot}@users.noreply.github.com"
     round_note = "rework round" if ctx["pr"] else "build"
@@ -951,31 +1071,63 @@ def _failure_comment(out: Path, run_url: str) -> str:
     return body
 
 
+def _scope_comment(out: Path) -> str | None:
+    path = out / SCOPE_FILE
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    paths = data.get("paths")
+    number = data.get("number")
+    if not isinstance(paths, list) or not paths or not isinstance(number, int):
+        return None
+    parent = data.get("parent")
+    return scope.run_local_comment(
+        number=number,
+        title=str(data.get("title") or ""),
+        repo=str(data.get("repo") or ""),
+        parent=parent if isinstance(parent, int) else None,
+        paths=[str(item) for item in paths],
+    )
+
+
 def release(args, gh: GitHub | None = None) -> int:
     gh = gh or GitHub()
     issue = gh.issue(args.repo, args.issue)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    body = _failure_comment(out, args.run_url)
-    gh.comment(args.repo, args.issue, write_comment(out, "failed.md", body))
+    local = _scope_comment(out)
+    body = local if local is not None else _failure_comment(out, args.run_url)
+    gh.comment(
+        args.repo,
+        args.issue,
+        write_comment(out, "run-local.md" if local is not None else "failed.md", body),
+    )
     names = label_names(issue)
     present = tuple(label for label in PROGRESS_LABELS if label in names)
     if present:
         gh.remove_labels(args.repo, args.issue, present)
-    if not any(label in FAILED_LABELS for label in names):
+    if local is not None:
+        if RUN_LOCAL_LABEL not in names:
+            gh.add_labels(args.repo, args.issue, (RUN_LOCAL_LABEL,))
+    elif not any(label in FAILED_LABELS for label in names):
         gh.add_labels(args.repo, args.issue, (FAILED_LABEL,))
-    rid = signals.run_id(args.run_url)
-    signals.write(
-        gh,
-        args.repo,
-        {
-            "kind": signals.IMPLEMENT_FAILED,
-            "key": f"{signals.IMPLEMENT_FAILED}-{args.issue}-{rid or 'none'}",
-            "ticket": args.issue,
-            "run": args.run_url,
-            "text": "\n".join(body.splitlines()[1:]),
-        },
-    )
+        rid = signals.run_id(args.run_url)
+        signals.write(
+            gh,
+            args.repo,
+            {
+                "kind": signals.IMPLEMENT_FAILED,
+                "key": f"{signals.IMPLEMENT_FAILED}-{args.issue}-{rid or 'none'}",
+                "ticket": args.issue,
+                "run": args.run_url,
+                "text": "\n".join(body.splitlines()[1:]),
+            },
+        )
     from factory.picker import queue_next
 
     queue_next(gh, args.repo, args.run_url)

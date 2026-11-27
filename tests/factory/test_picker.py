@@ -3,7 +3,7 @@
 The inputs are issues the caller already has. Nothing here calls GitHub.
 """
 
-from factory.picker import Blocker, Candidate, decide, pick
+from factory.picker import Blocker, Candidate, decide, pick, retry_issue
 
 
 def _issue(
@@ -54,6 +54,49 @@ def test_a_factory_failed_ticket_is_skipped():
     failed = _child(3, 1, labels=("ready-for-agent", "factory:failed"))
     ready = _child(4, 1)
     assert pick([spec, blocked, failed, ready]).issue == 4
+
+
+def test_a_run_local_ticket_is_skipped():
+    spec = _spec(1, (2, 3))
+    local = _child(2, 1, labels=("ready-for-agent", "factory:run-local"))
+    ready = _child(3, 1)
+    assert pick([spec, local, ready]).issue == 3
+    hand = _issue(8, labels=("owner:implement", "factory:run-local"))
+    assert pick([hand]).issue is None
+
+
+class _RetryGitHub:
+    def __init__(self, labels):
+        self.names = list(labels)
+        self.removed, self.added = [], []
+
+    def issue(self, repo, number):
+        return {"labels": [{"name": name} for name in self.names]}
+
+    def remove_labels(self, repo, number, labels):
+        self.removed += list(labels)
+
+    def add_labels(self, repo, number, labels):
+        self.added += list(labels)
+
+    def open_issues_labelled(self, repo, label):
+        return []
+
+    def create_issue(self, repo, title, body_file, labels):
+        return 1
+
+    def pr_comments(self, repo, number):
+        return []
+
+    def comment(self, repo, number, path):
+        return 1
+
+
+def test_retry_clears_run_local_and_adds_start():
+    gh = _RetryGitHub(["factory:run-local", "ready-for-agent"])
+    assert retry_issue(gh, "o/r", 7, "Retry: the body is in scope now\n") == 0
+    assert gh.removed == ["factory:run-local"]
+    assert gh.added == ["factory:start"]
 
 
 def test_a_blocked_child_with_ready_for_agent_is_not_selected():

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from factory import ticket
+from factory import scope, ticket
 from factory.claude import Result
 from factory.review_pr import LEGACY_STOPPED_LABEL, MARKER
 
@@ -1095,3 +1095,133 @@ def test_claim_names_the_spec_and_the_approval(tmp_path):
     assert "#229" in body
     assert "travism26" in body
     assert "2026-11-25T11:27:00Z" in body
+
+
+def test_claim_stops_before_the_agent_when_the_body_names_an_outside_path(tmp_path):
+    issue = _issue(labels=("factory:start",))
+    issue["body"] = (
+        "## Parent\n\nSpec #226.\n\n"
+        "Write `.claude/settings.json` and the root `pyproject.toml`.\n"
+        "Do not edit `.github/workflows/x.yml`.\n"
+    )
+    gh = FakeGitHub(issue=issue)
+    with pytest.raises(ticket.Refused, match="outside the allowed list"):
+        ticket.claim(_args(tmp_path), gh)
+    assert gh.removed == ["factory:start"]
+    assert gh.added == ["factory:run-local"]
+    assert "factory:in-progress" not in gh.added
+    assert not (tmp_path / "out" / "context.json").exists()
+    assert gh.posted[0][1] == scope.run_local_comment(
+        number=4,
+        title="Add a loop",
+        repo=REPO,
+        parent=226,
+        paths=[".claude/settings.json", "pyproject.toml"],
+    )
+    assert "Retry:" not in gh.posted[0][1]
+
+
+def test_claim_starts_when_the_body_stays_inside_the_edit_list(tmp_path):
+    issue = _issue(labels=("factory:start",))
+    issue["body"] = (
+        "Edit `factory/ticket.py` and `docs/factory/README.md`. "
+        "Do not edit `.github/workflows/x.yml`.\n"
+    )
+    gh = FakeGitHub(issue=issue)
+    assert ticket.claim(_args(tmp_path), gh) == 0
+    assert gh.added == ["factory:in-progress"]
+    assert "factory:run-local" not in gh.added
+
+
+def test_claim_bootstraps_when_the_body_names_the_root_manifest(tmp_path):
+    _labels(tmp_path, ["ai-gateway"])
+    issue = _issue(labels=("factory:start", "project:ai-gateway"))
+    issue["body"] = "Add `projects/ai-gateway/check`, `pyproject.toml` and `uv.lock`.\n"
+    gh = FakeGitHub(issue=issue)
+    assert ticket.claim(_args(tmp_path), gh) == 0
+    ctx = json.loads((tmp_path / "out" / "context.json").read_text())
+    assert ctx["project"] == "ai-gateway" and ctx["bootstrap"] is True
+    assert "factory:run-local" not in gh.added
+
+
+def test_claim_stops_an_unlabelled_ticket_that_names_a_project(tmp_path):
+    issue = _issue(labels=("factory:start",))
+    issue["body"] = "Touch `projects/other/check`.\n"
+    gh = FakeGitHub(issue=issue)
+    with pytest.raises(ticket.Refused, match="projects/other/check"):
+        ticket.claim(_args(tmp_path), gh)
+    assert gh.added == ["factory:run-local"]
+    assert not (tmp_path / "out" / "context.json").exists()
+
+
+def test_revise_stops_when_the_ticket_names_an_outside_path(tmp_path):
+    _root(tmp_path)
+    issue = _issue(labels=("project:harness",))
+    issue["body"] = "Also write `.claude/settings.json`.\n"
+    gh = FakeGitHub(issue=issue, pr=_pr(), comments=[{"body": MARKER}])
+    with pytest.raises(RuntimeError, match="outside the allowed list"):
+        ticket.revise(_args(tmp_path), gh)
+    assert gh.added == ["factory:run-local"]
+    assert not (tmp_path / "out" / "review.md").exists()
+
+
+def test_publish_does_not_commit_a_path_outside_the_edit_list(tmp_path):
+    work = tmp_path / "work"
+    out = tmp_path / "out"
+    _commit(work, {".gitignore": "/.factory/\n", "README.md": "work\n"})
+    _publish_out(out, "Added a hook.\n")
+    dest = work / ".claude" / "settings.json"
+    dest.parent.mkdir()
+    dest.write_text("{}\n")
+    gh = FakeGitHub(issue=_issue(labels=("in-progress",)))
+    args = _args(tmp_path, out=str(out), work=str(work))
+    with pytest.raises(RuntimeError, match="outside the allowed list"):
+        ticket.publish(args, gh)
+    assert json.loads((out / "scope.json").read_text())["paths"] == [
+        ".claude/settings.json"
+    ]
+    log = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "factory:" not in log.stdout
+    assert ticket.release(args, gh) == 0
+    assert gh.removed == ["in-progress"]
+    assert gh.added == ["factory:run-local"]
+    assert "`Closes #4`" in gh.posted[0][1]
+    assert ".claude/settings.json" in gh.posted[0][1]
+    assert not hasattr(gh, "created")
+
+
+def test_an_unchanged_summary_that_names_an_outside_path_is_run_local(tmp_path):
+    work = tmp_path / "work"
+    out = tmp_path / "out"
+    _commit(work, {".gitignore": "/.factory/\n", "README.md": "work\n"})
+    _publish_out(out, "The hook has to live at `.claude/hooks/block_secret.py`.\n")
+    gh = FakeGitHub(issue=_issue(labels=("in-progress",)))
+    args = _args(tmp_path, out=str(out), work=str(work))
+    with pytest.raises(RuntimeError, match="nothing to publish"):
+        ticket.publish(args, gh)
+    assert json.loads((out / "scope.json").read_text())["paths"] == [
+        ".claude/hooks/block_secret.py"
+    ]
+    assert ticket.release(args, gh) == 0
+    assert gh.added == ["factory:run-local"]
+    assert "`Closes #4`" in gh.posted[0][1]
+
+
+def test_an_unchanged_summary_that_only_refuses_github_stays_failed(tmp_path):
+    work = tmp_path / "work"
+    out = tmp_path / "out"
+    _commit(work, {".gitignore": "/.factory/\n", "README.md": "work\n"})
+    _publish_out(out, "Do not edit `.github/workflows/x.yml`.\n")
+    gh = FakeGitHub(issue=_issue(labels=("in-progress",)))
+    args = _args(tmp_path, out=str(out), work=str(work))
+    with pytest.raises(RuntimeError, match="nothing to publish"):
+        ticket.publish(args, gh)
+    assert not (out / "scope.json").exists()
+    assert ticket.release(args, gh) == 0
+    assert gh.added == ["factory:failed"]

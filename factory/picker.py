@@ -22,7 +22,13 @@ from tempfile import TemporaryDirectory
 
 from factory import signals
 from factory.github import GitHub, GitHubError, label_names, write_comment
-from factory.ticket import FAILED_LABELS, LOCK_LABELS, PROGRESS_LABELS, START_LABEL
+from factory.ticket import (
+    FAILED_LABELS,
+    LOCK_LABELS,
+    PROGRESS_LABELS,
+    RUN_LOCAL_LABEL,
+    START_LABEL,
+)
 
 APPROVAL_LABELS = ("owner:implement", "ready-for-implementation")
 SPEC_LABELS = ("builder:spec-ready", "spec:ready-for-review")
@@ -85,11 +91,16 @@ def _already_started(issue: Candidate) -> bool:
     return _has(issue.labels, PROGRESS_LABELS) or START_LABEL in issue.labels
 
 
+def _parked(labels: Sequence[str]) -> bool:
+    """`factory:failed` or `factory:run-local`: the picker does not start it."""
+    return _has(labels, FAILED_LABELS) or RUN_LOCAL_LABEL in labels
+
+
 def eligible_child(issue: Candidate) -> bool:
     return (
         _open(issue.state)
         and READY_LABEL in issue.labels
-        and not _has(issue.labels, FAILED_LABELS)
+        and not _parked(issue.labels)
         and not _already_started(issue)
         and not _open_blocker(issue)
     )
@@ -99,7 +110,7 @@ def eligible_hand(issue: Candidate) -> bool:
     """A hand Ticket is the approved issue itself. It needs no ready-for-agent."""
     return (
         _open(issue.state)
-        and not _has(issue.labels, FAILED_LABELS)
+        and not _parked(issue.labels)
         and not _already_started(issue)
         and not _open_blocker(issue)
     )
@@ -300,13 +311,17 @@ def apply_plan(gh: GitHub, repo: str, plan: dict) -> int:
 
 
 def retry_issue(gh: GitHub, repo: str, issue: int, body: str) -> int:
-    """Clear factory:failed. Add factory:start only when the lock is free."""
+    """Clear factory:failed and factory:run-local. Add factory:start only when the lock is free."""
     lines = (body or "").splitlines()
     if not lines or not lines[0].startswith(RETRY_PREFIX):
         print("not a Retry: nothing to do")
         return 0
     item = gh.issue(repo, issue)
-    stale = tuple(label for label in FAILED_LABELS if label in label_names(item))
+    stale = tuple(
+        label
+        for label in (*FAILED_LABELS, RUN_LOCAL_LABEL)
+        if label in label_names(item)
+    )
     if stale:
         gh.remove_labels(repo, issue, stale)
     if hasattr(gh, "issue_fields") and lock_held(load_open(gh, repo)):
