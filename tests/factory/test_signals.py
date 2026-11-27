@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 
 import pytest
 
@@ -206,3 +207,86 @@ def test_the_label_row_is_factory_applied_and_short():
     row = next(x for x in load_labels() if x.name == "factory:signals")
     assert row.description.startswith("Factory-applied:")
     assert len(row.description) <= 100
+
+
+WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/close-signals.yml"
+
+
+class _ClosingGh:
+    def __init__(self, issues=(), fail_close=False):
+        self.issues, self.fail_close = list(issues), fail_close
+        self.calls = []
+
+    def open_issues_labelled(self, repo, label):
+        assert label == "factory:signals"
+        return self.issues
+
+    def comment(self, repo, number, path):
+        self.calls.append(("comment", number, path.read_text()))
+
+    def close_issue(self, repo, number):
+        if self.fail_close:
+            raise GitHubError("cannot close")
+        self.calls.append(("close", number))
+
+
+def test_close_targets_is_every_number_ascending():
+    assert signals.close_targets([15, 12]) == [12, 15]
+    assert signals.close_targets([]) == []
+
+
+def test_close_week_comments_before_closing_each_issue():
+    gh = _ClosingGh(issues=[15, 12])
+    assert signals.close_week(gh, "o/r") == [12, 15]
+    assert gh.calls == [
+        ("comment", 12, signals.CLOSED_COMMENT),
+        ("close", 12),
+        ("comment", 15, signals.CLOSED_COMMENT),
+        ("close", 15),
+    ]
+
+
+def test_close_week_with_no_open_issue_does_nothing(capsys):
+    gh = _ClosingGh()
+    assert signals.close_week(gh, "o/r") == []
+    assert signals.main(["--repo", "o/r"], gh=gh) == 0
+    assert gh.calls == []
+    assert "no open Factory signals issue" in capsys.readouterr().out
+
+
+def test_main_closes_and_reports(capsys):
+    gh = _ClosingGh(issues=[15, 12])
+    assert signals.main(["--repo", "o/r"], gh=gh) == 0
+    assert "closed #12, #15" in capsys.readouterr().out
+
+
+def test_main_returns_1_when_a_close_fails(capsys):
+    gh = _ClosingGh(issues=[12, 15], fail_close=True)
+    assert signals.main(["--repo", "o/r"], gh=gh) == 1
+    assert "cannot close" in capsys.readouterr().err
+    assert [c[0] for c in gh.calls] == ["comment"]
+
+
+def test_a_new_issue_body_says_it_is_closed_on_fridays():
+    assert "closes this issue every Friday" in signals.ISSUE_BODY
+
+
+def test_close_workflow_is_a_scheduled_job_with_no_agent_and_least_privilege():
+    text = WORKFLOW.read_text()
+    assert 'cron: "30 15 * * 5"' in text
+    for banned in ("CLAUDE", "FACTORY_APP", "secrets."):
+        assert banned not in text
+    for banned in ("workflow_dispatch", "pull_request", "issues:\n    types"):
+        assert banned not in text
+    assert text.count("permissions:") == 2
+    assert "permissions: {}" in text
+    lines = text.splitlines()
+    start = next(i for i, x in enumerate(lines) if x == "    permissions:")
+    block = set()
+    for line in lines[start + 1 :]:
+        if not line.startswith("      "):
+            break
+        block.add(line.strip())
+    assert block == {"contents: read", "issues: write"}
+    assert "python -m factory.signals" in text
+    assert "${{ github.token }}" in text

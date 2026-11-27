@@ -123,6 +123,9 @@ class GitHub:
         )
         return int(out.strip().splitlines()[-1].rsplit("/", 1)[-1])
 
+    def close_issue(self, repo: str, number: int) -> None:
+        self._gh(["issue", "close", str(number), "-R", repo])
+
     def pr(self, repo: str, number: int) -> dict:
         return json.loads(
             self._gh(
