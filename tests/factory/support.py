@@ -28,6 +28,9 @@ def bot_comment(id, body, login=BOT):
     return {"id": id, "body": body, "user": {"login": login}}
 
 
+SIGNALS_ISSUE = 900
+
+
 class FakeGitHub:
     """The calls the last steps, `ticket.release` and `review_pr.apply` make. It records what
     is posted and attributes every comment it is given to the bot."""
@@ -72,13 +75,24 @@ class FakeGitHub:
             "head": {"sha": self.head},
         }
 
+    def open_issues_labelled(self, repo, label):
+        return [SIGNALS_ISSUE]
+
+    def create_issue(self, repo, title, body_file, labels):
+        return SIGNALS_ISSUE
+
     def pr_comments(self, repo, number):
+        if number == SIGNALS_ISSUE:
+            return []
         self.reads += 1
         extra = [{"id": 0, "body": self.plant}] if self.plant and self.reads > 1 else []
         return extra + [dict(c) for c in self.thread]
 
     def comment(self, repo, number, path):
         body = path.read_text()
+        if number == SIGNALS_ISSUE:
+            self.signals = getattr(self, "signals", []) + [body]
+            return 1
         self.posted.append((number, body))
         comment_id = 100 + len(self.thread)
         self.thread.append(bot_comment(comment_id, body))

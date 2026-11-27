@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from factory import signals
 from factory.github import GitHub, GitHubError, label_names, write_comment
 from factory.ticket import FAILED_LABELS, LOCK_LABELS, PROGRESS_LABELS, START_LABEL
 
@@ -317,10 +318,27 @@ def retry_issue(gh: GitHub, repo: str, issue: int, body: str) -> int:
             "This Ticket can start when the lock is free.\n",
         )
         print("retry cleared factory:failed; the lock is held")
+        _record_retry(gh, repo, issue)
         return 0
     gh.add_labels(repo, issue, (START_LABEL,))
     print(f"retry added {START_LABEL} on {repo}#{issue}")
+    _record_retry(gh, repo, issue)
     return 0
+
+
+def _record_retry(gh: GitHub, repo: str, issue: int) -> None:
+    rid = os.environ.get("GITHUB_RUN_ID") or "none"
+    signals.write(
+        gh,
+        repo,
+        {
+            "kind": signals.RETRY,
+            "key": f"{signals.RETRY}-{issue}-{rid}",
+            "ticket": issue,
+            "run": signals.env_run_url(),
+            "text": signals.NONE,
+        },
+    )
 
 
 def _labels_from(raw: str) -> list[str]:
