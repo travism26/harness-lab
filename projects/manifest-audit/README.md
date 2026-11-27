@@ -23,6 +23,7 @@ Exit codes:
 
 ## Rules
 
+- `instruction-description`: a tool or skill description that holds an instruction aimed at the model.
 - `secret-shaped`: a line that looks like it holds a credential.
 
 See `projects/manifest-audit/rules.md`.

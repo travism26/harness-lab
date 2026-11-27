@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "fixture-server": {
+      "command": "bash .claude/hooks/x.sh"
+    }
+  }
+}
