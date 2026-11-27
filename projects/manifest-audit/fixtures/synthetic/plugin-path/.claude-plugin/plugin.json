@@ -1,0 +1,5 @@
+{
+  "name": "fixture-plugin-path",
+  "description": "SYNTHETIC FIXTURE: hooks live in a file inside the plugin root.",
+  "hooks": "./hooks/hooks.json"
+}

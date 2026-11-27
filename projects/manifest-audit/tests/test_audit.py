@@ -78,6 +78,7 @@ def test_explicit_directory() -> None:
     assert {line.split("\t")[0] for line in lines} == {
         "secret-shaped",
         "instruction-description",
+        "hook-worktree-exec",
     }
 
 
@@ -248,6 +249,8 @@ def test_docs() -> None:
     assert "secret-shaped" in rules
     assert "factory/research_note.py" in rules
     assert "instruction-description" in readme
+    assert "hook-worktree-exec" in readme
+    assert "hook-worktree-exec" in rules
     assert "instruction-description" in rules
     for phrase in PHRASES:
         assert phrase in rules
@@ -317,7 +320,9 @@ def test_benign_mcp_server_is_clean() -> None:
 
 
 def test_tool_instruction_fixture() -> None:
-    assert_instruction("synthetic/tool-instruction.json", "tool:fixture_tool description")
+    assert_instruction(
+        "synthetic/tool-instruction.json", "tool:fixture_tool description"
+    )
 
 
 def test_schema_instruction_fixture() -> None:
@@ -354,7 +359,9 @@ def test_two_findings_ordered_by_line() -> None:
     assert result.returncode == 1
     found = rows(result)
     assert [row[0] for row in found] == ["instruction-description", "secret-shaped"]
-    assert [row[1] for row in found] == [FIXTURE_DIR + "synthetic/two-findings.json"] * 2
+    assert [row[1] for row in found] == [
+        FIXTURE_DIR + "synthetic/two-findings.json"
+    ] * 2
     assert [int(row[2]) for row in found] == [
         first_line(target, PHRASE),
         first_line(target, FAKE),
@@ -518,3 +525,175 @@ def test_skill_frontmatter_edges(tmp_path: Path) -> None:
     skill.write_text(f"---\nwhen_to_use: {SENTENCE}\n---\n", encoding="utf-8")
     result = run("--root", tmp_path, skill)
     assert result.stdout == "instruction-description\tSKILL.md\t2\tskill when_to_use\n"
+
+
+HOOK_COMMAND = "bash .claude/hooks/x.sh"
+
+
+def write_hooks(path: Path, handlers: list[dict[str, object]]) -> Path:
+    doc = {"hooks": {"Stop": [{"hooks": handlers}]}}
+    path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def assert_hook(
+    rel: str, shown_rel: str | None = None, needle: str = '"command":'
+) -> None:
+    target = FIXTURES / rel
+    shown = FIXTURE_DIR + (shown_rel or rel)
+    line = first_line(FIXTURES / (shown_rel or rel), needle)
+    result = run("--root", REPO, target)
+    assert result.returncode == 1
+    assert rows(result) == [["hook-worktree-exec", shown, str(line), "hooks command"]]
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize("name", ["settings-python", "settings-node", "settings-echo"])
+def test_benign_hook_fixtures_are_clean(name: str) -> None:
+    assert_clean(FIXTURES / "benign" / f"{name}.json")
+
+
+@pytest.mark.parametrize("name", ["hook-shell", "hook-exec-script", "hook-shell-args"])
+def test_hook_fixtures(name: str) -> None:
+    assert_hook(f"synthetic/{name}.json")
+
+
+def test_plugin_inline_fixture() -> None:
+    assert_hook("synthetic/plugin/.claude-plugin/plugin.json")
+
+
+def test_plugin_path_fixture() -> None:
+    hooks = "synthetic/plugin-path/hooks/hooks.json"
+    assert_hook("synthetic/plugin-path/.claude-plugin/plugin.json", hooks)
+    walked = run("--root", REPO, FIXTURES / "synthetic" / "plugin-path")
+    assert walked.returncode == 1
+    assert [row[1] for row in rows(walked)] == [FIXTURE_DIR + hooks]
+    assert walked.stderr == ""
+
+
+def test_plugin_escape_fixture() -> None:
+    result = run(
+        "--root",
+        REPO,
+        FIXTURES / "synthetic" / "plugin-escape" / ".claude-plugin" / "plugin.json",
+    )
+    assert (result.returncode, result.stdout) == (0, "")
+    assert result.stderr.strip() == FIXTURE_DIR + "synthetic/hook-shell.json"
+
+
+def test_plugin_escape_outside_file_is_not_read(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "plugin" / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps({"key": FAKE}), encoding="utf-8")
+    manifest = manifest_dir / "plugin.json"
+    for hooks in ("../outside.json", str(outside), [{"x": 1}, "../outside.json"]):
+        manifest.write_text(json.dumps({"hooks": hooks}), encoding="utf-8")
+        result = run("--root", tmp_path, manifest)
+        assert (result.returncode, result.stdout) == (0, "")
+        assert result.stderr.strip() == "outside.json"
+        assert FAKE not in result.stderr
+
+
+def test_plugin_missing_target_is_a_skip(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "plugin" / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    manifest = manifest_dir / "plugin.json"
+    manifest.write_text(json.dumps({"hooks": "./nope.json"}), encoding="utf-8")
+    result = run("--root", tmp_path, manifest)
+    assert (result.returncode, result.stdout) == (0, "")
+    assert result.stderr.strip() == "plugin/nope.json"
+
+
+def test_plugin_hooks_list_and_default_hooks_file(tmp_path: Path) -> None:
+    plugin = tmp_path / "plugin"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / "hooks").mkdir()
+    inline = {"Stop": [{"type": "command", "command": "ls ./a.sh"}]}
+    manifest = plugin / ".claude-plugin" / "plugin.json"
+    manifest.write_text(
+        json.dumps({"hooks": [inline, {"hooks": inline}]}), encoding="utf-8"
+    )
+    write_hooks(plugin / "hooks" / "hooks.json", [{"command": "run ../b.sh"}])
+    result = run("--root", tmp_path, manifest)
+    assert result.returncode == 1
+    assert sorted(row[1] for row in rows(result)) == [
+        "plugin/.claude-plugin/plugin.json",
+        "plugin/hooks/hooks.json",
+    ]
+    assert result.stderr == ""
+
+
+def test_file_reached_twice_is_one_finding_and_one_skip(tmp_path: Path) -> None:
+    plugin = tmp_path / "plugin"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / "hooks").mkdir()
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"hooks": "./hooks/hooks.json"}), encoding="utf-8"
+    )
+    hooks = plugin / "hooks" / "hooks.json"
+    write_hooks(hooks, [{"command": HOOK_COMMAND}])
+    result = run("--root", tmp_path, tmp_path)
+    assert len(rows(result)) == 1
+    assert result.stderr == ""
+    hooks.write_text("{", encoding="utf-8")
+    result = run("--root", tmp_path, tmp_path)
+    assert result.returncode == 0
+    assert result.stderr == "plugin/hooks/hooks.json\n"
+
+
+def test_unbraced_marker(tmp_path: Path) -> None:
+    target = write_hooks(tmp_path / "s.json", [{"command": "$CLAUDE_PROJECT_DIR/x.sh"}])
+    result = run("--root", tmp_path, target)
+    assert (
+        result.stdout
+        == f"hook-worktree-exec\ts.json\t{first_line(target, 'command')}\thooks command\n"
+    )
+    marker = write_hooks(tmp_path / "m.json", [{"command": "run $CLAUDE_PLUGIN_ROOT"}])
+    assert run("--root", tmp_path, marker).returncode == 1
+
+
+def test_http_handler_does_not_match(tmp_path: Path) -> None:
+    handlers: list[dict[str, object]] = [
+        {"type": kind, "command": HOOK_COMMAND, "url": "https://example.com/x"}
+        for kind in ("http", "mcp_tool", "prompt", "agent")
+    ]
+    assert_clean(write_hooks(tmp_path / "s.json", handlers), tmp_path)
+
+
+def test_third_handler_line(tmp_path: Path) -> None:
+    handlers: list[dict[str, object]] = [
+        {"command": "echo one"},
+        {"command": "echo two"},
+        {"command": "sh ./three.sh"},
+    ]
+    target = write_hooks(tmp_path / "s.json", handlers)
+    result = run("--root", tmp_path, target)
+    assert result.stdout == (
+        f"hook-worktree-exec\ts.json\t{first_line(target, 'three')}\thooks command\n"
+    )
+    assert first_line(target, "three") > first_line(target, "two")
+
+
+@pytest.mark.parametrize(
+    ("command", "args", "expected"),
+    [
+        ("echo hi 2>/dev/null", None, 1),
+        ("echo 'x' \"/abs/path\"", None, 0),
+        ("curl https://example.com/a/b", None, 0),
+        ("run './x.sh'", None, 1),
+        ("python3", ["./x.py"], 0),
+        ("bash", ["-c", "echo hi"], 0),
+        ("bash", ["./x.sh"], 1),
+        (" pwsh ", ["-File", "dir/x.ps1"], 1),
+        ("bash", "./x.sh", 0),
+        ("node", ["${CLAUDE_PLUGIN_ROOT}/a.js"], 0),
+    ],
+)
+def test_token_rule(tmp_path: Path, command: str, args: object, expected: int) -> None:
+    handler: dict[str, object] = {"command": command}
+    if args is not None:
+        handler["args"] = args
+    target = write_hooks(tmp_path / "s.json", [handler])
+    result = run("--root", tmp_path, target)
+    assert result.returncode == expected

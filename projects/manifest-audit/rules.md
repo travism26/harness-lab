@@ -24,6 +24,26 @@ Locations: `tool:<name> description`, `tool:<name> schema`, `skill description`,
 
 Line: for a tool, the first place in the file where a `"description"` key is followed by that exact text; line 1 if none is found. For a skill, the line holding the text. A tool seen by several recognizers is one Finding. The matched phrase is never printed.
 
+## hook-worktree-exec
+
+Reports a Claude Code hook command that runs a worktree path. The Auditor never runs the command.
+
+A handler is an object whose `type` is absent or `command` and whose `command` is a string. Handlers of type `http`, `mcp_tool`, `prompt` and `agent` do not match, but their file is still scanned for `secret-shaped`. Handlers are read from an event map: event name to a list, each item either a group holding a `hooks` list of handlers or a handler itself.
+
+- In any `.json` file that is not a plugin manifest, the event map is the top-level `hooks` object (the shape of `settings.json` and `hooks/hooks.json`). An `mcpServers` command is not a hook.
+- A plugin manifest is a `plugin.json` whose parent directory is `.claude-plugin`; the plugin root is that directory's parent. Its `hooks` may be a string path, an inline event map (a lone `hooks` wrapper is unwrapped), or a list mixing both.
+
+A handler matches when either test holds. A relative-path token is one with no `://` that starts with `./` or `../`, or contains a `/` and does not start with `/`.
+
+1. A whitespace-separated token of `command`, with surrounding `'` and `"` removed, contains `CLAUDE_PROJECT_DIR` or `CLAUDE_PLUGIN_ROOT` (the bare name, so `${CLAUDE_PROJECT_DIR}` and `$CLAUDE_PROJECT_DIR` both match), or is a relative-path token.
+2. `args` is a list, `command` with surrounding whitespace removed is one of `bash`, `sh`, `zsh`, `dash`, `powershell`, `pwsh`, `cmd` or `powershell.exe`, and a token of any string argument meets test 1.
+
+So `python3` or `node` with a worktree script as an argument is not this Rule. The tests are literal: a shell-form command such as `echo hi 2>/dev/null` matches, because `2>/dev/null` contains `/` and does not start with `/`.
+
+Plugin paths: a string path is resolved against the plugin root. When it resolves outside the root, or the file is missing, the path is named on stderr as a skip, the exit code does not change and the file is not opened. A target inside the root, and `<plugin root>/hooks/hooks.json` when it exists, are each scanned as files in their own right and their Findings carry their own path. A file reached twice is scanned once.
+
+Location: `hooks command`. Line: the first place in the file where a `"command"` key is followed by that exact command text; line 1 if none is found.
+
 ## secret-shaped
 
 Reports a line of a scanned file that matches the credential expression. The location is `secret`. The matched text is never printed.

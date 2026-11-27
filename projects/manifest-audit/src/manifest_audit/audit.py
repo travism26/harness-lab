@@ -30,6 +30,17 @@ PHRASES = (
 STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
 COLON = re.compile(r"\s*:\s*")
 COLON_BRACE = re.compile(r"\s*:\s*\{")
+SHELLS = (
+    "bash",
+    "sh",
+    "zsh",
+    "dash",
+    "powershell",
+    "pwsh",
+    "cmd",
+    "powershell.exe",
+)
+HOOK_MARKERS = ("CLAUDE_PROJECT_DIR", "CLAUDE_PLUGIN_ROOT")
 SKILL_KEY = re.compile(r"(description|when_to_use):(.*)")
 
 SECRET = re.compile(
@@ -201,12 +212,127 @@ def instruction_in_tools(
     return found
 
 
-def scan_json(doc: object, text: str, shown: str) -> Findings:
+def is_handler(value: object) -> bool:
+    """True for a command handler: `type` absent or `command`, and a string `command`."""
+    return (
+        isinstance(value, dict)
+        and value.get("type", "command") == "command"
+        and isinstance(value.get("command"), str)
+    )
+
+
+def handlers_in(event_map: object) -> list[dict[str, object]]:
+    """The command handlers of an event map: event name to a list of groups or handlers."""
+    found: list[dict[str, object]] = []
+    if not isinstance(event_map, dict):
+        return found
+    for groups in event_map.values():
+        for item in groups if isinstance(groups, list) else []:
+            if isinstance(item, dict) and isinstance(item.get("hooks"), list):
+                found += [h for h in item["hooks"] if is_handler(h)]
+            elif is_handler(item):
+                found.append(item)
+    return found
+
+
+def plugin_hook_values(doc: object) -> list[object]:
+    """The entries of a plugin manifest's `hooks` value, as a list."""
+    value = doc.get("hooks") if isinstance(doc, dict) else None
+    return value if isinstance(value, list) else [value]
+
+
+def plugin_event_maps(doc: object) -> list[object]:
+    """The inline event maps of a plugin manifest, with a lone `hooks` wrapper removed."""
+    maps: list[object] = []
+    for item in plugin_hook_values(doc):
+        if isinstance(item, dict):
+            lone = len(item) == 1 and isinstance(item.get("hooks"), dict)
+            maps.append(item["hooks"] if lone else item)
+    return maps
+
+
+def is_relative_token(token: str) -> bool:
+    """True for a token naming a relative path: no `://`, and `./`, `../` or a non-leading `/`."""
+    if "://" in token:
+        return False
+    return token.startswith(("./", "../")) or (
+        "/" in token and not token.startswith("/")
+    )
+
+
+def worktree_token(text: str) -> bool:
+    """True when a whitespace-separated token holds a marker or is a relative-path token."""
+    for raw in text.split():
+        token = raw.strip("'\"")
+        if any(marker in token for marker in HOOK_MARKERS) or is_relative_token(token):
+            return True
+    return False
+
+
+def runs_worktree(handler: dict[str, object]) -> bool:
+    """True when the handler's command, or a shell's arguments, name a worktree path."""
+    command = str(handler["command"])
+    if worktree_token(command):
+        return True
+    args = handler.get("args")
+    if not isinstance(args, list) or command.strip() not in SHELLS:
+        return False
+    return any(isinstance(arg, str) and worktree_token(arg) for arg in args)
+
+
+def hook_findings(
+    doc: object, plugin: bool, text: str, toks: Tokens, shown: str
+) -> Findings:
+    """The `hook-worktree-exec` Findings of a parsed settings, hooks or plugin file."""
+    if plugin:
+        maps = plugin_event_maps(doc)
+    else:
+        maps = [doc.get("hooks")] if isinstance(doc, dict) else []
+    found: Findings = set()
+    for event_map in maps:
+        for handler in handlers_in(event_map):
+            if runs_worktree(handler):
+                line = pair_line(text, toks, "command", str(handler["command"]))
+                found.add(("hook-worktree-exec", shown, line, "hooks command"))
+    return found
+
+
+def is_plugin_manifest(path: Path) -> bool:
+    """True for a `plugin.json` whose parent directory is `.claude-plugin`."""
+    return path.name == "plugin.json" and path.parent.name == ".claude-plugin"
+
+
+def plugin_targets(path: Path, doc: object, root: Path) -> tuple[list[Path], list[str]]:
+    """The files a plugin manifest points at inside its root, and the shown paths to skip."""
+    plugin_root = path.parent.parent.resolve()
+    wanted = [item for item in plugin_hook_values(doc) if isinstance(item, str)]
+    candidates = [plugin_root / item for item in wanted]
+    candidates.append(plugin_root / "hooks" / "hooks.json")
+    targets: list[Path] = []
+    skips: list[str] = []
+    for index, candidate in enumerate(candidates):
+        try:
+            resolved = candidate.resolve()
+        except (OSError, ValueError):
+            skips.append(display(candidate, root))
+            continue
+        if not resolved.is_relative_to(plugin_root):
+            skips.append(display(resolved, root))
+            continue
+        if resolved.is_file():
+            targets.append(resolved)
+        elif index < len(wanted):
+            skips.append(display(resolved, root))
+    return targets, skips
+
+
+def scan_json(doc: object, text: str, shown: str, plugin: bool = False) -> Findings:
     """The structured-Rule Findings of a parsed JSON document."""
     toks = tokens(text)
     tools = find_tools(doc)
     found: Findings = set()
     found |= instruction_in_tools(tools, text, toks, shown)
+    found |= hook_findings(doc, plugin, text, toks, shown)
     return found
 
 
@@ -256,8 +382,13 @@ def instruction_in_skill(text: str, shown: str) -> Findings:
     }
 
 
-def scan_file(path: Path, text: str, shown: str) -> tuple[Findings, bool]:
-    """All Findings of one file's text, and whether a `.json` file failed to parse."""
+def scan_file(
+    path: Path, text: str, shown: str, root: Path, more: list[Path], skips: list[str]
+) -> tuple[Findings, bool]:
+    """All Findings of one file's text, and whether a `.json` file failed to parse.
+
+    Files a plugin manifest points at are added to `more`; unusable targets to `skips`.
+    """
     found = scan(text, shown)
     if path.name.endswith(".json"):
         try:
@@ -265,7 +396,12 @@ def scan_file(path: Path, text: str, shown: str) -> tuple[Findings, bool]:
         except ValueError:
             return found, True
         if path.name != "scenarios.json":
-            found |= scan_json(doc, text, shown)
+            plugin = is_plugin_manifest(path)
+            found |= scan_json(doc, text, shown, plugin)
+            if plugin:
+                targets, bad = plugin_targets(path, doc, root)
+                more += targets
+                skips += bad
     if is_skill_path(path):
         found |= instruction_in_skill(text, shown)
     return found, False
@@ -304,7 +440,15 @@ def main(argv: list[str] | None = None) -> int:
 
     findings: Findings = set()
     skipped: list[str] = []
-    for path, explicit in files:
+    seen: set[Path] = set()
+    index = 0
+    while index < len(files):
+        path, explicit = files[index]
+        index += 1
+        key = path.resolve()
+        if explicit is None and key in seen:
+            continue
+        seen.add(key)
         shown = display(path, root)
         try:
             text = read_text(path)
@@ -317,7 +461,9 @@ def main(argv: list[str] | None = None) -> int:
         if text is None:
             skipped.append(shown)
             continue
-        found, unparsed = scan_file(path, text, shown)
+        more: list[Path] = []
+        found, unparsed = scan_file(path, text, shown, root, more, skipped)
+        files.extend((target, None) for target in more)
         if unparsed and explicit is not None:
             failed.append(explicit)
             continue
@@ -329,7 +475,7 @@ def main(argv: list[str] | None = None) -> int:
         for item in failed:
             print(item, file=sys.stderr)
         return 2
-    for item in skipped:
+    for item in dict.fromkeys(skipped):
         print(item, file=sys.stderr)
     for rule, shown, number, location in sorted(
         findings, key=lambda f: (f[1], f[2], f[0], f[3])

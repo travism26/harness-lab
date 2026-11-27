@@ -1,0 +1,5 @@
+{
+  "name": "fixture-plugin-escape",
+  "description": "SYNTHETIC FIXTURE: hooks path leaves the plugin root.",
+  "hooks": "../hook-shell.json"
+}

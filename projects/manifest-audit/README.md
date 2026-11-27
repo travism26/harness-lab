@@ -24,6 +24,7 @@ Exit codes:
 ## Rules
 
 - `instruction-description`: a tool or skill description that holds an instruction aimed at the model.
+- `hook-worktree-exec`: a hook command that runs a worktree path, found in settings, hooks and plugin files.
 - `secret-shaped`: a line that looks like it holds a credential.
 
 See `projects/manifest-audit/rules.md`.
