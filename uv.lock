@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "harness-lab",
     "harness-lab-root",
+    "manifest-audit",
 ]
 
 [[package]]
@@ -112,6 +113,7 @@ version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "harness-lab" },
+    { name = "manifest-audit" },
 ]
 
 [package.dev-dependencies]
@@ -122,7 +124,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "harness-lab", editable = "projects/harness" }]
+requires-dist = [
+    { name = "harness-lab", editable = "projects/harness" },
+    { name = "manifest-audit", editable = "projects/manifest-audit" },
+]
 
 [package.metadata.requires-dev]
 dev = [
@@ -243,6 +248,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c4/d7/f563218dc47a38f06e3504ae7f67cab188d484848cec50a363a527050a17/librt-0.17.0-cp315-cp315t-win_amd64.whl", hash = "sha256:9c67ede964192c970426aa09d6a7ccfb6a5e41b75462309d93547c6a11e15b10", size = 140448, upload-time = "2026-11-19T14:10:47.136Z" },
     { url = "https://files.pythonhosted.org/packages/7b/75/c3d79629d6894242ffbb70b34d48006f6a5c25127958748aba71d19ce6fa/librt-0.17.0-cp315-cp315t-win_arm64.whl", hash = "sha256:bdc73adb6376765fa8955ba936ed297277c814395eac82e862c621ff3b354602", size = 128548, upload-time = "2026-11-19T14:10:48.224Z" },
 ]
+
+[[package]]
+name = "manifest-audit"
+version = "0.0.0"
+source = { editable = "projects/manifest-audit" }
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "mypy"

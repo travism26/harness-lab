@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# The manifest-audit check: its tests, in the workspace's locked environment
+# (the same uv.lock CI uses). Exits non-zero on failure.
+set -euo pipefail
+cd "$(dirname "$0")"
+uv run --locked --package manifest-audit pytest "$@"
