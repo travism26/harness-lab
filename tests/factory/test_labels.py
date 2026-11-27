@@ -4,7 +4,7 @@ from pathlib import Path
 from factory.check import LABEL as CHECK_LABEL
 from factory.review_pr import MAX_REWORK, REWORK_LABEL, STOPPED_LABEL
 from factory.sync_labels import Label, command_for, describe, load_labels, plan_changes
-from factory.ticket import FAILED_LABEL, PROGRESS_LABEL, START_LABEL
+from factory.ticket import FAILED_LABEL, PROGRESS_LABEL, RUN_LOCAL_LABEL, START_LABEL
 
 
 def test_the_set_holds_every_label_the_factory_uses():
@@ -13,6 +13,7 @@ def test_the_set_holds_every_label_the_factory_uses():
         START_LABEL,
         PROGRESS_LABEL,
         FAILED_LABEL,
+        RUN_LOCAL_LABEL,
         REWORK_LABEL,
         STOPPED_LABEL,
         CHECK_LABEL,

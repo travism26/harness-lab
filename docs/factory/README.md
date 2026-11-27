@@ -15,7 +15,7 @@ fails with a message naming what is missing. It never goes green without doing a
 1. The owner adds `owner:implement` to a Spec, or to a hand-written Ticket that has no
    `builder:spec-ready` label and no sub-issues. The factory App adds `factory:start` to one
    eligible Ticket: open, `ready-for-agent` when it is a child of a Spec, no open blocker, not
-   `factory:failed`, and not already started. The lowest issue number wins, across every approved
+   `factory:failed`, not `factory:run-local`, and not already started. The lowest issue number wins, across every approved
    Spec. The factory does not build the Spec. A Ticket with no
    `project:` label is factory-root work, scored by the Lab check (`./check`).
    A Project Ticket is unchanged: it also carries one `project:<name>` label. The label names the
@@ -51,7 +51,10 @@ fails with a message naming what is missing. It never goes green without doing a
    The factory then commits it to `factory/issue-<N>`, pushes, and opens a **draft** PR
    whose body closes the Ticket. If the agent finishes and the work checkout is unchanged,
    publish fails. The failure comment on the Ticket says so, includes the agent's summary, and
-   lists any edits it finds in the factory checkout outside `work/`. A new Project is the
+   lists any edits it finds in the factory checkout outside `work/`. When that summary, or the
+   diff, names a path outside the edit list, the comment is the local prompt instead and the
+   label is `factory:run-local`. See [Outside the allowed list](#outside-the-allowed-list).
+   A new Project is the
    exception: a new Project with no executable `check` publishes nothing. See
    [Starting a Project](#starting-a-project). On every Implement and Rework run, before that
    commit, the factory itself runs the Project's `check` (the Lab check for a factory-root
@@ -178,6 +181,36 @@ The one gate on the check is the owner's merge of that pull request. The factory
 script's exit code. A script whose body is `exit 0` passes this step, and it passes CI. Review can
 read the script and has no shell, so it cannot tell that script from a real test run. Merging is
 what accepts the script as the Project's check. Every later Ticket is told to satisfy it.
+
+## Outside the allowed list
+
+The edit list is unchanged. A factory-root Ticket may edit `factory/`, `tests/factory/`,
+`docs/factory/README.md`, `GLOSSARY.md`, `GLOSSARY-MAP.md`, `docs/adr/` and `.gitignore`. A
+Project Ticket may also edit `projects/<name>/`. A bootstrap may also edit the root
+`pyproject.toml` and `uv.lock`. `.github/` stays outside, including `.github/workflows/`.
+`factory/scope.py` is that list.
+
+Claim reads backtick paths in the Ticket body before the agent starts. A sentence that says
+not to edit is skipped, so "do not edit `.github/`" does not by itself stop the Ticket. Any
+other named path outside the list does. Claim then adds `factory:run-local`, removes
+`factory:start`, does not add `factory:in-progress`, and posts one comment. The label is
+defined in `factory/labels.json`. From a checkout of main, run
+`uv run python -m factory.sync_labels --apply` once so GitHub has it. Until that label
+exists, adding it fails and the Ticket is not parked. The comment names
+the paths and then a fenced prompt: check out main, implement the issue per its acceptance
+criteria (the issue and its parent Spec, or "Parent spec: none"), run `./check`, and open a
+pull request with `Closes #N`. The prompt is filled from the issue number, title, URL, parent
+Spec and those paths. No model call.
+
+The picker skips `factory:run-local` the same way it skips `factory:failed`, so it does not
+start the Ticket again. `Retry:` clears `factory:run-local` and asks the factory to start, which
+claims again. Change the Ticket first if the body still names the same paths: claim will stop
+it again before the agent runs.
+
+If the body names nothing outside the list and the agent then edits such a path, or finishes
+without changes while its summary names one in backticks, publish does not push. Release adds
+`factory:run-local` instead of `factory:failed`, drops the lock, and posts the same comment.
+That stop is not an Implement-failure signal.
 
 ## Research path
 
@@ -481,6 +514,7 @@ Ticket moves](#how-a-ticket-moves).
 | `owner:research` | Owner | Start the factory's research path on this Research request. See [Research path](#research-path) |
 | `factory:in-progress` | Factory | The one-at-a-time lock. Removed when Review has passed and CI is green, after a comment on the Ticket, and when the Ticket closes. Until sync, readers also treat `in-progress` as this lock |
 | `factory:failed` | Factory | The last Implement run on this Ticket, or Rework run on this PR, failed. The next successful claim removes it. The owner comments `Retry:` to ask again |
+| `factory:run-local` | Factory | The Ticket needs a path outside the edit list. The factory posts a prompt for a local Claude Code session and does not build it. The picker skips it. `Retry:` clears it. See [Outside the allowed list](#outside-the-allowed-list) |
 | `factory:rework`, `factory:rework-1`, `factory:rework-2` | Factory (Review or CI gate); the owner may re-add `factory:rework` | A Spec blocker or a failed required CI run. The counter stays after close. Until sync, readers also accept `rework` and `rework:N` |
 | `factory:standards` | Factory | The rolling issue of merged PRs' non-blocking Standards Findings (`.github/workflows/collect-findings.yml`). Nothing acts on it |
 | `factory:signals` | Factory | The one open issue titled `Factory signals`. The factory appends one comment per Implement failure, Rework failure and `Retry:` (`factory/signals.py`), best-effort and write-only; nothing reads it yet. Run `sync_labels` once so the label exists, until then the write is skipped with a warning |
@@ -525,6 +559,7 @@ The workflows pin the Claude Code version in `CLAUDE_CODE_VERSION` at the top of
 | What you see | What to do |
 |---|---|
 | A comment says the factory did not start the Ticket | Read the reason. For "one Ticket at a time", finish or close the other Ticket. For "switch rule", switch to `openrouter`. The next lock release can start this Ticket again. |
+| A comment says the factory stopped, and the Ticket has `factory:run-local` | The body or the diff names a path the factory cannot edit. Copy the fenced prompt into Claude Code on a checkout of main. To ask the factory again, change the Ticket so it no longer names those paths, then comment `Retry:`. |
 | A comment says the factory run failed | Open the run. A new Project whose `check` was missing looks like this; the comment quotes why. A `check` that merely failed does not: the draft is published, and the Run record says `check: fail`. The Ticket has lost `factory:in-progress` and carries `factory:failed`. Comment `Retry:` to ask again. |
 | A factory PR is closed without merging | Closing the PR removes `factory:rework`. The lock stays on the Ticket until the Ticket closes. Closing the Ticket runs the picker. A lock still on that Ticket is dropped. The picker starts any Ticket the close unblocked when the lock is free. |
 | A factory draft's CI is red and no rework starts | Open the CI gate run. It ignores a PR that is not a draft, not opened by the factory App, or not on `factory/issue-<N>`, and it stops at the daily cap. A `timed_out` or `cancelled` CI run is not a failure. |

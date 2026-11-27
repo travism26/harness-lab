@@ -141,7 +141,7 @@ def test_an_implement_body_has_merge_danger_from_the_staged_paths(
             return " M x\n"
         if args[:2] == ("diff", "--cached"):
             assert "--no-renames" in args
-            return "projects/harness/a.py\nREADME.md\n"
+            return "projects/harness/a.py\nGLOSSARY.md\n"
         return "sha1\n"
 
     monkeypatch.setattr(ticket, "_git", fake_git)
@@ -165,7 +165,11 @@ def test_a_rework_push_refreshes_merge_danger_and_keeps_the_rest(tmp_path, monke
     (out / "door.json").write_text(json.dumps({"door": "one-way", "reason": "new"}))
 
     def fake_git(work, *args):
-        return " M README.md\n" if args[:2] == ("status", "--porcelain") else "sha1\n"
+        if args[:2] == ("status", "--porcelain"):
+            return " M README.md\n"
+        if args[:2] == ("diff", "--cached"):
+            return "projects/harness/a.py\n"
+        return "sha1\n"
 
     monkeypatch.setattr(ticket, "_git", fake_git)
     monkeypatch.setenv("GH_TOKEN", "token")

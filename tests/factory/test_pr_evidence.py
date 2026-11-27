@@ -66,7 +66,11 @@ def test_a_rework_push_replaces_only_the_block(tmp_path, monkeypatch):
     _evidence_out(out, "new tail")
 
     def fake_git(work, *args):
-        return " M README.md\n" if args[:2] == ("status", "--porcelain") else "sha1\n"
+        if args[:2] == ("status", "--porcelain"):
+            return " M README.md\n"
+        if args[:2] == ("diff", "--cached"):
+            return "projects/harness/a.py\n"
+        return "sha1\n"
 
     monkeypatch.setattr(ticket, "_git", fake_git)
     monkeypatch.setenv("GH_TOKEN", "token")

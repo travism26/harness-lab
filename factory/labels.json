@@ -36,6 +36,7 @@
     {"name": "factory:rework-2", "color": "f9d0c4", "description": "Factory-applied: blocked twice; the next blocker stops the factory"},
     {"name": "factory:stopped", "color": "b60205", "description": "Factory-applied: two rework rounds were not enough, so the factory stopped"},
     {"name": "factory:failed", "color": "b60205", "description": "Factory-applied: the last Implement or Rework run failed"},
+    {"name": "factory:run-local", "color": "1d76db", "description": "Factory-applied: this Ticket needs paths the factory cannot edit; build it locally"},
     {"name": "factory:override", "color": "c5def5", "description": "Factory-applied: records an Override comment on this pull request"},
     {"name": "factory:standards", "color": "c5def5", "description": "Factory-applied: the rolling issue of non-blocking Standards Findings"},
     {"name": "factory:signals", "color": "c5def5", "description": "Factory-applied: the one open issue where the factory records its failures and retries"},
