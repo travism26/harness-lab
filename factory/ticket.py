@@ -90,7 +90,6 @@ PROGRESS_LABEL = "factory:in-progress"
 PROGRESS_LABELS = (PROGRESS_LABEL, "in-progress")
 FAILED_LABEL = "factory:failed"
 FAILED_LABELS = (FAILED_LABEL, "factory-failed")
-# The picker skips this. The edit list did not grow; the Ticket is built locally.
 RUN_LOCAL_LABEL = "factory:run-local"
 SCOPE_FILE = "scope.json"
 LOCK_LABELS = (PROGRESS_LABEL, "in-progress", START_LABEL)
@@ -235,7 +234,6 @@ pull request description."""
 
 # A Ticket with no `project:` label. The run is not a bootstrap, so verify runs
 # the Lab check, if there is one. The agent edits the factory itself.
-# factory/scope.py allows this same list and nothing more.
 _FACTORY_ROOT = (
     _CHECKOUT
     + """Before you change anything, read `CLAUDE.md`, `GLOSSARY-MAP.md` and the \
