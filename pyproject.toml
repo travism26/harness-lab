@@ -4,7 +4,7 @@ version = "0.0.0"
 description = "The Lab's root: the shared factory's scripts, and the uv workspace holding every Python project."
 requires-python = ">=3.12"
 # Every Python project, so `uv sync` and the root `uv run pytest` cover them all.
-dependencies = ["harness-lab"]
+dependencies = ["harness-lab", "manifest-audit"]
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff", "mypy"]
@@ -16,13 +16,14 @@ package = false
 # Each Python project under projects/ is a workspace member, sharing the one
 # uv.lock. Projects in other languages are not listed here.
 [tool.uv.workspace]
-members = ["projects/harness"]
+members = ["projects/harness", "projects/manifest-audit"]
 
 [tool.uv.sources]
 harness-lab = { workspace = true }
+manifest-audit = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "projects/harness/tests"]
+testpaths = ["tests", "projects/harness/tests", "projects/manifest-audit/tests"]
 # The factory's scripts live in factory/ at the repo root; projects are
 # installed from the workspace.
 pythonpath = ["."]
