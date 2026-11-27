@@ -44,6 +44,19 @@ Plugin paths: a string path is resolved against the plugin root. When it resolve
 
 Location: `hooks command`. Line: the first place in the file where a `"command"` key is followed by that exact command text; line 1 if none is found.
 
+## url-and-file
+
+Reports a tool whose input schema accepts an unconstrained URL and also a file. A Finding needs both on the same tool. There is one Finding for each unconstrained URL property.
+
+Where it looks: the tool's `inputSchema` only, using the tool recognition of `instruction-description`. `outputSchema` is not read. The Rule walks dict values recursively and never lists, so it does not interpret `anyOf` or `oneOf`; a property reachable only through a list is not seen. Wherever a key `properties` holds an object, each entry whose value is an object is a property, including a property nested under another property's `properties`.
+
+- An unconstrained URL property: its string `description` contains `any URL, no allowlist` in any letter case, or its `format` is `uri` or `uri-reference` and it has none of the keys `enum`, `const` or `pattern`.
+- A file property: its name is one of `path`, `file`, `filepath`, `filename`, `file_path` or `filePath`, or its string `description` contains `read file`, `write file` or `file path` in any letter case.
+
+Location: `tool:<name> property:<key>`. A tool name, or a property key, that matches the credential expression, holds one of the `instruction-description` phrases, or holds a tab, CR or LF is left out, giving `tool` or `property`.
+
+Line: the first place in the file where the property key is followed by `: {`; line 1 if none is found.
+
 ## secret-shaped
 
 Reports a line of a scanned file that matches the credential expression. The location is `secret`. The matched text is never printed.

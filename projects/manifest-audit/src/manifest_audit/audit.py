@@ -40,6 +40,9 @@ SHELLS = (
     "cmd",
     "powershell.exe",
 )
+FILE_NAMES = ("path", "file", "filepath", "filename", "file_path", "filePath")
+FILE_PHRASES = ("read file", "write file", "file path")
+URL_PHRASE = "any url, no allowlist"
 HOOK_MARKERS = ("CLAUDE_PROJECT_DIR", "CLAUDE_PLUGIN_ROOT")
 SKILL_KEY = re.compile(r"(description|when_to_use):(.*)")
 
@@ -326,12 +329,61 @@ def plugin_targets(path: Path, doc: object, root: Path) -> tuple[list[Path], lis
     return targets, skips
 
 
+def collect_properties(value: object) -> list[tuple[str, dict[str, object]]]:
+    """Every (key, schema) entry of a `properties` dict found by walking dict values only."""
+    found: list[tuple[str, dict[str, object]]] = []
+    if not isinstance(value, dict):
+        return found
+    for key, item in value.items():
+        if key == "properties" and isinstance(item, dict):
+            found += [(k, v) for k, v in item.items() if isinstance(v, dict)]
+        found += collect_properties(item)
+    return found
+
+
+def description_has(schema: dict[str, object], phrases: tuple[str, ...]) -> bool:
+    """True when the schema's string `description` holds one of `phrases`, in any case."""
+    text = schema.get("description")
+    return isinstance(text, str) and any(p in text.lower() for p in phrases)
+
+
+def is_open_url(schema: dict[str, object]) -> bool:
+    """True for an unconstrained URL property."""
+    if description_has(schema, (URL_PHRASE,)):
+        return True
+    constrained = any(key in schema for key in ("enum", "const", "pattern"))
+    return schema.get("format") in ("uri", "uri-reference") and not constrained
+
+
+def is_file_property(key: str, schema: dict[str, object]) -> bool:
+    """True for a file property, by name or by description."""
+    return key in FILE_NAMES or description_has(schema, FILE_PHRASES)
+
+
+def url_and_file(
+    tools: list[dict[str, object]], text: str, toks: Tokens, shown: str
+) -> Findings:
+    """The `url-and-file` Findings: one per open URL property of a tool that also has a file property."""
+    found: Findings = set()
+    for tool in tools:
+        props = collect_properties(tool.get("inputSchema"))
+        if not any(is_file_property(key, schema) for key, schema in props):
+            continue
+        prefix = named("tool", str(tool["name"]))
+        for key, schema in props:
+            if is_open_url(schema):
+                location = f"{prefix} {named('property', key)}"
+                found.add(("url-and-file", shown, key_line(text, toks, key), location))
+    return found
+
+
 def scan_json(doc: object, text: str, shown: str, plugin: bool = False) -> Findings:
     """The structured-Rule Findings of a parsed JSON document."""
     toks = tokens(text)
     tools = find_tools(doc)
     found: Findings = set()
     found |= instruction_in_tools(tools, text, toks, shown)
+    found |= url_and_file(tools, text, toks, shown)
     found |= hook_findings(doc, plugin, text, toks, shown)
     return found
 

@@ -1,0 +1,16 @@
+{
+  "name": "fixture_tool",
+  "description": "Fetch or read data.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "target": {
+        "type": "string",
+        "description": "SYNTHETIC FIXTURE: any URL, no allowlist"
+      },
+      "file_path": {
+        "type": "string"
+      }
+    }
+  }
+}

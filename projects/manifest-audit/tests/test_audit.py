@@ -79,6 +79,7 @@ def test_explicit_directory() -> None:
         "secret-shaped",
         "instruction-description",
         "hook-worktree-exec",
+        "url-and-file",
     }
 
 
@@ -250,6 +251,8 @@ def test_docs() -> None:
     assert "factory/research_note.py" in rules
     assert "instruction-description" in readme
     assert "hook-worktree-exec" in readme
+    assert "url-and-file" in readme
+    assert "url-and-file" in rules
     assert "hook-worktree-exec" in rules
     assert "instruction-description" in rules
     for phrase in PHRASES:
@@ -697,3 +700,108 @@ def test_token_rule(tmp_path: Path, command: str, args: object, expected: int) -
     target = write_hooks(tmp_path / "s.json", [handler])
     result = run("--root", tmp_path, target)
     assert result.returncode == expected
+
+
+def url_file_tool(props: dict[str, object], **extra: object) -> str:
+    tool = {"name": "t", "inputSchema": {"type": "object", "properties": props}}
+    return json.dumps({**tool, **extra}, indent=2) + "\n"
+
+
+def run_tool(tmp_path: Path, text: str) -> subprocess.CompletedProcess[str]:
+    target = tmp_path / "t.json"
+    target.write_text(text, encoding="utf-8")
+    return run("--root", tmp_path, target)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "tool-url-enum",
+        "tool-url-pattern",
+        "tool-url-const",
+        "tool-url-only",
+        "tool-path-only",
+    ],
+)
+def test_benign_url_fixtures_are_clean(name: str) -> None:
+    assert_clean(FIXTURES / "benign" / f"{name}.json")
+
+
+@pytest.mark.parametrize(
+    ("name", "key"), [("url-and-file", "url"), ("url-phrase-and-file", "target")]
+)
+def test_url_and_file_fixtures(name: str, key: str) -> None:
+    target = FIXTURES / "synthetic" / f"{name}.json"
+    result = run("--root", REPO, target)
+    assert result.returncode == 1
+    assert rows(result) == [
+        [
+            "url-and-file",
+            FIXTURE_DIR + f"synthetic/{name}.json",
+            str(first_line(target, f'"{key}": {{')),
+            f"tool:fixture_tool property:{key}",
+        ]
+    ]
+    assert result.stderr == ""
+
+
+def test_output_schema_properties_are_ignored(tmp_path: Path) -> None:
+    props = {"url": {"format": "uri"}, "path": {}}
+    text = url_file_tool({"q": {}}, outputSchema={"properties": props})
+    result = run_tool(tmp_path, text)
+    assert (result.returncode, result.stdout) == (0, "")
+
+
+def test_nested_properties_are_found(tmp_path: Path) -> None:
+    inner = {"type": "object", "properties": {"url": {"format": "uri-reference"}}}
+    result = run_tool(tmp_path, url_file_tool({"outer": inner, "path": {}}))
+    assert result.returncode == 1
+    assert [row[3] for row in rows(result)] == ["tool:t property:url"]
+
+
+def test_any_of_properties_are_not_read(tmp_path: Path) -> None:
+    branch = {"properties": {"url": {"format": "uri"}}}
+    text = url_file_tool({"path": {}, "x": {"anyOf": [branch]}})
+    assert run_tool(tmp_path, text).returncode == 0
+    text = url_file_tool(
+        {"x": {"anyOf": [{"properties": {"path": {}}}]}, "url": {"format": "uri"}}
+    )
+    assert run_tool(tmp_path, text).returncode == 0
+
+
+def test_two_url_properties_two_findings(tmp_path: Path) -> None:
+    text = url_file_tool(
+        {
+            "a": {"format": "uri"},
+            "p": {"description": "File path"},
+            "b": {"format": "uri"},
+        }
+    )
+    result = run_tool(tmp_path, text)
+    assert result.returncode == 1
+    lines = text.split("\n")
+    expected = [
+        ["url-and-file", "t.json", str(n), f"tool:t property:{k}"]
+        for k in ("a", "b")
+        for n in [next(i for i, ln in enumerate(lines, 1) if f'"{k}": {{' in ln)]
+    ]
+    assert rows(result) == expected
+
+
+def test_unsafe_property_key_is_omitted(tmp_path: Path) -> None:
+    props = {FAKE: {"format": "uri"}, "path": {}}
+    result = run_tool(tmp_path, url_file_tool(props))
+    found = [row for row in rows(result) if row[0] == "url-and-file"]
+    assert [row[3] for row in found] == ["tool:t property"]
+    assert FAKE not in result.stdout.replace("secret-shaped", "")
+    assert FAKE not in result.stderr
+
+
+def test_url_description_phrase_and_file_phrases(tmp_path: Path) -> None:
+    props = {
+        "u": {"description": "Any URL, No Allowlist"},
+        "f": {"description": "WRITE FILE here"},
+    }
+    assert run_tool(tmp_path, url_file_tool(props)).returncode == 1
+    props = {"u": {"description": "any url"}, "f": {"description": "write file"}}
+    assert run_tool(tmp_path, url_file_tool(props)).returncode == 0
