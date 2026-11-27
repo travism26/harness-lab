@@ -64,3 +64,20 @@ Reports a line of a scanned file that matches the credential expression. The loc
 The expression is `CREDENTIAL_RE` at `factory/research_note.py` lines 25-29. This Project holds its own copy and does not import `factory`; a test checks the copy has not drifted.
 
 Findings are heuristic, and a clean scan is not a security guarantee.
+
+## Default discovery
+
+With no `PATH`, the Auditor discovers files from `ROOT` with a pruning directory walk. It scans:
+
+- every file under a directory named `.claude`;
+- every `plugin.json` whose parent directory is `.claude-plugin`;
+- every file named `.mcp.json`;
+- every file whose name matches `mcp*.json` or `*mcp*manifest*`. Matching is case-sensitive, and `mcp*.json` does not match `.mcp.json`, which is why that name is listed on its own.
+
+It does not enter: a directory named `.git` or `node_modules` at any depth; the top-level `work` and `run-out` directories; `projects/manifest-audit/fixtures` under `ROOT`; any directory other than `ROOT` that holds a `.git` entry (a nested checkout or git worktree is another tree); or a symlinked directory. A directory that cannot be read is skipped silently.
+
+A discovered file goes through the same per-file scan as an explicit one, except that a `.json` file that does not parse is a stderr skip, not exit 2. A plugin manifest's hooks target, and `hooks/hooks.json` in its plugin root, are followed as described under `hook-worktree-exec`.
+
+An explicit `PATH` is not discovery: a directory is walked in full with no name filter and no prune, so passing the checkout root reads files that discovery never opens.
+
+All four Rules report heuristic Findings, and a clean scan is not a security guarantee.

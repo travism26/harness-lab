@@ -253,6 +253,17 @@ def test_docs() -> None:
     assert "hook-worktree-exec" in readme
     assert "url-and-file" in readme
     assert "url-and-file" in rules
+    for rule_id in (
+        "instruction-description",
+        "url-and-file",
+        "hook-worktree-exec",
+        "secret-shaped",
+    ):
+        assert rule_id in readme
+        assert rule_id in rules
+    assert "factory/labels.json" in readme
+    assert "synced to GitHub" in readme
+    assert "Default discovery" in rules
     assert "hook-worktree-exec" in rules
     assert "instruction-description" in rules
     for phrase in PHRASES:
@@ -805,3 +816,132 @@ def test_url_description_phrase_and_file_phrases(tmp_path: Path) -> None:
     assert run_tool(tmp_path, url_file_tool(props)).returncode == 1
     props = {"u": {"description": "any url"}, "f": {"description": "write file"}}
     assert run_tool(tmp_path, url_file_tool(props)).returncode == 0
+
+
+def tool_text(description: str) -> str:
+    tool = {"name": "t", "description": description, "inputSchema": {}}
+    return json.dumps(tool, indent=2) + "\n"
+
+
+def put(root: Path, rel: str, text: str) -> Path:
+    target = root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    return target
+
+
+def test_discovery_in_a_temporary_root(tmp_path: Path) -> None:
+    body = tool_text(SENTENCE)
+    kept = [
+        ".claude/SKILL.md",
+        ".mcp.json",
+        "sub/mcp-tools.json",
+        "sub/x-mcp-manifest.json",
+    ]
+    pruned = [
+        "work",
+        "run-out",
+        ".git",
+        "node_modules",
+        "a/node_modules",
+        "projects/manifest-audit/fixtures",
+    ]
+    skill = f"---\ndescription: {SENTENCE}\n---\n"
+    for rel in kept:
+        put(tmp_path, rel, skill if rel.endswith(".md") else body)
+    for rel in pruned:
+        put(tmp_path, f"{rel}/.claude/SKILL.md", skill)
+        put(tmp_path, f"{rel}/.mcp.json", body)
+    put(tmp_path, "other/data.json", json.dumps({"k": FAKE}))
+    result = run("--root", tmp_path)
+    assert result.returncode == 1
+    assert sorted(row[1] for row in rows(result)) == sorted(kept)
+    assert {row[0] for row in rows(result)} == {"instruction-description"}
+    assert FAKE not in result.stdout + result.stderr
+    explicit = run("--root", tmp_path, tmp_path / "other")
+    assert explicit.stdout == "secret-shaped\tother/data.json\t1\tsecret\n"
+
+
+def test_discovery_one_finding_per_rule_in_sorted_order(tmp_path: Path) -> None:
+    put(tmp_path, ".claude/a-tool.json", tool_text(SENTENCE))
+    schema = {"url": {"format": "uri"}, "path": {}}
+    tool = {"name": "t", "inputSchema": {"properties": schema}}
+    put(tmp_path, ".claude/b-url.json", json.dumps(tool, indent=2) + "\n")
+    hooks = {"hooks": {"Stop": [{"hooks": [{"command": HOOK_COMMAND}]}]}}
+    put(tmp_path, ".claude/c-hook.json", json.dumps(hooks, indent=2) + "\n")
+    put(tmp_path, ".claude/d-secret.txt", f"one\n{FAKE}\n")
+    result = run("--root", tmp_path)
+    assert result.returncode == 1
+    assert [(row[0], row[1], row[3]) for row in rows(result)] == [
+        ("instruction-description", ".claude/a-tool.json", "tool:t description"),
+        ("url-and-file", ".claude/b-url.json", "tool:t property:url"),
+        ("hook-worktree-exec", ".claude/c-hook.json", "hooks command"),
+        ("secret-shaped", ".claude/d-secret.txt", "secret"),
+    ]
+    assert all(row[2].isdigit() for row in rows(result))
+
+
+def test_discovery_prunes_nested_checkouts(tmp_path: Path) -> None:
+    put(tmp_path, ".claude/worktrees/x/.git", "gitdir: elsewhere\n")
+    put(
+        tmp_path,
+        ".claude/worktrees/x/.claude/SKILL.md",
+        f"---\ndescription: {SENTENCE}\n---\n",
+    )
+    put(tmp_path, "nested/.git/HEAD", "ref\n")
+    put(tmp_path, "nested/.mcp.json", tool_text(SENTENCE))
+    result = run("--root", tmp_path)
+    assert (result.returncode, result.stdout) == (0, "")
+
+
+def test_discovery_root_with_dot_git_is_still_scanned(tmp_path: Path) -> None:
+    put(tmp_path, ".git", "gitdir: elsewhere\n")
+    put(tmp_path, ".mcp.json", tool_text(SENTENCE))
+    assert run("--root", tmp_path).returncode == 1
+
+
+def test_discovery_names_are_case_sensitive(tmp_path: Path) -> None:
+    put(tmp_path, "MCP-tools.json", tool_text(SENTENCE))
+    put(tmp_path, "tools-MANIFEST.json", tool_text(SENTENCE))
+    put(tmp_path, ".Claude/x.json", tool_text(SENTENCE))
+    assert run("--root", tmp_path).returncode == 0
+    put(tmp_path, "sub/mcp-tools.json", tool_text(SENTENCE))
+    assert [row[1] for row in rows(run("--root", tmp_path))] == ["sub/mcp-tools.json"]
+
+
+def test_discovery_finds_plugin_outside_dot_claude(tmp_path: Path) -> None:
+    put(
+        tmp_path,
+        "plug/.claude-plugin/plugin.json",
+        json.dumps({"hooks": "./h/hooks.json"}),
+    )
+    hooks = {"hooks": {"Stop": [{"hooks": [{"command": HOOK_COMMAND}]}]}}
+    put(tmp_path, "plug/h/hooks.json", json.dumps(hooks, indent=2) + "\n")
+    result = run("--root", tmp_path)
+    assert result.returncode == 1
+    assert [(row[0], row[1]) for row in rows(result)] == [
+        ("hook-worktree-exec", "plug/h/hooks.json")
+    ]
+    assert result.stderr == ""
+
+
+def test_discovery_invalid_json_is_a_skip(tmp_path: Path) -> None:
+    put(tmp_path, ".claude/bad.json", "{")
+    result = run("--root", tmp_path)
+    assert (result.returncode, result.stdout) == (0, "")
+    assert result.stderr.strip() == ".claude/bad.json"
+
+
+def test_repo_root_discovery_is_clean() -> None:
+    result = run("--root", REPO)
+    assert (result.returncode, result.stdout) == (0, "")
+
+
+def test_explicit_fixtures_directory_walks_everything() -> None:
+    result = run("--root", REPO, FIXTURES)
+    assert result.returncode == 1
+    shown = {row[1] for row in rows(result)}
+    assert FIXTURE_DIR + "synthetic/tool-instruction.json" in shown
+    assert FIXTURE_DIR + "synthetic/hook-shell.json" in shown
+    assert FIXTURE_DIR + "synthetic/url-and-file.json" in shown
+    assert FIXTURE_DIR + "synthetic/secret-shaped.json" in shown

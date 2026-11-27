@@ -43,6 +43,7 @@ SHELLS = (
 FILE_NAMES = ("path", "file", "filepath", "filename", "file_path", "filePath")
 FILE_PHRASES = ("read file", "write file", "file path")
 URL_PHRASE = "any url, no allowlist"
+MCP_NAMES = (re.compile(r"mcp.*\.json"), re.compile(r".*mcp.*manifest.*"))
 HOOK_MARKERS = ("CLAUDE_PROJECT_DIR", "CLAUDE_PLUGIN_ROOT")
 SKILL_KEY = re.compile(r"(description|when_to_use):(.*)")
 
@@ -464,6 +465,46 @@ def walk(directory: Path) -> list[Path]:
     return sorted(p for p in directory.rglob("*") if p.is_file())
 
 
+def is_pruned(directory: Path, root: Path) -> bool:
+    """True for a directory default discovery does not enter."""
+    if directory.name in (".git", "node_modules"):
+        return True
+    relative = directory.relative_to(root).as_posix()
+    if relative in ("work", "run-out", "projects/manifest-audit/fixtures"):
+        return True
+    return (directory / ".git").exists()
+
+
+def is_discovered(path: Path, in_claude: bool) -> bool:
+    """True for a file default discovery scans."""
+    if in_claude or path.name == ".mcp.json":
+        return True
+    if path.name == "plugin.json" and path.parent.name == ".claude-plugin":
+        return True
+    return any(pattern.fullmatch(path.name) for pattern in MCP_NAMES)
+
+
+def discover(root: Path) -> list[Path]:
+    """The files default discovery scans under `root`, found by a pruning walk."""
+    found: list[Path] = []
+    stack = [(root, False)]
+    while stack:
+        directory, in_claude = stack.pop()
+        try:
+            entries = sorted(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_symlink() and entry.is_dir():
+                continue
+            if entry.is_dir():
+                if not is_pruned(entry, root):
+                    stack.append((entry, in_claude or entry.name == ".claude"))
+            elif entry.is_file() and is_discovered(entry, in_claude):
+                found.append(entry)
+    return sorted(found)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m manifest_audit")
     parser.add_argument("--root", help="the directory paths are shown relative to")
@@ -489,6 +530,9 @@ def main(argv: list[str] | None = None) -> int:
             files.append((path, given))
         else:
             failed.append(given)
+
+    if not args.paths:
+        files.extend((p, None) for p in discover(root))
 
     findings: Findings = set()
     skipped: list[str] = []
