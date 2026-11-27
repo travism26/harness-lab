@@ -1,6 +1,7 @@
 """The comment ratchet: the counter, the violation rules, the update command, and the real tree."""
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -239,3 +240,71 @@ def test_tree_matches_baseline_and_default_branch() -> None:
     assert baseline_bytes == ratchet.serialize_baseline(baseline).encode("utf-8")
     assert {p: n for p, n in baseline.items() if n > default.get(p, 0)} == {}
     assert ratchet.check(ROOT) == []
+
+
+AUDIT_ACTIONS = {
+    "Tautology": "delete later",
+    "Excuse": "fix later",
+    "Stale": "delete later",
+    "Decision Record": "keep",
+}
+AUDIT_HEADER_SENTENCES = (
+    "This file is not a Retro and not a Research note.",
+    "The line restates the code a reader can already see.",
+    (
+        "A repo-root path that CODING_STANDARDS.md requires is not a Tautology when the path is "
+        "the point of the line."
+    ),
+    (
+        "The line names a behavior, date, label, file, or constraint the current code and docs "
+        "do not match."
+    ),
+    "When two categories could fit and the line is false now, it is Stale.",
+    (
+        "The line apologises for a hack, a workaround, a copy, or a special case, and the code "
+        "could be changed so the line would go."
+    ),
+    "The line records a choice a reader would otherwise redo or undo.",
+    "A pointer at an ADR or a repo-root path can be this.",
+)
+
+
+def _audit_parts() -> tuple[str, list[list[str]]]:
+    text = (ROOT / "docs" / "python-comment-audit.md").read_text(encoding="utf-8")
+    parts = re.split(
+        r"^```comment-audit\n(.*?)^```\n", text, flags=re.MULTILINE | re.DOTALL
+    )
+    assert len(parts) == 3, "expected exactly one comment-audit fence"
+    rows = [row.split("\t", 3) for row in parts[1].split("\n") if row]
+    bad = [row for row in rows if len(row) != 4]
+    assert not bad, f"a row does not have four tab-separated fields: {bad[0]!r}"
+    return parts[0], rows
+
+
+def test_the_audit_lists_every_counted_comment_once() -> None:
+    """The audit fence matches the counted comments one for one, with a valid category and action."""
+    header, rows = _audit_parts()
+    expected = [
+        (path, text)
+        for path in ratchet.tracked_paths(ROOT)
+        for _, text in ratchet.counted_comments((ROOT / path).read_bytes())
+    ]
+    listed = [(row[0], row[3]) for row in rows]
+    first = next(
+        (i for i, pair in enumerate(zip(listed, expected)) if pair[0] != pair[1]),
+        min(len(listed), len(expected)),
+    )
+    assert listed == expected, (
+        f"the audit has {len(listed)} rows, the tree {len(expected)}; first difference at row "
+        f"{first + 1}: audit {listed[first : first + 1]}, tree {expected[first : first + 1]}"
+    )
+    for path, category, action, text in rows:
+        assert category in AUDIT_ACTIONS, (
+            f"{path}: unknown category {category!r} for {text!r}"
+        )
+        assert action == AUDIT_ACTIONS[category], (
+            f"{path}: {category} carries {AUDIT_ACTIONS[category]!r}, not {action!r}, for {text!r}"
+        )
+    flat = " ".join(header.replace("`", "").split())
+    for sentence in AUDIT_HEADER_SENTENCES:
+        assert sentence in flat, f"the audit header lacks: {sentence}"
