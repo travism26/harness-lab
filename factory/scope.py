@@ -17,9 +17,7 @@ from collections.abc import Iterable
 
 from factory.github import neutralize, neutralize_comments
 
-# Same slug `factory/ticket.py` accepts on a `project:` label.
 _SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-# A directory the prompts allow, or a file named exactly.
 _PREFIXES = ("factory", "tests/factory", "docs/adr")
 _EXACT = frozenset(
     {
@@ -29,16 +27,12 @@ _EXACT = frozenset(
         ".gitignore",
     }
 )
-# Only a bootstrap prompt allows these. An ordinary Ticket that names them is outside.
 _BOOTSTRAP_FILES = frozenset({"pyproject.toml", "uv.lock"})
-# Root files a Ticket body can name without a slash. `README.md` and `CLAUDE.md` are
-# not here: a bare name is usually the Project's file, not the repo root.
 _ROOT_FILES = _EXACT | _BOOTSTRAP_FILES
 _TOP = re.compile(
     r"^(?:factory|tests|docs|projects|experiments|\.claude|\.github)(?:/[\w.@+-]+)*$"
 )
 _TICK = re.compile(r"`([^`\n]+)`")
-# A sentence that tells the agent not to edit is not a path the Ticket needs.
 _NEGATION = re.compile(
     r"(?i)\b(?:do not|don't|dont|must not|never|no)\s+edit\b|\bwithout editing\b"
 )
