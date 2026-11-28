@@ -1,0 +1,36 @@
+# Every Friday at 15:30 UTC, comment on and close each open issue labelled
+# `factory:signals` (factory/signals.py, close_week). The next factory event opens a new one.
+#
+# This is the repo's first `schedule:` workflow. No agent runs, no Claude login and no App key
+# is used, and no secret is read: the workflow's own token is enough.
+#
+# GitHub turns scheduled workflows off after 60 days without repository activity.
+
+name: Close signals
+
+on:
+  schedule:
+    - cron: "30 15 * * 5"
+
+permissions: {}
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the factory (default branch)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Close the open Factory signals issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: uv run --no-dev python -m factory.signals --repo "$REPO"

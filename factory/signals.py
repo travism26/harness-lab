@@ -1,25 +1,35 @@
 """The factory's write-only recorder: one comment per event on the open `Factory signals` issue.
 
 Nothing reads the issue yet. The pure functions here build the comment (`entry`), tell whether it
-is already written (`already`) and choose where it goes (`destination`). `record` does the
+is already written (`already`) and choose where it goes (`destination`). `write` does the
 GitHub calls, best-effort: a `GitHubError` is printed as a warning and never reaches the step.
+
+Each Friday .github/workflows/close-signals.yml runs this module: `close_week` comments on every
+open issue (`close_targets`) that the week is closed, then closes it. There a `GitHubError`
+fails the job.
 """
 
+import argparse
 import os
 import re
+import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from factory.github import REDACTED, GitHubError, neutralize, write_comment
+from factory.github import REDACTED, GitHub, GitHubError, neutralize, write_comment
 from factory.switch_rule import default_app_slug, is_factory_app
 
 LABEL = "factory:signals"
 ISSUE_TITLE = "Factory signals"
 ISSUE_BODY = (
     "One comment per factory event (an Implement or Rework failure, a `Retry:`). "
-    "Nothing acts on them automatically.\n"
+    "Nothing acts on them automatically. A job closes this issue every Friday; "
+    "the next event opens a new one.\n"
+)
+CLOSED_COMMENT = (
+    "The week is closed. The next factory event opens a new `Factory signals` issue.\n"
 )
 TEXT_MAX_CHARS = 500
 NONE = "none"
@@ -86,6 +96,11 @@ def destination(open_issue_numbers: Sequence[int]) -> tuple[str, int | None]:
     return ("append", min(open_issue_numbers))
 
 
+def close_targets(open_issue_numbers: Sequence[int]) -> list[int]:
+    """Every open signal issue, lowest number first."""
+    return sorted(open_issue_numbers)
+
+
 def run_id(run_url: str = "") -> str:
     found = os.environ.get("GITHUB_RUN_ID") or ""
     if found.isdigit():
@@ -124,3 +139,37 @@ def write(gh: Any, repo: str, event: dict, app_slug: str = "") -> None:
         print(f"signal {event['kind']} written to #{issue} ({action})")
     except GitHubError as e:
         print(f"warning: could not record the {event.get('kind')} signal: {e}")
+
+
+def close_week(gh: Any, repo: str) -> list[int]:
+    """Comment on, then close, each open signal issue. A `GitHubError` is not swallowed."""
+    closed: list[int] = []
+    with TemporaryDirectory() as tmp:
+        out = Path(tmp)
+        for number in close_targets(gh.open_issues_labelled(repo, LABEL)):
+            gh.comment(repo, number, write_comment(out, "closed.md", CLOSED_COMMENT))
+            gh.close_issue(repo, number)
+            closed.append(number)
+    return closed
+
+
+def main(argv: list[str] | None = None, gh: Any | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Close the week's Factory signals issues."
+    )
+    parser.add_argument("--repo", required=True)
+    args = parser.parse_args(argv)
+    try:
+        closed = close_week(gh or GitHub(), args.repo)
+    except GitHubError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    if closed:
+        print("closed " + ", ".join(f"#{n}" for n in closed))
+    else:
+        print("no open Factory signals issue")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
