@@ -229,7 +229,7 @@ Listed here from rung 1 up to rung 6 (strength rises with the number).
 ### Three constraints found in the repo
 
 - (a) Almost every skill in both suites is user-only (`disable-model-invocation`), so an agent cannot invoke them; only a person typing the command can.
-- (b) The factory runner installs plain Claude Code with project settings only: no plugins, no home-folder skills, and the repo has no root `.claude/` folder yet.
+- (b) The factory runner installs plain Claude Code with project settings only (no plugins, no home-folder skills), so it loads the two hooks the root `.claude/` folder now holds: a PreToolUse hook that refuses secret-shaped commands and commits, and a Stop hook that runs only when `HARNESS_LAB_REQUIRE_CHECK` is `1` (see `.claude/README.md`).
 - (c) Agents in `projects/agents/` load no skills (`settingSources: []`), run on Haiku 5.5, cap at $1 a run and are launched by hand.
 
 ## 5. Agent ideas (not built)

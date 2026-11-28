@@ -52,7 +52,7 @@ The owner does three things:
   - factory scripts loaded from `main`, so a PR can't edit the brakes that judge it.
 
   See [ADR 0005](docs/adr/0005-label-only-factory-start-and-no-secrets-for-forks.md) and [ADR 0007](docs/adr/0007-factory-scripts-from-the-default-branch-agents-without-github-token.md).
-- **Proof over claims.** Every project has an executable `check` script, and an agent saying "done" counts for nothing until that check passes.
+- **Proof over claims.** Every project has an executable `check` script, and an agent saying "done" counts for nothing until that check passes. A committed Claude Code Stop hook enforces that in a laptop session only when `HARNESS_LAB_REQUIRE_CHECK=1` is set (see [`.claude/README.md`](.claude/README.md)).
 
 ```
 Scout ──Goal issue──► Builder ──spec──► human approves ──tickets──► Factory ──draft PR──► human merges
